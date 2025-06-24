@@ -11,7 +11,8 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 # ------------------ 配置区域 ------------------
-TRACKING_URL = "https://trackings.post.japanpost.jp/services/srv/search/direct?reqCodeNo1=EF000497545CN&searchKind=S002&locale=ja"
+TRACKING_NUMBER = "EF000943217CN"
+TRACKING_URL = f"https://trackings.post.japanpost.jp/services/srv/search/direct?reqCodeNo1={TRACKING_NUMBER}&searchKind=S002&locale=ja"
 CHECK_INTERVAL = 60 * 5  # 每5分钟检查一次
 
 # Bark 推送配置
@@ -112,7 +113,7 @@ def main():
                     send_bark_notification("快递更新通知", notify_message)
                     last_info = current_info
                 else:
-                    print("暂无更新。")
+                    print(f"暂无更新。 当前时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
             else:
                 print("无法获取最新快递信息。")
             time.sleep(CHECK_INTERVAL)
