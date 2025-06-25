@@ -140,7 +140,9 @@
 
         function appendLog(message) {
             // 将接收到的文本中的换行符转换为HTML的<br>标签，以便正确显示
-            logOutput.innerHTML += message.replace(/\n/g, '<br>');
+            // 使用 insertAdjacentHTML 避免反复重绘整个日志区域
+            const html = message.replace(/\n/g, '<br>');
+            logOutput.insertAdjacentHTML('beforeend', html);
             logOutput.scrollTop = logOutput.scrollHeight; // 滚动到底部
         }
 
