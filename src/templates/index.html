@@ -18,34 +18,40 @@
         <h2>环境变量配置</h2>
         <form @submit.prevent="saveEnv" class="env-form">
           <div v-for="(value, key) in envVars" :key="key" v-if="key !== 'BARK_QUERY_PARAMS' && key !== 'BARK_URL_ENABLED'">
-            <label :for="key">[[ key ]]:</label>
+            <label :for="key">[[ key ]] ([[ envDesc[key] ]]):</label>
             <input type="text" :id="key" v-model="envVars[key]" />
           </div>
 
-          <div v-if="envVars['BARK_QUERY_PARAMS'] !== undefined" class="bark-params">
-            <label>BARK_QUERY_PARAMS:</label>
-            <div class="param-item" v-for="(val, param) in barkParams" :key="param">
-              <span class="param-name">[[ param ]]</span>
-              <span class="param-desc">[[ paramOptions[param].description ]]</span>
-              <select v-if="paramOptions[param].values.length" v-model="barkParams[param]">
-                <option v-for="item in paramOptions[param].values" :key="item.value" :value="item.value">[[ item.label ]]</option>
-              </select>
-              <input v-else type="text" v-model="barkParams[param]" />
-              <button type="button" @click="removeParam(param)">删除</button>
-            </div>
-            <div class="param-add">
-              <select v-model="newParam">
-                <option disabled value="">选择参数</option>
-                <option v-for="(opt, key) in availableParams" :key="key" :value="key">[[ key ]] - [[ opt.description ]]</option>
-              </select>
-              <button type="button" @click="addParam" :disabled="!newParam">添加参数</button>
-            </div>
+          <div v-if="envVars['BARK_URL_ENABLED'] !== undefined" class="inline-field">
+            <label for="BARK_URL_ENABLED">BARK_URL_ENABLED ([[ envDesc['BARK_URL_ENABLED'] ]])</label>
+            <input type="checkbox" id="BARK_URL_ENABLED" v-model="includeUrl" />
           </div>
 
-          <div>
-            <label for="BARK_URL_ENABLED">BARK_URL_ENABLED:</label>
-            <input type="checkbox" id="BARK_URL_ENABLED" v-model="includeUrl" />
-            <span class="param-desc">在推送中附带追踪链接</span>
+          <div v-if="envVars['BARK_QUERY_PARAMS'] !== undefined" class="bark-params">
+            <label>BARK_QUERY_PARAMS ([[ envDesc['BARK_QUERY_PARAMS'] ]]):</label>
+            <table class="param-table">
+              <tr v-for="(val, param) in barkParams" :key="param">
+                <td class="param-name">[[ param ]]</td>
+                <td class="param-desc">[[ paramOptions[param].description ]]</td>
+                <td>
+                  <select v-if="paramOptions[param].values.length" v-model="barkParams[param]" class="param-input">
+                    <option v-for="item in paramOptions[param].values" :key="item.value" :value="item.value">[[ item.label ]]</option>
+                  </select>
+                  <input v-else type="text" v-model="barkParams[param]" class="param-input" />
+                </td>
+                <td><button type="button" @click="removeParam(param)">删除</button></td>
+              </tr>
+              <tr class="param-add">
+                <td colspan="2">
+                  <select v-model="newParam" class="param-input">
+                    <option disabled value="">选择参数</option>
+                    <option v-for="(opt, key) in availableParams" :key="key" :value="key">[[ key ]] - [[ opt.description ]]</option>
+                  </select>
+                </td>
+                <td><button type="button" @click="addParam" :disabled="!newParam">添加参数</button></td>
+                <td></td>
+              </tr>
+            </table>
           </div>
 
           <button type="submit">保存环境变量</button>
