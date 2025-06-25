@@ -1,240 +1,74 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>快递追踪器与通知服务控制台</title>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>快递追踪器与通知服务控制台 (Vue.js)</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.min.js"></script>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f4; color: #333; }
-        .container { max-width: 900px; margin: auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        h1, h2 { color: #0056b3; }
-        h1 { text-align: center; }
-        .section { margin-bottom: 20px; padding: 15px; border: 1px solid #ddd; border-radius: 5px; background-color: #f9f9f9; }
-        .log-output {
-            margin-top: 1rem;
-            background-color: #1a1a1a;
-            color: #0f0;
-            padding: 10px;
-            height: 400px; /* 增加了一些高度 */
-            overflow-y: scroll;
-            border-radius: 5px;
-            white-space: pre-wrap;
-            font-family: 'Courier New', Courier, monospace;
-        }
-        .controls { display: flex; align-items: center; gap: 10px; /* 增加了元素间距 */ }
-        .controls button {
-            padding: 10px 15px;
-            margin-right: 10px;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 16px;
-            transition: opacity 0.2s;
-        }
-        .controls button.start { background-color: #28a745; color: white; }
-        .controls button.stop { background-color: #dc3545; color: white; }
-        .controls button:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-        }
-        .status-indicator {
-            display: inline-block;
-            width: 15px;
-            height: 15px;
-            border-radius: 50%;
-            background-color: gray;
-            margin-left: 10px;
-            vertical-align: middle;
-            transition: background-color 0.3s;
-        }
-        .status-indicator.running { background-color: #28a745; box-shadow: 0 0 8px #28a745; }
-        .status-indicator.stopped { background-color: #dc3545; }
-        .env-form label { display: block; margin-bottom: 5px; font-weight: bold; }
-        .env-form input[type="text"] {
-            width: calc(100% - 22px);
-            padding: 8px;
-            margin-bottom: 10px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-        }
-        .env-form button {
-            background-color: #007bff;
-            color: white;
-            padding: 10px 20px;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-        }
-        .message {
-            margin-top: 10px;
-            padding: 10px;
-            border-radius: 5px;
-            display: none;
-        }
-        .message.success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-        .message.error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>快递追踪器与通知服务控制台</h1>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <div id="app" class="container">
+      <div class="header">
+        <h1>[[ title ]]</h1>
+        <button @click="requestRefresh">手动刷新状态</button>
+      </div>
 
-        <div class="section">
-            <h2>快递追踪脚本状态</h2>
+      <div class="section">
+        <h2>环境变量配置</h2>
+        <form @submit.prevent="saveEnv" class="env-form">
+          <div v-for="(value, key) in envVars" :key="key">
+            <label :for="key">[[ key ]]:</label>
+            <input type="text" :id="key" v-model="envVars[key]" />
+          </div>
+          <button type="submit">保存环境变量</button>
+        </form>
+        <div v-if="envMessage.text" :class="['message', envMessage.type]">[[ envMessage.text ]]</div>
+      </div>
+
+      <div class="flex-container">
+        <div class="flex-child">
+          <div class="section">
+            <h2>快递追踪脚本</h2>
             <div class="controls">
-                <button id="startButton" class="start">启动脚本</button>
-                <button id="stopButton" class="stop" disabled>停止脚本</button>
-                <span id="statusIndicator" class="status-indicator stopped"></span>
-                <span id="statusText">未运行</span>
+              <button @click="startScript" :disabled="script.running" class="start">启动脚本</button>
+              <button @click="stopScript" :disabled="!script.running" class="stop">停止脚本</button>
+              <span :class="['status-indicator', { running: script.running, stopped: !script.running }]"></span>
+              <span>[[ script.running ? '运行中' : '未运行' ]]</span>
             </div>
+            <div class="log-container">
+              <h3>追踪脚本实时日志</h3>
+              <div class="log-output" ref="trackerLogOutput">
+                <div v-for="(line, index) in script.logs" :key="index" v-html="line"></div>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <div class="section">
-            <h2>Bark 通知服务状态</h2>
+        <div class="flex-child">
+          <div class="section">
+            <h2>Bark 通知服务</h2>
             <div class="controls">
-                <button id="startBarkButton" class="start">启动服务</button>
-                <button id="stopBarkButton" class="stop" disabled>停止服务</button>
-                <span id="barkStatusIndicator" class="status-indicator stopped"></span>
-                <span id="barkStatusText">未运行</span>
+              <button @click="startBarkServer" :disabled="bark.running" class="start">启动服务</button>
+              <button @click="stopBarkServer" :disabled="!bark.running" class="stop">停止服务</button>
+              <span :class="['status-indicator', { running: bark.running, stopped: !bark.running }]"></span>
+              <span>[[ bark.running ? '运行中' : '未运行' ]]</span>
             </div>
+            <div class="log-container">
+              <h3>Bark 服务实时日志</h3>
+              <div class="log-output" ref="barkLogOutput">
+                <div v-for="(line, index) in bark.logs" :key="index" v-html="line"></div>
+              </div>
+            </div>
+          </div>
         </div>
-
-        <div class="section">
-            <h2>实时日志</h2>
-            <div class="log-output" id="logOutput">{{ initial_log | replace('\n', '<br>') | safe }}</div>
-        </div>
-        
-        <div class="section">
-            <h2>环境变量配置</h2>
-            <form id="envForm" class="env-form">
-                {% for key, value in env_vars.items() %}
-                    <label for="{{ key }}">{{ key }}:</label>
-                    <input type="text" id="{{ key }}" name="{{ key }}" value="{{ value }}">
-                {% endfor %}
-                <button type="submit">保存环境变量</button>
-            </form>
-            <div id="envMessage" class="message"></div>
-        </div>
+      </div>
     </div>
 
     <script>
-        const socket = io();
-        const logOutput = document.getElementById('logOutput');
-        
-        // 脚本控制元素
-        const startButton = document.getElementById('startButton');
-        const stopButton = document.getElementById('stopButton');
-        const statusIndicator = document.getElementById('statusIndicator');
-        const statusText = document.getElementById('statusText');
-
-        // Bark 控制元素
-        const startBarkButton = document.getElementById('startBarkButton');
-        const stopBarkButton = document.getElementById('stopBarkButton');
-        const barkStatusIndicator = document.getElementById('barkStatusIndicator');
-        const barkStatusText = document.getElementById('barkStatusText');
-
-        // 环境变量表单元素
-        const envForm = document.getElementById('envForm');
-        const envMessage = document.getElementById('envMessage');
-
-        function appendLog(message) {
-            // 将接收到的文本中的换行符转换为HTML的<br>标签，以便正确显示
-            logOutput.innerHTML += message.replace(/\n/g, '<br>');
-            logOutput.scrollTop = logOutput.scrollHeight; // 滚动到底部
-        }
-
-        function updateScriptStatus(isRunning) {
-            startButton.disabled = isRunning;
-            stopButton.disabled = !isRunning;
-            if (isRunning) {
-                statusIndicator.classList.remove('stopped');
-                statusIndicator.classList.add('running');
-                statusText.textContent = '运行中';
-            } else {
-                statusIndicator.classList.remove('running');
-                statusIndicator.classList.add('stopped');
-                statusText.textContent = '未运行';
-            }
-        }
-
-        function updateBarkServerStatus(isRunning) {
-            startBarkButton.disabled = isRunning;
-            stopBarkButton.disabled = !isRunning;
-            if (isRunning) {
-                barkStatusIndicator.classList.remove('stopped');
-                barkStatusIndicator.classList.add('running');
-                barkStatusText.textContent = '运行中';
-            } else {
-                barkStatusIndicator.classList.remove('running');
-                barkStatusIndicator.classList.add('stopped');
-                barkStatusText.textContent = '未运行';
-            }
-        }
-
-        // Socket.IO 事件监听
-        socket.on('connect', () => {
-            console.log('Connected to WebSocket server');
-        });
-
-        socket.on('log_message', (data) => {
-            appendLog(data.data);
-        });
-
-        socket.on('script_status', (data) => {
-            updateScriptStatus(data.running);
-        });
-
-        socket.on('bark_server_status', (data) => {
-            updateBarkServerStatus(data.running);
-        });
-
-        // 按钮点击事件
-        startButton.addEventListener('click', () => {
-            socket.emit('start_script');
-        });
-        stopButton.addEventListener('click', () => {
-            socket.emit('stop_script');
-        });
-
-        startBarkButton.addEventListener('click', () => {
-            socket.emit('start_bark_server');
-        });
-        stopBarkButton.addEventListener('click', () => {
-            socket.emit('stop_bark_server');
-        });
-
-        // Env 表单提交
-        envForm.addEventListener('submit', async (event) => {
-            event.preventDefault();
-            const formData = new FormData(envForm);
-            const data = {};
-            for (let [key, value] of formData.entries()) {
-                data[key] = value;
-            }
-
-            try {
-                const response = await fetch('/update_env', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(data)
-                });
-                const result = await response.json();
-                envMessage.style.display = 'block';
-                envMessage.textContent = result.message;
-                envMessage.className = result.status === 'success' ? 'message success' : 'message error';
-            } catch (error) {
-                console.error('Error updating env:', error);
-                envMessage.style.display = 'block';
-                envMessage.className = 'message error';
-                envMessage.textContent = '保存环境变量时发生错误。';
-            }
-        });
-
-        // 页面加载时滚动日志到底部
-        document.addEventListener('DOMContentLoaded', () => {
-            logOutput.scrollTop = logOutput.scrollHeight;
-        });
+      window.initialEnvVars = JSON.parse("{{ env_vars | tojson | safe }}");
     </script>
-</body>
+    <script src="/static/app.js"></script>
+  </body>
 </html>
