@@ -23,6 +23,8 @@
    BARK_KEY=你的-bark-key
    BARK_QUERY_PARAMS=?sound=minuet&level=timeSensitive
    # BARK_QUERY_PARAMS 支持在网页中按参数选择和编辑
+   BARK_URL_ENABLED=1
+   # 是否在推送中附带追踪链接，可在网页中开关
    ```
 2. 启动网页控制台：
    ```bash

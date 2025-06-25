@@ -172,3 +172,10 @@ h3 {
   gap: 10px;
   margin-top: 5px;
 }
+
+.bark-params select,
+.bark-params input[type="checkbox"] {
+  padding: 5px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
