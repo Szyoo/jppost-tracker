@@ -1,4 +1,4 @@
-const { createApp, ref, onMounted, nextTick } = Vue;
+const { createApp, ref, onMounted, nextTick, computed, watch } = Vue;
 
 // 限制前端保存的日志条数，避免大量日志导致页面阻塞
 const MAX_LOG_LINES = 500;
@@ -107,6 +107,21 @@ const app = createApp({
                 }
             }
             return result;
+        });
+
+        // 保持文本字段与表格参数同步
+        watch(barkParams, (val) => {
+            const combined = buildQuery(val);
+            if (envVars.value.BARK_QUERY_PARAMS !== combined) {
+                envVars.value.BARK_QUERY_PARAMS = combined;
+            }
+        }, { deep: true });
+
+        watch(() => envVars.value.BARK_QUERY_PARAMS, (val) => {
+            const current = buildQuery(barkParams.value);
+            if (val !== current) {
+                barkParams.value = parseQuery(val);
+            }
         });
         const envMessage = ref({ text: '', type: '' });
 
