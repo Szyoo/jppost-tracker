@@ -22,6 +22,7 @@
    BARK_SERVER=https://你的-bark-地址
    BARK_KEY=你的-bark-key
    BARK_QUERY_PARAMS=?sound=minuet&level=timeSensitive
+   # BARK_QUERY_PARAMS 支持在网页中按参数选择和编辑
    ```
 2. 启动网页控制台：
    ```bash

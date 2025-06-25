@@ -17,10 +17,31 @@
       <div class="section">
         <h2>环境变量配置</h2>
         <form @submit.prevent="saveEnv" class="env-form">
-          <div v-for="(value, key) in envVars" :key="key">
+          <div v-for="(value, key) in envVars" :key="key" v-if="key !== 'BARK_QUERY_PARAMS'">
             <label :for="key">[[ key ]]:</label>
             <input type="text" :id="key" v-model="envVars[key]" />
           </div>
+
+          <div v-if="envVars['BARK_QUERY_PARAMS'] !== undefined" class="bark-params">
+            <label>BARK_QUERY_PARAMS:</label>
+            <div class="param-item" v-for="(val, param) in barkParams" :key="param">
+              <span class="param-name">[[ param ]]</span>
+              <span class="param-desc">[[ paramOptions[param].description ]]</span>
+              <select v-if="paramOptions[param].values.length" v-model="barkParams[param]">
+                <option v-for="opt in paramOptions[param].values" :key="opt" :value="opt">[[ opt ]]</option>
+              </select>
+              <input v-else type="text" v-model="barkParams[param]" />
+              <button type="button" @click="removeParam(param)">删除</button>
+            </div>
+            <div class="param-add">
+              <select v-model="newParam">
+                <option disabled value="">选择参数</option>
+                <option v-for="(opt, key) in availableParams" :key="key" :value="key">[[ key ]] - [[ opt.description ]]</option>
+              </select>
+              <button type="button" @click="addParam" :disabled="!newParam">添加参数</button>
+            </div>
+          </div>
+
           <button type="submit">保存环境变量</button>
         </form>
         <div v-if="envMessage.text" :class="['message', envMessage.type]">[[ envMessage.text ]]</div>

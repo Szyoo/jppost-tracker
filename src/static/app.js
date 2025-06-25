@@ -10,6 +10,46 @@ const app = createApp({
         const socket = ref(null);
 
         const envVars = ref(window.initialEnvVars || {});
+        // 将 BARK_QUERY_PARAMS 解析为对象便于编辑
+        const parseQuery = (str) => {
+            const q = {};
+            if (!str) return q;
+            str.replace(/^\?/, '').split('&').forEach(part => {
+                if (!part) return;
+                const [k, v = ''] = part.split('=');
+                q[decodeURIComponent(k)] = decodeURIComponent(v);
+            });
+            return q;
+        };
+        const buildQuery = (obj) => {
+            const parts = Object.keys(obj).map(k => `${encodeURIComponent(k)}=${encodeURIComponent(obj[k])}`);
+            return parts.length ? '?' + parts.join('&') : '';
+        };
+        const barkParams = ref(parseQuery(envVars.value.BARK_QUERY_PARAMS));
+        const newParam = ref('');
+        const paramOptions = {
+            sound: { description: '通知铃声', values: ['alarm','anticipate','bell','birdsong','bloom','calypso','chime','choo','descent','electronic','fanfare','glass','gotosleep','healthnotification','horn','ladder','mailsent','minuet','multiwayinvitation','newmail','newsflash','noir','paymentsuccess','shake','sherwoodforest','silence','spell','suspense','telegraph','tiptoes','typewriters','update'] },
+            level: { description: '推送级别', values: ['active','timeSensitive','passive','critical'] },
+            badge: { description: '角标数字', values: [] },
+            autoCopy: { description: '自动复制(1开启)', values: ['1'] },
+            copy: { description: '复制的内容', values: [] },
+            group: { description: '消息分组', values: [] },
+            url: { description: '点击跳转的URL', values: [] },
+            icon: { description: '自定义图标URL', values: [] },
+            isArchive: { description: '是否保存(1保存)', values: ['1'] },
+            call: { description: '重复铃声(1开启)', values: ['1'] },
+            action: { description: '点击无弹窗', values: ['none'] },
+            volume: { description: '重要警告音量(0-10)', values: [] }
+        };
+        const availableParams = Vue.computed(() => {
+            const result = {};
+            for (const k in paramOptions) {
+                if (!(k in barkParams.value)) {
+                    result[k] = paramOptions[k];
+                }
+            }
+            return result;
+        });
         const envMessage = ref({ text: '', type: '' });
 
         const script = ref({ running: false, logs: [] });
@@ -26,6 +66,7 @@ const app = createApp({
 
         const saveEnv = async () => {
             try {
+                envVars.value.BARK_QUERY_PARAMS = buildQuery(barkParams.value);
                 const response = await fetch('/update_env', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -43,6 +84,18 @@ const app = createApp({
                     type: 'error'
                 };
             }
+        };
+
+        const addParam = () => {
+            if (newParam.value && !(newParam.value in barkParams.value)) {
+                const opt = paramOptions[newParam.value];
+                barkParams.value[newParam.value] = opt.values[0] || '';
+                newParam.value = '';
+            }
+        };
+
+        const removeParam = (param) => {
+            delete barkParams.value[param];
         };
 
         const scrollToBottom = (element) => {
@@ -125,6 +178,12 @@ const app = createApp({
             saveEnv,
             trackerLogOutput,
             barkLogOutput,
+            barkParams,
+            paramOptions,
+            availableParams,
+            newParam,
+            addParam,
+            removeParam
         };
     }
 });
