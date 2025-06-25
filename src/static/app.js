@@ -10,10 +10,14 @@ const app = createApp({
         const socket = ref(null);
 
         const envVars = ref(window.initialEnvVars || {});
+        // 分秒输入框
+        const rawInterval = Number(envVars.value.CHECK_INTERVAL || 0);
+        const intervalMin = ref(Math.floor(rawInterval / 60));
+        const intervalSec = ref(rawInterval % 60);
         // 环境变量中文说明
         const envDesc = {
             TRACKING_NUMBER: '快递单号',
-            CHECK_INTERVAL: '查询间隔(秒)',
+            CHECK_INTERVAL: '查询间隔(分和秒)',
             BARK_SERVER: 'Bark 地址',
             BARK_KEY: 'Bark Key',
             BARK_QUERY_PARAMS: '通知额外参数',
@@ -122,6 +126,7 @@ const app = createApp({
             try {
                 envVars.value.BARK_QUERY_PARAMS = buildQuery(barkParams.value);
                 envVars.value.BARK_URL_ENABLED = includeUrl.value ? '1' : '0';
+                envVars.value.CHECK_INTERVAL = String(intervalMin.value * 60 + Number(intervalSec.value));
                 const response = await fetch('/update_env', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -238,6 +243,8 @@ const app = createApp({
             paramOptions,
             availableParams,
             includeUrl,
+            intervalMin,
+            intervalSec,
             newParam,
             addParam,
             removeParam

@@ -19,6 +19,7 @@
    ```ini
    TRACKING_NUMBER=你的快递单号
    CHECK_INTERVAL=300
+   # CHECK_INTERVAL 在网页中可按“分钟 + 秒”输入，仍以秒保存
    BARK_SERVER=https://你的-bark-地址
    BARK_KEY=你的-bark-key
    BARK_QUERY_PARAMS=?sound=minuet&level=timeSensitive
