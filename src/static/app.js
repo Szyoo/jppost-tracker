@@ -10,6 +10,15 @@ const app = createApp({
         const socket = ref(null);
 
         const envVars = ref(window.initialEnvVars || {});
+        // 环境变量中文说明
+        const envDesc = {
+            TRACKING_NUMBER: '快递单号',
+            CHECK_INTERVAL: '查询间隔(秒)',
+            BARK_SERVER: 'Bark 地址',
+            BARK_KEY: 'Bark Key',
+            BARK_QUERY_PARAMS: '通知额外参数',
+            BARK_URL_ENABLED: '在通知中附带追踪链接'
+        };
         // 将 BARK_QUERY_PARAMS 解析为对象便于编辑
         const parseQuery = (str) => {
             const q = {};
@@ -225,6 +234,7 @@ const app = createApp({
             trackerLogOutput,
             barkLogOutput,
             barkParams,
+            envDesc,
             paramOptions,
             availableParams,
             includeUrl,
