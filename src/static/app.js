@@ -26,19 +26,64 @@ const app = createApp({
             return parts.length ? '?' + parts.join('&') : '';
         };
         const barkParams = ref(parseQuery(envVars.value.BARK_QUERY_PARAMS));
+        const includeUrl = ref(envVars.value.BARK_URL_ENABLED !== '0');
+        delete barkParams.value.url;
         const newParam = ref('');
         const paramOptions = {
-            sound: { description: '通知铃声', values: ['alarm','anticipate','bell','birdsong','bloom','calypso','chime','choo','descent','electronic','fanfare','glass','gotosleep','healthnotification','horn','ladder','mailsent','minuet','multiwayinvitation','newmail','newsflash','noir','paymentsuccess','shake','sherwoodforest','silence','spell','suspense','telegraph','tiptoes','typewriters','update'] },
-            level: { description: '推送级别', values: ['active','timeSensitive','passive','critical'] },
+            sound: {
+                description: '通知铃声',
+                values: [
+                    { value: 'alarm', label: 'alarm (闹钟)' },
+                    { value: 'anticipate', label: 'anticipate (期待)' },
+                    { value: 'bell', label: 'bell (铃声)' },
+                    { value: 'birdsong', label: 'birdsong (鸟鸣)' },
+                    { value: 'bloom', label: 'bloom (绽放)' },
+                    { value: 'calypso', label: 'calypso' },
+                    { value: 'chime', label: 'chime (提示音)' },
+                    { value: 'choo', label: 'choo' },
+                    { value: 'descent', label: 'descent' },
+                    { value: 'electronic', label: 'electronic' },
+                    { value: 'fanfare', label: 'fanfare (号角)' },
+                    { value: 'glass', label: 'glass' },
+                    { value: 'gotosleep', label: 'gotosleep' },
+                    { value: 'healthnotification', label: 'healthnotification' },
+                    { value: 'horn', label: 'horn (喇叭)' },
+                    { value: 'ladder', label: 'ladder' },
+                    { value: 'mailsent', label: 'mailsent' },
+                    { value: 'minuet', label: 'minuet (小步舞曲)' },
+                    { value: 'multiwayinvitation', label: 'multiwayinvitation' },
+                    { value: 'newmail', label: 'newmail' },
+                    { value: 'newsflash', label: 'newsflash (新闻)' },
+                    { value: 'noir', label: 'noir' },
+                    { value: 'paymentsuccess', label: 'paymentsuccess' },
+                    { value: 'shake', label: 'shake' },
+                    { value: 'sherwoodforest', label: 'sherwoodforest' },
+                    { value: 'silence', label: 'silence (静音)' },
+                    { value: 'spell', label: 'spell' },
+                    { value: 'suspense', label: 'suspense' },
+                    { value: 'telegraph', label: 'telegraph' },
+                    { value: 'tiptoes', label: 'tiptoes' },
+                    { value: 'typewriters', label: 'typewriters' },
+                    { value: 'update', label: 'update' }
+                ]
+            },
+            level: {
+                description: '推送级别',
+                values: [
+                    { value: 'active', label: 'active (默认)' },
+                    { value: 'timeSensitive', label: 'timeSensitive (专注)' },
+                    { value: 'passive', label: 'passive (静默)' },
+                    { value: 'critical', label: 'critical (重要警告)' }
+                ]
+            },
             badge: { description: '角标数字', values: [] },
-            autoCopy: { description: '自动复制(1开启)', values: ['1'] },
+            autoCopy: { description: '自动复制', values: [{ value: '1', label: '1 (开启)' }] },
             copy: { description: '复制的内容', values: [] },
             group: { description: '消息分组', values: [] },
-            url: { description: '点击跳转的URL', values: [] },
             icon: { description: '自定义图标URL', values: [] },
-            isArchive: { description: '是否保存(1保存)', values: ['1'] },
-            call: { description: '重复铃声(1开启)', values: ['1'] },
-            action: { description: '点击无弹窗', values: ['none'] },
+            isArchive: { description: '是否保存', values: [{ value: '1', label: '1 (保存)' }] },
+            call: { description: '重复铃声', values: [{ value: '1', label: '1 (开启)' }] },
+            action: { description: '点击无弹窗', values: [{ value: 'none', label: 'none' }] },
             volume: { description: '重要警告音量(0-10)', values: [] }
         };
         const availableParams = Vue.computed(() => {
@@ -67,6 +112,7 @@ const app = createApp({
         const saveEnv = async () => {
             try {
                 envVars.value.BARK_QUERY_PARAMS = buildQuery(barkParams.value);
+                envVars.value.BARK_URL_ENABLED = includeUrl.value ? '1' : '0';
                 const response = await fetch('/update_env', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -181,6 +227,7 @@ const app = createApp({
             barkParams,
             paramOptions,
             availableParams,
+            includeUrl,
             newParam,
             addParam,
             removeParam
