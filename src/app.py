@@ -54,7 +54,8 @@ load_dotenv(DOTENV_PATH)
 def index():
     """渲染主页面，并加载当前的环境变量和分离的历史日志。"""
     env_vars = dotenv_values(DOTENV_PATH)
-    display_env = {key: value for key, value in env_vars.items() if key in ["TRACKING_NUMBER", "CHECK_INTERVAL", "BARK_SERVER", "BARK_KEY", "BARK_QUERY_PARAMS"]}
+    default_keys = ["TRACKING_NUMBER", "CHECK_INTERVAL", "BARK_SERVER", "BARK_KEY", "BARK_QUERY_PARAMS"]
+    display_env = {k: env_vars.get(k, "") for k in default_keys}
     initial_tracker_log = tracker_log_buffer.getvalue()
     initial_bark_log = bark_log_buffer.getvalue()
     return render_template('index.html', env_vars=display_env, initial_tracker_log=initial_tracker_log, initial_bark_log=initial_bark_log)
@@ -65,22 +66,8 @@ def test_connect():
     print('Client connected', flush=True)
     emit('script_status', {'running': script_process is not None and script_process.poll() is None})
     emit('bark_server_status', {'running': bark_server_process is not None and bark_server_process.poll() is None})
-
-# --- 新增：手动刷新处理器 ---
-@socketio.on('request_refresh')
-def handle_refresh_request():
-    """处理来自客户端的手动刷新请求。"""
-    # 发送当前服务状态
-    emit('script_status', {'running': script_process is not None and script_process.poll() is None})
-    emit('bark_server_status', {'running': bark_server_process is not None and bark_server_process.poll() is None})
-
-    # 发送完整的日志内容
     emit('full_tracker_log', {'data': tracker_log_buffer.getvalue()})
     emit('full_bark_log', {'data': bark_log_buffer.getvalue()})
-    
-    # 在日志中提示刷新完成
-    emit('tracker_log', {'data': '[SYSTEM] 页面状态已手动刷新。\n'})
-
 
 # --- 追踪脚本控制 ---
 
@@ -229,6 +216,9 @@ def update_env():
     data = request.get_json()
     if not data:
         return jsonify({"status": "error", "message": "无效的请求数据"}), 400
+
+    if not os.path.exists(DOTENV_PATH):
+        open(DOTENV_PATH, 'a').close()
 
     updated_count = 0; errors = []
     for key, value in data.items():

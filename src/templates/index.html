@@ -12,7 +12,6 @@
     <div id="app" class="container">
       <div class="header">
         <h1>[[ title ]]</h1>
-        <button @click="requestRefresh">手动刷新状态</button>
       </div>
 
       <div class="section">
@@ -66,9 +65,9 @@
       </div>
     </div>
 
-    <script>
-      window.initialEnvVars = JSON.parse("{{ env_vars | tojson | safe }}");
-    </script>
+      <script>
+        window.initialEnvVars = {{ env_vars | tojson | safe }};
+      </script>
     <script src="/static/app.js"></script>
   </body>
 </html>
