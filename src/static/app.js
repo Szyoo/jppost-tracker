@@ -23,7 +23,6 @@ const app = createApp({
         const stopScript = () => socket.value.emit('stop_script');
         const startBarkServer = () => socket.value.emit('start_bark_server');
         const stopBarkServer = () => socket.value.emit('stop_bark_server');
-        const requestRefresh = () => socket.value.emit('request_refresh');
 
         const saveEnv = async () => {
             try {
@@ -62,7 +61,6 @@ const app = createApp({
 
             socket.value.on('connect', () => {
                 console.log('Connected to WebSocket server via Vue app.');
-                requestRefresh();
             });
 
             socket.value.on('script_status', (data) => {
@@ -124,7 +122,6 @@ const app = createApp({
             stopScript,
             startBarkServer,
             stopBarkServer,
-            requestRefresh,
             saveEnv,
             trackerLogOutput,
             barkLogOutput,
