@@ -34,7 +34,9 @@
           </div>
 
           <div v-if="envVars['BARK_QUERY_PARAMS'] !== undefined" class="bark-params">
-            <label>BARK_QUERY_PARAMS ([[ envDesc['BARK_QUERY_PARAMS'] ]]):</label>
+            <label for="BARK_QUERY_PARAMS">BARK_QUERY_PARAMS ([[ envDesc['BARK_QUERY_PARAMS'] ]])</label>
+            <input type="text" id="BARK_QUERY_PARAMS" v-model="envVars['BARK_QUERY_PARAMS']" class="param-input" />
+            <div class="param-desc">下表用于逐项编辑，与上方字符串等同</div>
             <table class="param-table">
               <tr v-for="(val, param) in barkParams" :key="param">
                 <td class="param-name">[[ param ]]</td>

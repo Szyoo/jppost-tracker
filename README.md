@@ -22,8 +22,9 @@
    # CHECK_INTERVAL 在网页中可按“分钟 + 秒”输入，仍以秒保存
    BARK_SERVER=https://你的-bark-地址
    BARK_KEY=你的-bark-key
-   BARK_QUERY_PARAMS=?sound=minuet&level=timeSensitive
-   # BARK_QUERY_PARAMS 支持在网页中按参数选择和编辑
+  BARK_QUERY_PARAMS=?sound=minuet&level=timeSensitive
+  # BARK_QUERY_PARAMS 可在网页上直接修改完整字符串
+  # 或通过列表方式逐项编辑，效果等同
    BARK_URL_ENABLED=1
    # 是否在推送中附带追踪链接，可在网页中开关
    ```
