@@ -4,6 +4,9 @@ import threading
 import sys
 import io
 
+import eventlet
+eventlet.monkey_patch()
+
 from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO, emit
 from dotenv import load_dotenv, set_key, dotenv_values

@@ -1,5 +1,8 @@
 const { createApp, ref, onMounted, nextTick } = Vue;
 
+// 限制前端保存的日志条数，避免大量日志导致页面阻塞
+const MAX_LOG_LINES = 500;
+
 const app = createApp({
     setup() {
         // --- 响应式状态定义 ---
@@ -72,23 +75,39 @@ const app = createApp({
             // 增量日志
             socket.value.on('tracker_log', async (data) => {
                 script.value.logs.push(data.data.replace(/\n/g, '<br>'));
+                if (script.value.logs.length > MAX_LOG_LINES) {
+                    script.value.logs.splice(0, script.value.logs.length - MAX_LOG_LINES);
+                }
                 await nextTick();
                 scrollToBottom(trackerLogOutput.value);
             });
             socket.value.on('bark_log', async (data) => {
                 bark.value.logs.push(data.data.replace(/\n/g, '<br>'));
+                if (bark.value.logs.length > MAX_LOG_LINES) {
+                    bark.value.logs.splice(0, bark.value.logs.length - MAX_LOG_LINES);
+                }
                 await nextTick();
                 scrollToBottom(barkLogOutput.value);
             });
 
             // 完整日志 (用于刷新)
             socket.value.on('full_tracker_log', async (data) => {
-                script.value.logs = data.data ? data.data.split('\n').map(line => line.replace(/\n/g, '<br>')) : [];
+                const lines = data.data ? data.data.split('\n').map(line => line.replace(/\n/g, '<br>')) : [];
+                if (lines.length > MAX_LOG_LINES) {
+                    script.value.logs = lines.slice(-MAX_LOG_LINES);
+                } else {
+                    script.value.logs = lines;
+                }
                 await nextTick();
                 scrollToBottom(trackerLogOutput.value);
             });
             socket.value.on('full_bark_log', async (data) => {
-                bark.value.logs = data.data ? data.data.split('\n').map(line => line.replace(/\n/g, '<br>')) : [];
+                const lines = data.data ? data.data.split('\n').map(line => line.replace(/\n/g, '<br>')) : [];
+                if (lines.length > MAX_LOG_LINES) {
+                    bark.value.logs = lines.slice(-MAX_LOG_LINES);
+                } else {
+                    bark.value.logs = lines;
+                }
                 await nextTick();
                 scrollToBottom(barkLogOutput.value);
             });
