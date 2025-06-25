@@ -12,12 +12,19 @@ from flask_socketio import SocketIO, emit
 from dotenv import load_dotenv, set_key, dotenv_values
 
 # 初始化 Flask 应用
-app = Flask(__name__)
+BASE_DIR = os.path.dirname(os.path.dirname(__file__))
+LOG_DIR = os.path.join(BASE_DIR, 'logs')
+os.makedirs(LOG_DIR, exist_ok=True)
+
+app = Flask(__name__, template_folder=os.path.join(os.path.dirname(__file__), 'templates'),
+            static_folder=os.path.join(os.path.dirname(__file__), 'static'))
 app.config['SECRET_KEY'] = 'your_secret_key_here' # 生产环境中请使用更安全的密钥
 socketio = SocketIO(app, async_mode='eventlet', cors_allowed_origins="*") # 允许所有CORS源，生产环境请限制
 
 # --- Bark 服务相关变量 ---
-BARK_EXECUTABLE = './bark-server_linux_amd64' 
+BARK_EXECUTABLE = os.path.join(BASE_DIR, 'bark-server_linux_amd64')
+BARK_DATA_DIR = os.path.join(BASE_DIR, 'bark-data')
+TRACKER_SCRIPT = os.path.join(os.path.dirname(__file__), 'tracker.py')
 bark_server_process = None
 bark_server_thread = None
 
@@ -25,12 +32,21 @@ bark_server_thread = None
 script_process = None
 script_thread = None
 
-# --- 分离的日志缓存 ---
+# --- 分离的日志缓存及文件 ---
 tracker_log_buffer = io.StringIO()
 bark_log_buffer = io.StringIO()
+TRACKER_LOG_FILE = os.path.join(LOG_DIR, 'tracker.log')
+BARK_LOG_FILE = os.path.join(LOG_DIR, 'bark.log')
+
+if os.path.exists(TRACKER_LOG_FILE):
+    with open(TRACKER_LOG_FILE, 'r') as f:
+        tracker_log_buffer.write(f.read())
+if os.path.exists(BARK_LOG_FILE):
+    with open(BARK_LOG_FILE, 'r') as f:
+        bark_log_buffer.write(f.read())
 
 # --- 环境变量文件路径 ---
-DOTENV_PATH = os.path.join(os.path.dirname(__file__), '.env')
+DOTENV_PATH = os.path.join(BASE_DIR, '.env')
 load_dotenv(DOTENV_PATH)
 
 
@@ -76,10 +92,14 @@ def read_script_output():
         for line in iter(script_process.stdout.readline, ''):
             log_line = f"[TRACKER] {line}"
             tracker_log_buffer.write(log_line)
+            with open(TRACKER_LOG_FILE, 'a') as f:
+                f.write(log_line)
             socketio.emit('tracker_log', {'data': log_line})
     except Exception as e:
         error_line = f"[TRACKER] ERROR: 读取脚本输出时发生错误: {e}\n"
         tracker_log_buffer.write(error_line)
+        with open(TRACKER_LOG_FILE, 'a') as f:
+            f.write(error_line)
         socketio.emit('tracker_log', {'data': error_line})
     finally:
         if script_process and script_process.stdout:
@@ -88,6 +108,8 @@ def read_script_output():
         return_code = script_process.wait() if script_process else 'N/A'
         final_message = f"[TRACKER] 脚本已停止，返回码: {return_code}\n"
         tracker_log_buffer.write(final_message)
+        with open(TRACKER_LOG_FILE, 'a') as f:
+            f.write(final_message)
         socketio.emit('tracker_log', {'data': final_message})
         socketio.emit('script_status', {'running': False})
         script_process = None
@@ -104,7 +126,7 @@ def start_script():
     emit('tracker_log', {'data': "[SYSTEM] 正在启动追踪脚本...\n"})
     try:
         script_process = subprocess.Popen(
-            [sys.executable, '-u', 'main.py'],
+            [sys.executable, '-u', TRACKER_SCRIPT],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
         )
         emit('tracker_log', {'data': "[TRACKER] 脚本已启动。\n"})
@@ -137,10 +159,14 @@ def read_bark_output():
         for line in iter(bark_server_process.stdout.readline, ''):
             log_line = f"[BARK] {line}"
             bark_log_buffer.write(log_line)
+            with open(BARK_LOG_FILE, 'a') as f:
+                f.write(log_line)
             socketio.emit('bark_log', {'data': log_line})
     except Exception as e:
         error_line = f"[BARK] ERROR: 读取服务输出时发生错误: {e}\n"
         bark_log_buffer.write(error_line)
+        with open(BARK_LOG_FILE, 'a') as f:
+            f.write(error_line)
         socketio.emit('bark_log', {'data': error_line})
     finally:
         if bark_server_process and bark_server_process.stdout:
@@ -149,6 +175,8 @@ def read_bark_output():
         return_code = bark_server_process.wait() if bark_server_process else 'N/A'
         final_message = f"[BARK] 服务已停止，返回码: {return_code}\n"
         bark_log_buffer.write(final_message)
+        with open(BARK_LOG_FILE, 'a') as f:
+            f.write(final_message)
         socketio.emit('bark_log', {'data': final_message})
         socketio.emit('bark_server_status', {'running': False})
         bark_server_process = None
@@ -164,9 +192,9 @@ def start_bark_server():
     
     emit('bark_log', {'data': "[SYSTEM] 正在启动 Bark 服务...\n"})
     try:
-        os.makedirs('./bark-data', exist_ok=True)
+        os.makedirs(BARK_DATA_DIR, exist_ok=True)
         bark_server_process = subprocess.Popen(
-            [BARK_EXECUTABLE, '-addr', '0.0.0.0:8080', '-data', './bark-data'],
+            [BARK_EXECUTABLE, '-addr', '0.0.0.0:8080', '-data', BARK_DATA_DIR],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
         )
         emit('bark_log', {'data': "[BARK] 服务已启动。\n"})
