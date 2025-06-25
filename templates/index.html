@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>快递追踪器控制台</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.min.js"></script>
+    <style>
+        /* ... (CSS 样式保持不变) ... */
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>快递追踪器控制台</h1>
+
+        <div class="section">
+            <h2>脚本状态</h2>
+            <div class="controls">
+                <button id="startButton" class="start">启动脚本</button>
+                <button id="stopButton" class="stop" disabled>停止脚本</button>
+                <span id="statusIndicator" class="status-indicator stopped"></span>
+                <span id="statusText">未运行</span>
+            </div>
+            <div class="log-output" id="logOutput">{{ initial_log }}</div>
+        </div>
+
+        <div class="section">
+            <h2>环境变量配置</h2>
+            <form id="envForm" class="env-form">
+                {% for key, value in env_vars.items() %}
+                    <label for="{{ key }}">{{ key }}:</label>
+                    <input type="text" id="{{ key }}" name="{{ key }}" value="{{ value }}"><br>
+                {% endfor %}
+                <button type="submit">保存环境变量</button>
+            </form>
+            <div id="envMessage" class="message"></div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        const logOutput = document.getElementById('logOutput');
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const statusIndicator = document.getElementById('statusIndicator');
+        const statusText = document.getElementById('statusText');
+        const envForm = document.getElementById('envForm');
+        const envMessage = document.getElementById('envMessage');
+
+        function appendLog(message) {
+            logOutput.innerHTML += message;
+            logOutput.scrollTop = logOutput.scrollHeight; // 滚动到底部
+        }
+
+        function updateScriptStatus(isRunning) {
+            startButton.disabled = isRunning;
+            stopButton.disabled = !isRunning;
+            if (isRunning) {
+                statusIndicator.classList.remove('stopped');
+                statusIndicator.classList.add('running');
+                statusText.textContent = '运行中';
+            } else {
+                statusIndicator.classList.remove('running');
+                statusIndicator.classList.add('stopped');
+                statusText.textContent = '未运行';
+            }
+        }
+
+        // Socket.IO 事件监听
+        socket.on('connect', () => {
+            console.log('Connected to WebSocket server');
+            // 连接时不需要发送历史日志，因为页面加载时已经通过 initial_log 渲染
+            // 首次连接时，如果脚本已经在运行，会收到 script_status
+        });
+
+        socket.on('log_message', (data) => {
+            appendLog(data.data);
+        });
+
+        socket.on('script_status', (data) => {
+            updateScriptStatus(data.running);
+        });
+
+        // 按钮点击事件
+        startButton.addEventListener('click', () => {
+            socket.emit('start_script');
+        });
+
+        stopButton.addEventListener('click', () => {
+            socket.emit('stop_script');
+        });
+
+        // Env 表单提交
+        envForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const formData = new FormData(envForm);
+            const data = {};
+            for (let [key, value] of formData.entries()) {
+                data[key] = value;
+            }
+
+            try {
+                const response = await fetch('/update_env', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+                const result = await response.json();
+                envMessage.style.display = 'block';
+                envMessage.textContent = result.message;
+                if (result.status === 'success') {
+                    envMessage.className = 'message success';
+                } else {
+                    envMessage.className = 'message error';
+                }
+            } catch (error) {
+                console.error('Error updating env:', error);
+                envMessage.style.display = 'block';
+                envMessage.className = 'message error';
+                envMessage.textContent = '保存环境变量时发生错误。';
+            }
+        });
+
+        // 页面加载时滚动日志到底部
+        document.addEventListener('DOMContentLoaded', () => {
+            logOutput.scrollTop = logOutput.scrollHeight;
+        });
+
+    </script>
+</body>
+</html>
