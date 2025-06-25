@@ -1,1 +1,1 @@
-.\.venv\Scripts\python.exe .\main.py
+python src\tracker.py
