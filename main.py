@@ -33,13 +33,13 @@ def send_bark_notification(title, message):
     try:
         resp = requests.get(url)
         if resp.status_code == 200:
-            print("Bark 通知已发送。", flush=True) # 添加 flush=True
+            print("Bark 通知已发送。")
         else:
-            print(f"Bark 通知发送失败，状态码：{resp.status_code}，等待30秒后重试...", flush=True) # 添加 flush=True
+            print(f"Bark 通知发送失败，状态码：{resp.status_code}，等待30秒后重试...")
             time.sleep(30)
             send_bark_notification(title, message)
     except Exception as e:
-        print("发送 Bark 通知时出错：", e, flush=True) # 添加 flush=True
+        print("发送 Bark 通知时出错：", e)
 
 def get_latest_tracking_info(): # 不再需要 driver 参数
     """
@@ -71,13 +71,13 @@ def get_latest_tracking_info(): # 不再需要 driver 参数
         # 定位 summary 为 "履歴情報" 的物流信息表格
         table = soup.find("table", {"class": "tableType01 txt_c m_b5", "summary": "履歴情報"})
         if not table:
-            print("未能找到物流信息表格。", flush=True) # 添加 flush=True
+            print("未能找到物流信息表格。")
             return None
 
         # 查找所有日期单元格
         date_cells = table.find_all("td", class_="w_120")
         if not date_cells:
-            print("未能提取到任何物流记录。", flush=True) # 添加 flush=True
+            print("未能提取到任何物流记录。")
             return None
 
         # 取最后一个记录作为最新进展
@@ -88,37 +88,37 @@ def get_latest_tracking_info(): # 不再需要 driver 参数
         latest_info = f"{latest_date} {latest_status}"
         return latest_info
     except requests.exceptions.RequestException as e:
-        print(f"请求快递信息失败: {e}", flush=True) # 添加 flush=True
+        print(f"请求快递信息失败: {e}")
         return None
     except Exception as e:
-        print(f"解析快递信息时出错: {e}", flush=True) # 添加 flush=True
+        print(f"解析快递信息时出错: {e}")
         return None
 
 def main():
-    print("快递监控程序启动...", flush=True) # 添加 flush=True
+    print("快递监控程序启动...")
 
     last_info = None
     try:
         while True:
             current_info = get_latest_tracking_info()
             if current_info:
-                print("最新物流记录：", current_info, flush=True) # 添加 flush=True
+                print("最新物流记录：", current_info)
                 # 首次获取到物流信息时直接发送通知
                 if last_info is None:
                     send_bark_notification("快递更新通知", f"{current_info}\n查看详情：{TRACKING_URL}")
                     last_info = current_info
                 elif current_info != last_info:
-                    print("检测到快递进展更新！", flush=True) # 添加 flush=True
+                    print("检测到快递进展更新！")
                     notify_message = f"{current_info}\n查看详情：{TRACKING_URL}"
                     send_bark_notification("快递更新通知", notify_message)
                     last_info = current_info
                 else:
-                    print(f"暂无更新。 当前时间: {time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True) # 添加 flush=True
+                    print(f"暂无更新。 当前时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
             else:
-                print("无法获取最新快递信息。", flush=True) # 添加 flush=True
+                print("无法获取最新快递信息。")
             time.sleep(CHECK_INTERVAL)
     except KeyboardInterrupt:
-        print("程序终止。", flush=True) # 添加 flush=True
+        print("程序终止。")
     finally:
         pass
 

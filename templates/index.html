@@ -3,33 +3,114 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>快递追踪器控制台</title>
+    <title>快递追踪器与通知服务控制台</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.min.js"></script>
     <style>
-        /* ... (CSS 样式保持不变) ... */
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f4; color: #333; }
+        .container { max-width: 900px; margin: auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        h1, h2 { color: #0056b3; }
+        h1 { text-align: center; }
+        .section { margin-bottom: 20px; padding: 15px; border: 1px solid #ddd; border-radius: 5px; background-color: #f9f9f9; }
+        .log-output {
+            margin-top: 1rem;
+            background-color: #1a1a1a;
+            color: #0f0;
+            padding: 10px;
+            height: 400px; /* 增加了一些高度 */
+            overflow-y: scroll;
+            border-radius: 5px;
+            white-space: pre-wrap;
+            font-family: 'Courier New', Courier, monospace;
+        }
+        .controls { display: flex; align-items: center; gap: 10px; /* 增加了元素间距 */ }
+        .controls button {
+            padding: 10px 15px;
+            margin-right: 10px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: opacity 0.2s;
+        }
+        .controls button.start { background-color: #28a745; color: white; }
+        .controls button.stop { background-color: #dc3545; color: white; }
+        .controls button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        .status-indicator {
+            display: inline-block;
+            width: 15px;
+            height: 15px;
+            border-radius: 50%;
+            background-color: gray;
+            margin-left: 10px;
+            vertical-align: middle;
+            transition: background-color 0.3s;
+        }
+        .status-indicator.running { background-color: #28a745; box-shadow: 0 0 8px #28a745; }
+        .status-indicator.stopped { background-color: #dc3545; }
+        .env-form label { display: block; margin-bottom: 5px; font-weight: bold; }
+        .env-form input[type="text"] {
+            width: calc(100% - 22px);
+            padding: 8px;
+            margin-bottom: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .env-form button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .message {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 5px;
+            display: none;
+        }
+        .message.success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .message.error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>快递追踪器控制台</h1>
+        <h1>快递追踪器与通知服务控制台</h1>
 
         <div class="section">
-            <h2>脚本状态</h2>
+            <h2>快递追踪脚本状态</h2>
             <div class="controls">
                 <button id="startButton" class="start">启动脚本</button>
                 <button id="stopButton" class="stop" disabled>停止脚本</button>
                 <span id="statusIndicator" class="status-indicator stopped"></span>
                 <span id="statusText">未运行</span>
             </div>
-            <div class="log-output" id="logOutput">{{ initial_log }}</div>
         </div>
 
+        <div class="section">
+            <h2>Bark 通知服务状态</h2>
+            <div class="controls">
+                <button id="startBarkButton" class="start">启动服务</button>
+                <button id="stopBarkButton" class="stop" disabled>停止服务</button>
+                <span id="barkStatusIndicator" class="status-indicator stopped"></span>
+                <span id="barkStatusText">未运行</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>实时日志</h2>
+            <div class="log-output" id="logOutput">{{ initial_log | replace('\n', '<br>') | safe }}</div>
+        </div>
+        
         <div class="section">
             <h2>环境变量配置</h2>
             <form id="envForm" class="env-form">
                 {% for key, value in env_vars.items() %}
                     <label for="{{ key }}">{{ key }}:</label>
-                    <input type="text" id="{{ key }}" name="{{ key }}" value="{{ value }}"><br>
+                    <input type="text" id="{{ key }}" name="{{ key }}" value="{{ value }}">
                 {% endfor %}
                 <button type="submit">保存环境变量</button>
             </form>
@@ -40,15 +121,26 @@
     <script>
         const socket = io();
         const logOutput = document.getElementById('logOutput');
+        
+        // 脚本控制元素
         const startButton = document.getElementById('startButton');
         const stopButton = document.getElementById('stopButton');
         const statusIndicator = document.getElementById('statusIndicator');
         const statusText = document.getElementById('statusText');
+
+        // Bark 控制元素
+        const startBarkButton = document.getElementById('startBarkButton');
+        const stopBarkButton = document.getElementById('stopBarkButton');
+        const barkStatusIndicator = document.getElementById('barkStatusIndicator');
+        const barkStatusText = document.getElementById('barkStatusText');
+
+        // 环境变量表单元素
         const envForm = document.getElementById('envForm');
         const envMessage = document.getElementById('envMessage');
 
         function appendLog(message) {
-            logOutput.innerHTML += message;
+            // 将接收到的文本中的换行符转换为HTML的<br>标签，以便正确显示
+            logOutput.innerHTML += message.replace(/\n/g, '<br>');
             logOutput.scrollTop = logOutput.scrollHeight; // 滚动到底部
         }
 
@@ -66,11 +158,23 @@
             }
         }
 
+        function updateBarkServerStatus(isRunning) {
+            startBarkButton.disabled = isRunning;
+            stopBarkButton.disabled = !isRunning;
+            if (isRunning) {
+                barkStatusIndicator.classList.remove('stopped');
+                barkStatusIndicator.classList.add('running');
+                barkStatusText.textContent = '运行中';
+            } else {
+                barkStatusIndicator.classList.remove('running');
+                barkStatusIndicator.classList.add('stopped');
+                barkStatusText.textContent = '未运行';
+            }
+        }
+
         // Socket.IO 事件监听
         socket.on('connect', () => {
             console.log('Connected to WebSocket server');
-            // 连接时不需要发送历史日志，因为页面加载时已经通过 initial_log 渲染
-            // 首次连接时，如果脚本已经在运行，会收到 script_status
         });
 
         socket.on('log_message', (data) => {
@@ -81,13 +185,23 @@
             updateScriptStatus(data.running);
         });
 
+        socket.on('bark_server_status', (data) => {
+            updateBarkServerStatus(data.running);
+        });
+
         // 按钮点击事件
         startButton.addEventListener('click', () => {
             socket.emit('start_script');
         });
-
         stopButton.addEventListener('click', () => {
             socket.emit('stop_script');
+        });
+
+        startBarkButton.addEventListener('click', () => {
+            socket.emit('start_bark_server');
+        });
+        stopBarkButton.addEventListener('click', () => {
+            socket.emit('stop_bark_server');
         });
 
         // Env 表单提交
@@ -102,19 +216,13 @@
             try {
                 const response = await fetch('/update_env', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(data)
                 });
                 const result = await response.json();
                 envMessage.style.display = 'block';
                 envMessage.textContent = result.message;
-                if (result.status === 'success') {
-                    envMessage.className = 'message success';
-                } else {
-                    envMessage.className = 'message error';
-                }
+                envMessage.className = result.status === 'success' ? 'message success' : 'message error';
             } catch (error) {
                 console.error('Error updating env:', error);
                 envMessage.style.display = 'block';
@@ -127,7 +235,6 @@
         document.addEventListener('DOMContentLoaded', () => {
             logOutput.scrollTop = logOutput.scrollHeight;
         });
-
     </script>
 </body>
 </html>
