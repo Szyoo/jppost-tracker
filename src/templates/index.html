@@ -65,9 +65,9 @@
       </div>
     </div>
 
-    <script>
-      window.initialEnvVars = JSON.parse("{{ env_vars | tojson | safe }}");
-    </script>
+      <script>
+        window.initialEnvVars = {{ env_vars | tojson | safe }};
+      </script>
     <script src="/static/app.js"></script>
   </body>
 </html>
