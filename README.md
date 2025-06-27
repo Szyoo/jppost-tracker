@@ -2,6 +2,14 @@
 
 该项目提供一个基于 Flask + Vue 的简单网页界面，用于追踪日本邮政快递并通过 [Bark](https://github.com/Finb/bark-server) 进行推送通知。界面允许启动/停止追踪脚本和 Bark 服务，并支持在线修改 `.env` 环境变量。
 
+## 功能亮点
+
+- 实时查看追踪脚本和 Bark Server 输出日志
+- 通过浏览器一键启动或停止追踪脚本、Bark Server
+- 在线编辑 `.env` 配置，无需手动重启
+- 支持在 `logs/` 目录中保存历史日志
+- Windows 用户可直接运行 `run.bat` 启动追踪脚本
+
 ## 安装
 
 1. 安装 Python 依赖：
@@ -22,9 +30,9 @@
    # CHECK_INTERVAL 在网页中可按“分钟 + 秒”输入，仍以秒保存
    BARK_SERVER=https://你的-bark-地址
    BARK_KEY=你的-bark-key
-  BARK_QUERY_PARAMS=?sound=minuet&level=timeSensitive
-  # BARK_QUERY_PARAMS 可在网页上直接修改完整字符串
-  # 或通过列表方式逐项编辑，效果等同
+   BARK_QUERY_PARAMS=?sound=minuet&level=timeSensitive
+   # BARK_QUERY_PARAMS 可在网页上直接修改完整字符串
+   # 或通过列表方式逐项编辑，效果等同
    BARK_URL_ENABLED=1
    # 是否在推送中附带追踪链接，可在网页中开关
    ```
