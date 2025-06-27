@@ -1,4 +1,4 @@
-const { createApp, ref, onMounted, nextTick } = Vue;
+const { createApp, ref, onMounted, nextTick, computed, watch } = Vue;
 
 // 限制前端保存的日志条数，避免大量日志导致页面阻塞
 const MAX_LOG_LINES = 500;
@@ -10,6 +10,119 @@ const app = createApp({
         const socket = ref(null);
 
         const envVars = ref(window.initialEnvVars || {});
+        // 分秒输入框
+        const rawInterval = Number(envVars.value.CHECK_INTERVAL || 0);
+        const intervalMin = ref(Math.floor(rawInterval / 60));
+        const intervalSec = ref(rawInterval % 60);
+        // 环境变量中文说明
+        const envDesc = {
+            TRACKING_NUMBER: '快递单号',
+            CHECK_INTERVAL: '查询间隔(分和秒)',
+            BARK_SERVER: 'Bark 地址',
+            BARK_KEY: 'Bark Key',
+            BARK_QUERY_PARAMS: '通知额外参数',
+            BARK_URL_ENABLED: '在通知中附带追踪链接'
+        };
+        // 将 BARK_QUERY_PARAMS 解析为对象便于编辑
+        const parseQuery = (str) => {
+            const q = {};
+            if (!str) return q;
+            str.replace(/^\?/, '').split('&').forEach(part => {
+                if (!part) return;
+                const [k, v = ''] = part.split('=');
+                q[decodeURIComponent(k)] = decodeURIComponent(v);
+            });
+            return q;
+        };
+        const buildQuery = (obj) => {
+            const parts = Object.keys(obj).map(k => `${encodeURIComponent(k)}=${encodeURIComponent(obj[k])}`);
+            return parts.length ? '?' + parts.join('&') : '';
+        };
+        const barkParams = ref(parseQuery(envVars.value.BARK_QUERY_PARAMS));
+        const includeUrl = ref(envVars.value.BARK_URL_ENABLED !== '0');
+        delete barkParams.value.url;
+        const newParam = ref('');
+        const paramOptions = {
+            sound: {
+                description: '通知铃声',
+                values: [
+                    { value: 'alarm', label: 'alarm (闹钟)' },
+                    { value: 'anticipate', label: 'anticipate (期待)' },
+                    { value: 'bell', label: 'bell (铃声)' },
+                    { value: 'birdsong', label: 'birdsong (鸟鸣)' },
+                    { value: 'bloom', label: 'bloom (绽放)' },
+                    { value: 'calypso', label: 'calypso' },
+                    { value: 'chime', label: 'chime (提示音)' },
+                    { value: 'choo', label: 'choo' },
+                    { value: 'descent', label: 'descent' },
+                    { value: 'electronic', label: 'electronic' },
+                    { value: 'fanfare', label: 'fanfare (号角)' },
+                    { value: 'glass', label: 'glass' },
+                    { value: 'gotosleep', label: 'gotosleep' },
+                    { value: 'healthnotification', label: 'healthnotification' },
+                    { value: 'horn', label: 'horn (喇叭)' },
+                    { value: 'ladder', label: 'ladder' },
+                    { value: 'mailsent', label: 'mailsent' },
+                    { value: 'minuet', label: 'minuet (小步舞曲)' },
+                    { value: 'multiwayinvitation', label: 'multiwayinvitation' },
+                    { value: 'newmail', label: 'newmail' },
+                    { value: 'newsflash', label: 'newsflash (新闻)' },
+                    { value: 'noir', label: 'noir' },
+                    { value: 'paymentsuccess', label: 'paymentsuccess' },
+                    { value: 'shake', label: 'shake' },
+                    { value: 'sherwoodforest', label: 'sherwoodforest' },
+                    { value: 'silence', label: 'silence (静音)' },
+                    { value: 'spell', label: 'spell' },
+                    { value: 'suspense', label: 'suspense' },
+                    { value: 'telegraph', label: 'telegraph' },
+                    { value: 'tiptoes', label: 'tiptoes' },
+                    { value: 'typewriters', label: 'typewriters' },
+                    { value: 'update', label: 'update' }
+                ]
+            },
+            level: {
+                description: '推送级别',
+                values: [
+                    { value: 'active', label: 'active (默认)' },
+                    { value: 'timeSensitive', label: 'timeSensitive (专注)' },
+                    { value: 'passive', label: 'passive (静默)' },
+                    { value: 'critical', label: 'critical (重要警告)' }
+                ]
+            },
+            badge: { description: '角标数字', values: [] },
+            autoCopy: { description: '自动复制', values: [{ value: '1', label: '1 (开启)' }] },
+            copy: { description: '复制的内容', values: [] },
+            group: { description: '消息分组', values: [] },
+            icon: { description: '自定义图标URL', values: [] },
+            isArchive: { description: '是否保存', values: [{ value: '1', label: '1 (保存)' }] },
+            call: { description: '重复铃声', values: [{ value: '1', label: '1 (开启)' }] },
+            action: { description: '点击无弹窗', values: [{ value: 'none', label: 'none' }] },
+            volume: { description: '重要警告音量(0-10)', values: [] }
+        };
+        const availableParams = Vue.computed(() => {
+            const result = {};
+            for (const k in paramOptions) {
+                if (!(k in barkParams.value)) {
+                    result[k] = paramOptions[k];
+                }
+            }
+            return result;
+        });
+
+        // 保持文本字段与表格参数同步
+        watch(barkParams, (val) => {
+            const combined = buildQuery(val);
+            if (envVars.value.BARK_QUERY_PARAMS !== combined) {
+                envVars.value.BARK_QUERY_PARAMS = combined;
+            }
+        }, { deep: true });
+
+        watch(() => envVars.value.BARK_QUERY_PARAMS, (val) => {
+            const current = buildQuery(barkParams.value);
+            if (val !== current) {
+                barkParams.value = parseQuery(val);
+            }
+        });
         const envMessage = ref({ text: '', type: '' });
 
         const script = ref({ running: false, logs: [] });
@@ -26,6 +139,9 @@ const app = createApp({
 
         const saveEnv = async () => {
             try {
+                envVars.value.BARK_QUERY_PARAMS = buildQuery(barkParams.value);
+                envVars.value.BARK_URL_ENABLED = includeUrl.value ? '1' : '0';
+                envVars.value.CHECK_INTERVAL = String(intervalMin.value * 60 + Number(intervalSec.value));
                 const response = await fetch('/update_env', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -43,6 +159,18 @@ const app = createApp({
                     type: 'error'
                 };
             }
+        };
+
+        const addParam = () => {
+            if (newParam.value && !(newParam.value in barkParams.value)) {
+                const opt = paramOptions[newParam.value];
+                barkParams.value[newParam.value] = opt.values[0] || '';
+                newParam.value = '';
+            }
+        };
+
+        const removeParam = (param) => {
+            delete barkParams.value[param];
         };
 
         const scrollToBottom = (element) => {
@@ -125,6 +253,16 @@ const app = createApp({
             saveEnv,
             trackerLogOutput,
             barkLogOutput,
+            barkParams,
+            envDesc,
+            paramOptions,
+            availableParams,
+            includeUrl,
+            intervalMin,
+            intervalSec,
+            newParam,
+            addParam,
+            removeParam
         };
     }
 });

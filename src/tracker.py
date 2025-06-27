@@ -17,7 +17,10 @@ CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", 300))  # 默认值300秒
 # Bark 推送配置
 BARK_SERVER = os.getenv("BARK_SERVER")
 BARK_KEY = os.getenv("BARK_KEY")
-BARK_QUERY_PARAMS = os.getenv("BARK_QUERY_PARAMS", "?sound=minuet&level=timeSensitive") # 默认值
+# Bark 额外查询参数，可在网页中配置
+BARK_QUERY_PARAMS = os.getenv("BARK_QUERY_PARAMS", "?sound=minuet&level=timeSensitive")
+# 是否在通知中包含追踪链接
+BARK_URL_ENABLED = os.getenv("BARK_URL_ENABLED", "1")
 # ----------------------------------------------
 
 def send_bark_notification(title, message):
@@ -29,7 +32,13 @@ def send_bark_notification(title, message):
     # 将 safe 参数设为空字符串，确保所有字符都被编码
     title_enc = urllib.parse.quote(title, safe="")
     message_enc = urllib.parse.quote(message, safe="")
-    url = f"{BARK_SERVER}/{BARK_KEY}/{title_enc}/{message_enc}{BARK_QUERY_PARAMS}"
+    # 按需在查询参数中加入追踪链接
+    extra = ''
+    if BARK_URL_ENABLED and BARK_URL_ENABLED != '0':
+        joiner = '&' if BARK_QUERY_PARAMS else '?'
+        extra = f"{joiner}url={urllib.parse.quote(TRACKING_URL, safe='')}"
+
+    url = f"{BARK_SERVER}/{BARK_KEY}/{title_enc}/{message_enc}{BARK_QUERY_PARAMS}{extra}"
     try:
         resp = requests.get(url)
         if resp.status_code == 200:
@@ -105,12 +114,11 @@ def main():
                 print("最新物流记录：", current_info)
                 # 首次获取到物流信息时直接发送通知
                 if last_info is None:
-                    send_bark_notification("快递更新通知", f"{current_info}\n查看详情：{TRACKING_URL}")
+                    send_bark_notification("快递更新通知", current_info)
                     last_info = current_info
                 elif current_info != last_info:
                     print("检测到快递进展更新！")
-                    notify_message = f"{current_info}\n查看详情：{TRACKING_URL}"
-                    send_bark_notification("快递更新通知", notify_message)
+                    send_bark_notification("快递更新通知", current_info)
                     last_info = current_info
                 else:
                     print(f"暂无更新。 当前时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
