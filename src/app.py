@@ -54,7 +54,14 @@ load_dotenv(DOTENV_PATH)
 def index():
     """渲染主页面，并加载当前的环境变量和分离的历史日志。"""
     env_vars = dotenv_values(DOTENV_PATH)
-    default_keys = ["TRACKING_NUMBER", "CHECK_INTERVAL", "BARK_SERVER", "BARK_KEY", "BARK_QUERY_PARAMS"]
+    default_keys = [
+        "TRACKING_NUMBER",
+        "CHECK_INTERVAL",
+        "BARK_SERVER",
+        "BARK_KEY",
+        "BARK_QUERY_PARAMS",
+        "BARK_URL_ENABLED",
+    ]
     display_env = {k: env_vars.get(k, "") for k in default_keys}
     initial_tracker_log = tracker_log_buffer.getvalue()
     initial_bark_log = bark_log_buffer.getvalue()
