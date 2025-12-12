@@ -359,6 +359,9 @@ const app = createApp({
             });
 
             // 远程健康检测日志仅写本地文件，不在 UI 展示
+
+            // 页面加载后自动检测一次远程健康状态
+            fetchRemoteBarkStatus();
         });
 
         // 切换到远程 tab 时先检查一次
