@@ -77,7 +77,13 @@ def index():
         "BARK_QUERY_PARAMS",
         "BARK_URL_ENABLED",
     ]
-    display_env = {k: env_vars.get(k, "") for k in default_keys}
+    # 以 .env 为准；若 .env 未包含该键，则回退到进程环境变量（Render Dashboard 设置）
+    display_env = {}
+    for k in default_keys:
+        if k in env_vars and env_vars[k] is not None:
+            display_env[k] = env_vars[k]
+        else:
+            display_env[k] = os.getenv(k, "")
     initial_tracker_log = tracker_log_buffer.getvalue()
     initial_bark_log = bark_log_buffer.getvalue()
     return render_template('index.html', env_vars=display_env, initial_tracker_log=initial_tracker_log, initial_bark_log=initial_bark_log)
@@ -240,6 +246,9 @@ def update_env():
     if not data:
         return jsonify({"status": "error", "message": "无效的请求数据"}), 400
 
+    if len(data) == 0:
+        return jsonify({"status": "success", "message": "没有检测到需要更新的变量。"})
+
     if not os.path.exists(DOTENV_PATH):
         open(DOTENV_PATH, 'a').close()
 
@@ -251,6 +260,7 @@ def update_env():
         except Exception as e:
             errors.append(f"更新 {key} 失败: {e}")
 
+    # 仅将 .env 中的键覆盖到进程环境变量；不影响 Render 侧未写入 .env 的变量
     load_dotenv(DOTENV_PATH, override=True)
 
     if updated_count > 0:

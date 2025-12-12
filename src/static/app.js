@@ -10,6 +10,8 @@ const app = createApp({
         const socket = ref(null);
 
         const envVars = ref(window.initialEnvVars || {});
+        // 记录初始快照，用于只提交变更字段，避免覆盖 Render 环境变量
+        const originalEnvVars = ref({ ...envVars.value });
         // 分秒输入框
         const rawInterval = Number(envVars.value.CHECK_INTERVAL || 0);
         const intervalMin = ref(Math.floor(rawInterval / 60));
@@ -227,16 +229,26 @@ const app = createApp({
                 envVars.value.BARK_QUERY_PARAMS = buildQuery(barkParams.value);
                 envVars.value.BARK_URL_ENABLED = includeUrl.value ? '1' : '0';
                 envVars.value.CHECK_INTERVAL = String(intervalMin.value * 60 + Number(intervalSec.value));
+                // 只发送发生变化的键
+                const changed = {};
+                for (const [key, value] of Object.entries(envVars.value)) {
+                    if (originalEnvVars.value[key] !== value) {
+                        changed[key] = value;
+                    }
+                }
                 const response = await fetch('/update_env', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(envVars.value)
+                    body: JSON.stringify(changed)
                 });
                 const result = await response.json();
                 envMessage.value = {
                     text: result.message,
                     type: result.status === 'success' ? 'success' : 'error'
                 };
+                if (result.status === 'success') {
+                    originalEnvVars.value = { ...envVars.value };
+                }
             } catch (error) {
                 console.error('Error updating env:', error);
                 envMessage.value = {
