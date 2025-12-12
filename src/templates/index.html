@@ -40,36 +40,9 @@
             <div class="section service-panel">
               <div class="section-header-row">
                 <h2>Bark 通知服务</h2>
-                <div class="tab-bar">
-                  <button
-                    type="button"
-                    :class="['tab-btn', { active: barkTab === 'local' }]"
-                    @click="barkTab = 'local'"
-                  >本地</button>
-                  <button
-                    type="button"
-                    :class="['tab-btn', { active: barkTab === 'remote' }]"
-                    @click="barkTab = 'remote'"
-                  >远程</button>
-                </div>
               </div>
 
-              <div v-if="barkTab === 'local'" class="service-panel-body">
-                <div class="controls">
-                  <button @click="startBarkServer" :disabled="bark.running" class="start">启动服务</button>
-                  <button @click="stopBarkServer" :disabled="!bark.running" class="stop">停止服务</button>
-                  <span :class="['status-indicator', { running: bark.running, stopped: !bark.running }]"></span>
-                  <span>[[ bark.running ? '运行中' : '未运行' ]]</span>
-                </div>
-                <div class="log-container">
-                  <h3>Bark 服务实时日志</h3>
-                  <div class="log-output" ref="barkLogOutput">
-                    <div v-for="(line, index) in bark.logs" :key="index" v-html="line"></div>
-                  </div>
-                </div>
-              </div>
-
-              <div v-else class="remote-panel service-panel-body">
+              <div class="remote-panel service-panel-body">
                 <div class="remote-header">
                   <h3>远程 Bark Server 状态</h3>
                 </div>
