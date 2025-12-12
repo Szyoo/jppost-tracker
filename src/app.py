@@ -77,11 +77,12 @@ def index():
         "BARK_QUERY_PARAMS",
         "BARK_URL_ENABLED",
     ]
-    # 以 .env 为准；若 .env 未包含该键，则回退到进程环境变量（Render Dashboard 设置）
+    # 以 .env 的非空值为准；若 .env 未包含或为空，则回退到进程环境变量（Render Dashboard 设置）
     display_env = {}
     for k in default_keys:
-        if k in env_vars and env_vars[k] is not None:
-            display_env[k] = env_vars[k]
+        val = env_vars.get(k)
+        if val is not None and str(val).strip() != "":
+            display_env[k] = val
         else:
             display_env[k] = os.getenv(k, "")
     initial_tracker_log = tracker_log_buffer.getvalue()
@@ -260,8 +261,12 @@ def update_env():
         except Exception as e:
             errors.append(f"更新 {key} 失败: {e}")
 
-    # 仅将 .env 中的键覆盖到进程环境变量；不影响 Render 侧未写入 .env 的变量
-    load_dotenv(DOTENV_PATH, override=True)
+    # 将本次更新的非空值同步到当前进程环境变量；
+    # 空值不覆盖已有进程环境变量，避免与 Render/本地 shell 配置冲突。
+    for key, value in data.items():
+        if isinstance(value, str) and value.strip() == "":
+            continue
+        os.environ[key] = str(value)
 
     if updated_count > 0:
         message = f"成功更新 {updated_count} 个环境变量。"
