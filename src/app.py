@@ -3,6 +3,7 @@ import subprocess
 import threading
 import sys
 import io
+import time
 
 import eventlet
 eventlet.monkey_patch()
@@ -10,6 +11,7 @@ eventlet.monkey_patch()
 from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO, emit
 from dotenv import load_dotenv, set_key, dotenv_values
+import requests
 
 # 初始化 Flask 应用
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
@@ -35,8 +37,10 @@ script_thread = None
 # --- 分离的日志缓存及文件 ---
 tracker_log_buffer = io.StringIO()
 bark_log_buffer = io.StringIO()
+remote_bark_log_buffer = io.StringIO()
 TRACKER_LOG_FILE = os.path.join(LOG_DIR, 'tracker.log')
 BARK_LOG_FILE = os.path.join(LOG_DIR, 'bark.log')
+REMOTE_BARK_LOG_FILE = os.path.join(LOG_DIR, 'remote_bark.log')
 
 if os.path.exists(TRACKER_LOG_FILE):
     with open(TRACKER_LOG_FILE, 'r') as f:
@@ -44,6 +48,16 @@ if os.path.exists(TRACKER_LOG_FILE):
 if os.path.exists(BARK_LOG_FILE):
     with open(BARK_LOG_FILE, 'r') as f:
         bark_log_buffer.write(f.read())
+if os.path.exists(REMOTE_BARK_LOG_FILE):
+    with open(REMOTE_BARK_LOG_FILE, 'r') as f:
+        remote_bark_log_buffer.write(f.read())
+
+def log_remote_bark(line: str):
+    """写入远程 Bark 健康检测日志，并推送到前端。"""
+    remote_bark_log_buffer.write(line)
+    with open(REMOTE_BARK_LOG_FILE, 'a') as f:
+        f.write(line)
+    socketio.emit('remote_bark_log', {'data': line})
 
 # --- 环境变量文件路径 ---
 DOTENV_PATH = os.path.join(BASE_DIR, '.env')
@@ -59,6 +73,7 @@ def index():
         "CHECK_INTERVAL",
         "BARK_SERVER",
         "BARK_KEY",
+        "BARK_HEALTH_PATH",
         "BARK_QUERY_PARAMS",
         "BARK_URL_ENABLED",
     ]
@@ -75,6 +90,7 @@ def test_connect():
     emit('bark_server_status', {'running': bark_server_process is not None and bark_server_process.poll() is None})
     emit('full_tracker_log', {'data': tracker_log_buffer.getvalue()})
     emit('full_bark_log', {'data': bark_log_buffer.getvalue()})
+    emit('full_remote_bark_log', {'data': remote_bark_log_buffer.getvalue()})
 
 # --- 追踪脚本控制 ---
 
@@ -244,6 +260,63 @@ def update_env():
         return jsonify({"status": "success", "message": message})
     else:
         return jsonify({"status": "error", "message": "没有变量被更新或发生错误: " + "; ".join(errors)}), 500
+
+# --- 远程 Bark 服务状态 ---
+
+@app.route('/remote_bark_status', methods=['GET'])
+def remote_bark_status():
+    """
+    检查远程 Bark Server 是否可访问。
+    返回:
+      configured: 是否配置了 BARK_SERVER
+      url: 当前 BARK_SERVER
+      ok: 是否成功访问(HTTP 200)
+      status_code: 响应码(如有)
+      latency_ms: 请求耗时
+      error: 错误信息(如有)
+    """
+    bark_url = os.getenv("BARK_SERVER", "").strip()
+    if not bark_url:
+        return jsonify({
+            "configured": False,
+            "url": "",
+            "ok": False,
+            "status_code": None,
+            "latency_ms": None,
+            "error": "未配置 BARK_SERVER"
+        })
+
+    # 去掉末尾 /，避免双斜杠，并按配置健康路径检测
+    bark_url = bark_url.rstrip("/")
+    health_path = os.getenv("BARK_HEALTH_PATH", "/").strip() or "/"
+    if not health_path.startswith("/"):
+        health_path = "/" + health_path
+    health_url = f"{bark_url}{health_path}"
+    log_remote_bark(f"[REMOTE_BARK] {time.strftime('%Y-%m-%d %H:%M:%S')} CHECK {health_url}\n")
+    start = time.time()
+    try:
+        resp = requests.get(health_url, timeout=5)
+        latency_ms = int((time.time() - start) * 1000)
+        log_remote_bark(f"[REMOTE_BARK] {time.strftime('%Y-%m-%d %H:%M:%S')} OK HTTP {resp.status_code} {latency_ms}ms\n")
+        return jsonify({
+            "configured": True,
+            "url": bark_url,
+            "ok": resp.status_code == 200,
+            "status_code": resp.status_code,
+            "latency_ms": latency_ms,
+            "error": None if resp.status_code == 200 else f"HTTP {resp.status_code}"
+        })
+    except Exception as e:
+        latency_ms = int((time.time() - start) * 1000)
+        log_remote_bark(f"[REMOTE_BARK] {time.strftime('%Y-%m-%d %H:%M:%S')} ERROR {latency_ms}ms {e}\n")
+        return jsonify({
+            "configured": True,
+            "url": bark_url,
+            "ok": False,
+            "status_code": None,
+            "latency_ms": latency_ms,
+            "error": str(e)
+        })
 
 if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=6060, debug=True, use_reloader=False)

@@ -19,7 +19,8 @@ const app = createApp({
             TRACKING_NUMBER: '快递单号',
             CHECK_INTERVAL: '查询间隔(分和秒)',
             BARK_SERVER: 'Bark 地址',
-            BARK_KEY: 'Bark Key',
+            BARK_KEY: 'Bark Key/设备 Token',
+            BARK_HEALTH_PATH: '远程 Bark 健康路径',
             BARK_QUERY_PARAMS: '通知额外参数',
             BARK_URL_ENABLED: '在通知中附带追踪链接'
         };
@@ -128,6 +129,29 @@ const app = createApp({
         const script = ref({ running: false, logs: [] });
         const bark = ref({ running: false, logs: [] });
 
+        // Bark 面板 Tab：local / remote
+        const barkTab = ref('local');
+        const remoteBark = ref({
+            loading: false,
+            configured: false,
+            url: '',
+            ok: false,
+            status_code: null,
+            latency_ms: null,
+            error: null,
+            checked_at: ''
+        });
+
+        // 远程 Bark 刷新模式（默认手动）
+        const remoteRefreshMode = ref('manual'); // manual | auto
+        // 已应用的间隔（用于定时器）
+        const remoteAutoMin = ref(0);
+        const remoteAutoSec = ref(30);
+        // 输入草稿（只有点保存才应用）
+        const remoteAutoMinDraft = ref(remoteAutoMin.value);
+        const remoteAutoSecDraft = ref(remoteAutoSec.value);
+        let remoteAutoTimer = null;
+
         const trackerLogOutput = ref(null);
         const barkLogOutput = ref(null);
 
@@ -136,6 +160,67 @@ const app = createApp({
         const stopScript = () => socket.value.emit('stop_script');
         const startBarkServer = () => socket.value.emit('start_bark_server');
         const stopBarkServer = () => socket.value.emit('stop_bark_server');
+
+        const fetchRemoteBarkStatus = async () => {
+            remoteBark.value.loading = true;
+            try {
+                const response = await fetch('/remote_bark_status', { cache: 'no-store' });
+                const contentType = response.headers.get('content-type') || '';
+                let data = null;
+                if (contentType.includes('application/json')) {
+                    data = await response.json();
+                } else {
+                    const text = await response.text();
+                    data = {
+                        configured: Boolean(envVars.value.BARK_SERVER),
+                        url: envVars.value.BARK_SERVER || '',
+                        ok: false,
+                        status_code: response.status,
+                        latency_ms: null,
+                        error: `远程状态接口返回非 JSON：HTTP ${response.status}`
+                    };
+                    // 将部分返回体记录到控制台，便于排查
+                    console.warn('remote_bark_status non-json response:', text.slice(0, 200));
+                }
+                remoteBark.value = {
+                    ...remoteBark.value,
+                    ...data,
+                    loading: false,
+                    checked_at: new Date().toLocaleString()
+                };
+            } catch (e) {
+                remoteBark.value = {
+                    ...remoteBark.value,
+                    loading: false,
+                    ok: false,
+                    error: String(e),
+                    checked_at: new Date().toLocaleString()
+                };
+            }
+        };
+
+        const clearRemoteAutoTimer = () => {
+            if (remoteAutoTimer) {
+                clearInterval(remoteAutoTimer);
+                remoteAutoTimer = null;
+            }
+        };
+
+        const startRemoteAutoTimer = () => {
+            clearRemoteAutoTimer();
+            const intervalMs = (Number(remoteAutoMin.value) * 60 + Number(remoteAutoSec.value)) * 1000;
+            if (remoteRefreshMode.value !== 'auto' || !intervalMs || intervalMs < 1000) return;
+            remoteAutoTimer = setInterval(fetchRemoteBarkStatus, intervalMs);
+        };
+
+        const applyRemoteAutoInterval = () => {
+            remoteAutoMin.value = Number(remoteAutoMinDraft.value) || 0;
+            remoteAutoSec.value = Number(remoteAutoSecDraft.value) || 0;
+            startRemoteAutoTimer();
+            if (remoteRefreshMode.value === 'auto') {
+                fetchRemoteBarkStatus();
+            }
+        };
 
         const saveEnv = async () => {
             try {
@@ -237,6 +322,28 @@ const app = createApp({
                 await nextTick();
                 scrollToBottom(barkLogOutput.value);
             });
+
+            // 远程健康检测日志仅写本地文件，不在 UI 展示
+        });
+
+        // 切换到远程 tab 时先检查一次
+        watch(barkTab, (val) => {
+            if (val === 'remote' && !remoteBark.value.loading && !remoteBark.value.checked_at) {
+                fetchRemoteBarkStatus();
+            }
+        });
+
+        // 刷新模式变化时重置定时器；切到自动时用已应用的间隔
+        watch(remoteRefreshMode, (mode) => {
+            if (mode === 'auto') {
+                // 进入自动模式时同步草稿为当前已应用值
+                remoteAutoMinDraft.value = remoteAutoMin.value;
+                remoteAutoSecDraft.value = remoteAutoSec.value;
+                startRemoteAutoTimer();
+                fetchRemoteBarkStatus();
+            } else {
+                clearRemoteAutoTimer();
+            }
         });
 
         // 返回给模板使用的所有变量和方法
@@ -246,10 +353,17 @@ const app = createApp({
             envMessage,
             script,
             bark,
+            barkTab,
+            remoteBark,
             startScript,
             stopScript,
             startBarkServer,
             stopBarkServer,
+            fetchRemoteBarkStatus,
+            remoteRefreshMode,
+            remoteAutoMinDraft,
+            remoteAutoSecDraft,
+            applyRemoteAutoInterval,
             saveEnv,
             trackerLogOutput,
             barkLogOutput,
