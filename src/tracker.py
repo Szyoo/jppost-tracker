@@ -4,9 +4,18 @@ import urllib.parse
 from bs4 import BeautifulSoup
 import requests
 from dotenv import load_dotenv # 导入 load_dotenv
+import time as _time
 
 # Load environment variables from .env file
 load_dotenv()
+
+# 固定时区为日本（如果外部未指定）
+os.environ.setdefault("TZ", "Asia/Tokyo")
+if hasattr(_time, "tzset"):
+    try:
+        _time.tzset()
+    except Exception:
+        pass
 
 # ------------------ 配置区域 ------------------
 # 从 .env 文件中读取配置

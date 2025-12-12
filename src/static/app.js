@@ -224,6 +224,29 @@ const app = createApp({
             }
         };
 
+        const pasteTrackingNumber = async () => {
+            try {
+                if (navigator.clipboard && navigator.clipboard.readText) {
+                    const text = await navigator.clipboard.readText();
+                    if (text) {
+                        envVars.value.TRACKING_NUMBER = text.trim();
+                        return;
+                    }
+                }
+            } catch (e) {
+                console.warn('clipboard read failed', e);
+            }
+            // 兼容非 HTTPS/无权限场景：不弹窗，提示用户手动粘贴
+            envMessage.value = {
+                text: '浏览器不允许读取剪贴板，请在快递单号输入框手动粘贴(Cmd/Ctrl+V)。',
+                type: 'error'
+            };
+        };
+
+        const clearTrackingNumber = () => {
+            envVars.value.TRACKING_NUMBER = '';
+        };
+
         const saveEnv = async () => {
             try {
                 envVars.value.BARK_QUERY_PARAMS = buildQuery(barkParams.value);
@@ -376,6 +399,8 @@ const app = createApp({
             remoteAutoMinDraft,
             remoteAutoSecDraft,
             applyRemoteAutoInterval,
+            pasteTrackingNumber,
+            clearTrackingNumber,
             saveEnv,
             trackerLogOutput,
             barkLogOutput,
