@@ -43,6 +43,37 @@ bark_server_thread = None
 script_process = None
 script_thread = None
 
+# --- Render free 保活 ---
+keepalive_thread = None
+keepalive_stop_event = threading.Event()
+keepalive_last_code = None
+keepalive_last_error = None
+keepalive_last_at = None
+keepalive_state = "idle"  # idle | pinging | waiting | ok | error | disabled
+
+def get_public_url() -> str:
+    return os.getenv("PUBLIC_URL", "").strip().rstrip("/")
+
+def get_keepalive_interval() -> int:
+    try:
+        return int(os.getenv("KEEPALIVE_INTERVAL", "600"))
+    except Exception:
+        return 600
+
+def keepalive_is_running() -> bool:
+    return keepalive_thread is not None and keepalive_thread.is_alive()
+
+def emit_keepalive_status(running: bool, configured: bool, url: str):
+    socketio.emit('keepalive_status', {
+        'running': running,
+        'configured': configured,
+        'url': url,
+        'state': keepalive_state,
+        'last_code': keepalive_last_code,
+        'last_error': keepalive_last_error,
+        'last_at': keepalive_last_at
+    })
+
 # --- 分离的日志缓存及文件 ---
 tracker_log_buffer = io.StringIO()
 bark_log_buffer = io.StringIO()
@@ -85,6 +116,7 @@ def index():
         "BARK_HEALTH_PATH",
         "BARK_QUERY_PARAMS",
         "BARK_URL_ENABLED",
+        "PUBLIC_URL",
     ]
     # 以 .env 的非空值为准；若 .env 未包含或为空，则回退到进程环境变量（Render Dashboard 设置）
     display_env = {}
@@ -103,6 +135,16 @@ def test_connect():
     """客户端连接时发送当前所有服务的状态。"""
     print('Client connected', flush=True)
     emit('script_status', {'running': script_process is not None and script_process.poll() is None})
+    public_url = get_public_url()
+    emit('keepalive_status', {
+        'running': keepalive_is_running(),
+        'configured': bool(public_url),
+        'url': public_url,
+        'state': keepalive_state,
+        'last_code': keepalive_last_code,
+        'last_error': keepalive_last_error,
+        'last_at': keepalive_last_at
+    })
     emit('bark_server_status', {'running': bark_server_process is not None and bark_server_process.poll() is None})
     emit('full_tracker_log', {'data': tracker_log_buffer.getvalue()})
     emit('full_bark_log', {'data': bark_log_buffer.getvalue()})
@@ -128,6 +170,8 @@ def read_script_output():
             f.write(error_line)
         socketio.emit('tracker_log', {'data': error_line})
     finally:
+        # 停止保活线程
+        stop_keepalive()
         if script_process and script_process.stdout:
             script_process.stdout.close()
         
@@ -139,6 +183,81 @@ def read_script_output():
         socketio.emit('tracker_log', {'data': final_message})
         socketio.emit('script_status', {'running': False})
         script_process = None
+
+def keepalive_loop():
+    """追踪脚本运行期间定时自 ping，避免 Render free 休眠。"""
+    global keepalive_last_code, keepalive_last_error, keepalive_last_at, keepalive_state
+    while True:
+        interval = get_keepalive_interval()
+        public_url = get_public_url()
+        if not public_url:
+            keepalive_state = "disabled"
+            emit_keepalive_status(True, False, "")
+            break
+
+        # 等待到下一次 ping
+        keepalive_state = "waiting"
+        emit_keepalive_status(True, True, public_url)
+        if keepalive_stop_event.wait(interval):
+            break
+
+        # 开始 ping
+        keepalive_state = "pinging"
+        emit_keepalive_status(True, True, public_url)
+        url = f"{public_url}/remote_bark_status"
+        try:
+            resp = requests.get(url, timeout=5)
+            keepalive_last_code = resp.status_code
+            keepalive_last_error = None if resp.ok else f"HTTP {resp.status_code}"
+            keepalive_state = "ok" if resp.ok else "error"
+        except Exception as e:
+            keepalive_last_code = None
+            keepalive_last_error = str(e)
+            keepalive_state = "error"
+        keepalive_last_at = time.strftime('%Y-%m-%d %H:%M:%S')
+        emit_keepalive_status(True, True, public_url)
+
+def start_keepalive():
+    global keepalive_thread, keepalive_last_code, keepalive_last_error, keepalive_last_at, keepalive_state
+    public_url = get_public_url()
+    interval = get_keepalive_interval()
+    if not public_url or interval <= 0:
+        keepalive_state = "disabled"
+        return
+    if keepalive_thread and keepalive_thread.is_alive():
+        return
+    keepalive_stop_event.clear()
+    keepalive_state = "pinging"
+    emit_keepalive_status(True, True, public_url)
+    # 启动时立即 ping 一次
+    try:
+        resp = requests.get(f"{public_url}/remote_bark_status", timeout=5)
+        keepalive_last_code = resp.status_code
+        keepalive_last_error = None if resp.ok else f"HTTP {resp.status_code}"
+        keepalive_state = "ok" if resp.ok else "error"
+    except Exception as e:
+        keepalive_last_code = None
+        keepalive_last_error = str(e)
+        keepalive_state = "error"
+    keepalive_last_at = time.strftime('%Y-%m-%d %H:%M:%S')
+    emit_keepalive_status(True, True, public_url)
+
+    keepalive_thread = threading.Thread(target=keepalive_loop, daemon=True)
+    keepalive_thread.start()
+    msg = f"[SYSTEM] Render 保活已启用，每 {interval}s ping {public_url}\n"
+    tracker_log_buffer.write(msg)
+    with open(TRACKER_LOG_FILE, 'a') as f:
+        f.write(msg)
+    socketio.emit('tracker_log', {'data': msg})
+
+def stop_keepalive():
+    global keepalive_thread, keepalive_state
+    if keepalive_thread and keepalive_thread.is_alive():
+        keepalive_stop_event.set()
+        keepalive_thread = None
+        public_url = get_public_url()
+        keepalive_state = "idle" if public_url else "disabled"
+        emit_keepalive_status(False, bool(public_url), public_url)
 
 @socketio.on('start_script')
 def start_script():
@@ -157,6 +276,7 @@ def start_script():
         )
         emit('tracker_log', {'data': "[TRACKER] 脚本已启动。\n"})
         emit('script_status', {'running': True})
+        start_keepalive()
         
         script_thread = threading.Thread(target=read_script_output, daemon=True)
         script_thread.start()
@@ -171,6 +291,7 @@ def stop_script():
     if script_process is not None and script_process.poll() is None:
         emit('tracker_log', {'data': "[SYSTEM] 终止追踪脚本信号已发送。\n"})
         script_process.terminate()
+        stop_keepalive()
     else:
         emit('tracker_log', {'data': "[TRACKER] 脚本未运行。\n"})
         emit('script_status', {'running': False})
@@ -276,6 +397,11 @@ def update_env():
         if isinstance(value, str) and value.strip() == "":
             continue
         os.environ[key] = str(value)
+
+    # 若更新了保活相关参数，刷新前端状态显示
+    if "PUBLIC_URL" in data or "KEEPALIVE_INTERVAL" in data:
+        public_url = get_public_url()
+        emit_keepalive_status(keepalive_is_running(), bool(public_url), public_url)
 
     if updated_count > 0:
         message = f"成功更新 {updated_count} 个环境变量。"

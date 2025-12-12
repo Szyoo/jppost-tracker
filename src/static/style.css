@@ -118,6 +118,13 @@ h3 {
   line-height: 1.45;
 }
 
+/* 左侧追踪日志：占满剩余高度但不溢出 */
+.tracker-log-output {
+  flex: 1 1 0;
+  height: auto;
+  min-height: 0;
+}
+
 .log-container h3 {
   margin-top: 12px;
   margin-bottom: 4px;
@@ -243,6 +250,53 @@ h3 {
 .status-indicator.stopped {
   background-color: #ef4444;
 }
+.status-indicator.keepalive.ok {
+  background-color: #22c55e;
+  box-shadow: 0 0 8px rgba(34, 197, 94, 0.7);
+  animation: keepalive-pulse-green 2.2s ease-in-out infinite;
+}
+.status-indicator.keepalive.pending {
+  background-color: #facc15;
+  box-shadow: 0 0 8px rgba(250, 204, 21, 0.7);
+  animation: keepalive-pulse-yellow 2.2s ease-in-out infinite;
+}
+.status-indicator.keepalive.error {
+  background-color: #ef4444;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.7);
+  animation: keepalive-pulse-red 2.2s ease-in-out infinite;
+}
+.status-indicator.keepalive.stopped {
+  background-color: #9ca3af;
+  box-shadow: none;
+}
+.status-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 4px;
+}
+.status-label {
+  font-size: 12px;
+  color: #374151;
+  margin-right: 6px;
+}
+
+.keepalive-result {
+  flex: 1;
+  min-width: 0;
+  margin-left: 8px;
+  padding: 6px 10px;
+  background: #111827;
+  color: #e5e7eb;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 
 @keyframes status-pulse {
   0% {
@@ -256,6 +310,51 @@ h3 {
   100% {
     opacity: 0.55;
     box-shadow: 0 0 4px rgba(34, 197, 94, 0.3);
+  }
+}
+
+@keyframes keepalive-pulse-green {
+  0% {
+    opacity: 0.5;
+    box-shadow: 0 0 4px rgba(34, 197, 94, 0.3);
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 10px rgba(34, 197, 94, 0.9);
+  }
+  100% {
+    opacity: 0.5;
+    box-shadow: 0 0 4px rgba(34, 197, 94, 0.3);
+  }
+}
+
+@keyframes keepalive-pulse-yellow {
+  0% {
+    opacity: 0.5;
+    box-shadow: 0 0 4px rgba(250, 204, 21, 0.3);
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 10px rgba(250, 204, 21, 0.9);
+  }
+  100% {
+    opacity: 0.5;
+    box-shadow: 0 0 4px rgba(250, 204, 21, 0.3);
+  }
+}
+
+@keyframes keepalive-pulse-red {
+  0% {
+    opacity: 0.5;
+    box-shadow: 0 0 4px rgba(239, 68, 68, 0.3);
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.9);
+  }
+  100% {
+    opacity: 0.5;
+    box-shadow: 0 0 4px rgba(239, 68, 68, 0.3);
   }
 }
 .env-form {
