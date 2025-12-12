@@ -73,7 +73,12 @@ chmod +x "$DOWNLOAD_FILENAME"
 # 5. 创建符号链接以兼容 app.py
 echo "🔗  正在创建符号链接: ${APP_EXECUTABLE_NAME} -> ${DOWNLOAD_FILENAME}"
 # -s 表示创建符号链接, -f 表示如果链接已存在则强制覆盖
-ln -sf "$DOWNLOAD_FILENAME" "$APP_EXECUTABLE_NAME"
+# 如果下载文件名与 app.py 期望名相同，则无需创建链接
+if [[ "$DOWNLOAD_FILENAME" == "$APP_EXECUTABLE_NAME" ]]; then
+    echo "ℹ️  下载文件名与期望名相同，跳过创建符号链接。"
+else
+    ln -sf "$DOWNLOAD_FILENAME" "$APP_EXECUTABLE_NAME"
+fi
 
 echo ""
 echo "🎉 安装成功！"
