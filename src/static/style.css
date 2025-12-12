@@ -298,6 +298,61 @@ h3 {
   overflow: hidden;
 }
 
+/* --- Mobile layout --- */
+@media (max-width: 768px) {
+  body {
+    margin: 10px;
+  }
+  .container {
+    padding: 14px;
+    border-radius: 10px;
+  }
+  .flex-container {
+    flex-direction: column;
+    gap: 14px;
+  }
+  .flex-child {
+    width: 100%;
+  }
+  .service-panel {
+    min-height: auto;
+  }
+  .log-output {
+    height: 260px;
+    flex: 0 0 260px;
+  }
+  .tracker-log-output {
+    height: 260px;
+    flex: 0 0 260px;
+  }
+  .controls {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .remote-refresh-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .remote-refresh-toggle {
+    justify-content: flex-start;
+  }
+  .remote-refresh-right {
+    width: 100%;
+  }
+  .remote-health-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .tracking-input-controls {
+    flex-wrap: wrap;
+  }
+  .keepalive-result {
+    margin-left: 0;
+    width: 100%;
+    -webkit-line-clamp: 3;
+  }
+}
+
 @keyframes status-pulse {
   0% {
     opacity: 0.55;
