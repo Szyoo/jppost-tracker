@@ -101,7 +101,7 @@ h3 {
   padding-bottom: 0;
 }
 .log-output {
-  margin-top: 0.5rem;
+  margin-top: 0.25rem;
   background-color: #0b1020;
   color: #a7f3d0;
   padding: 14px 12px 6px;
@@ -116,6 +116,78 @@ h3 {
   font-family: "Courier New", Courier, monospace;
   font-size: 12px;
   line-height: 1.45;
+}
+
+.log-container h3 {
+  margin-top: 12px;
+  margin-bottom: 4px;
+}
+
+.remote-header {
+  margin-top: 12px;
+  margin-bottom: 4px;
+}
+
+.tracking-input-row {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.tracking-input-row label {
+  font-weight: 600;
+  font-size: 14px;
+}
+.tracking-input-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tracking-input-controls input {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 15px;
+}
+.icon-btn {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #e5e7eb;
+  background: #f8fafc;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s, box-shadow 0.2s, transform 0.05s;
+}
+.icon-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: #0f172a;
+}
+.icon-btn:hover {
+  background: #eef2f7;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.12);
+  transform: translateY(-1px);
+}
+.icon-btn:active {
+  transform: translateY(0);
+}
+.tracking-input-hint {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.tracking-section {
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px dashed #e5e7eb;
+}
+.refresh-btn.apply-tracking {
+  padding: 6px 12px;
+  font-size: 14px;
 }
 .controls {
   display: flex;
@@ -212,6 +284,7 @@ h3 {
   cursor: pointer;
 }
 .env-form input[type="text"]:focus,
+.tracking-input-controls input:focus,
 .param-input:focus,
 .time-input:focus,
 select:focus {

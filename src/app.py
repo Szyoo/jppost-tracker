@@ -13,6 +13,15 @@ from flask_socketio import SocketIO, emit
 from dotenv import load_dotenv, set_key, dotenv_values
 import requests
 
+# --- 时区固定为日本 ---
+# Render/容器里即使设置了 TZ，有时也不会自动生效；这里强制设置并调用 tzset。
+os.environ.setdefault("TZ", "Asia/Tokyo")
+if hasattr(time, "tzset"):
+    try:
+        time.tzset()
+    except Exception:
+        pass
+
 # 初始化 Flask 应用
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 LOG_DIR = os.path.join(BASE_DIR, 'logs')
