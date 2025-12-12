@@ -24,12 +24,50 @@
               <div class="controls">
                 <button @click="startScript" :disabled="script.running" class="start">启动脚本</button>
                 <button @click="stopScript" :disabled="!script.running" class="stop">停止脚本</button>
-                <span :class="['status-indicator', { running: script.running, stopped: !script.running }]"></span>
-                <span>[[ script.running ? '运行中' : '未运行' ]]</span>
+                <div class="status-group">
+                  <span :class="['status-indicator', { running: script.running, stopped: !script.running }]" title="追踪脚本状态"></span>
+                  <span class="status-label">脚本</span>
+                  <span
+                    :class="['status-indicator', 'keepalive', {
+                      running: keepalive.running,
+                      stopped: !keepalive.running,
+                      ok: keepalive.running
+                        && keepalive.last_at
+                        && keepalive.last_error == null
+                        && keepalive.last_code >= 200 && keepalive.last_code < 400
+                        && keepalive.state !== 'pinging',
+                      error: keepalive.running
+                        && keepalive.last_at
+                        && (keepalive.last_error != null || keepalive.last_code < 200 || keepalive.last_code >= 400)
+                        && keepalive.state !== 'pinging',
+                      pending: keepalive.running
+                        && (keepalive.state === 'pinging' || !keepalive.last_at)
+                    }]"
+                  ></span>
+                  <span class="status-label">保活</span>
+                </div>
+                <div class="keepalive-result" v-if="keepalive.configured">
+                  <template v-if="!keepalive.running">
+                    保活:停用 · [[ keepalive.url ]]
+                  </template>
+                  <template v-else>
+                    <span v-if="keepalive.state === 'pinging'">保活:ping中…</span>
+                    <span v-else>保活:启动中…</span>
+                  </template>
+                  <template v-else-if="keepalive.last_error == null && keepalive.last_code >= 200 && keepalive.last_code < 400">
+                    保活:OK · [[ keepalive.last_at ]] · [[ keepalive.last_code ]]
+                  </template>
+                  <template v-else>
+                    保活:ERR · [[ keepalive.last_at ]] · [[ keepalive.last_error || keepalive.last_code ]]
+                  </template>
+                </div>
+                <div class="keepalive-result" v-else>
+                  保活:关闭（未配 PUBLIC_URL）
+                </div>
               </div>
               <div class="log-container">
                 <h3>追踪脚本实时日志</h3>
-                <div class="log-output" ref="trackerLogOutput">
+                <div class="log-output tracker-log-output" ref="trackerLogOutput">
                   <div v-for="(line, index) in script.logs" :key="index" v-html="line"></div>
                 </div>
               </div>

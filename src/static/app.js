@@ -24,7 +24,8 @@ const app = createApp({
             BARK_KEY: 'Bark Key/设备 Token',
             BARK_HEALTH_PATH: '远程 Bark 健康路径',
             BARK_QUERY_PARAMS: '通知额外参数',
-            BARK_URL_ENABLED: '在通知中附带追踪链接'
+            BARK_URL_ENABLED: '在通知中附带追踪链接',
+            PUBLIC_URL: '控制台公网地址(保活用)'
         };
         // 将 BARK_QUERY_PARAMS 解析为对象便于编辑
         const parseQuery = (str) => {
@@ -129,6 +130,15 @@ const app = createApp({
         const envMessage = ref({ text: '', type: '' });
 
         const script = ref({ running: false, logs: [] });
+        const keepalive = ref({
+            running: false,
+            configured: false,
+            url: '',
+            state: 'idle',
+            last_code: null,
+            last_error: null,
+            last_at: ''
+        });
         const bark = ref({ running: false, logs: [] });
 
         // Bark 面板 Tab：local / remote
@@ -314,6 +324,15 @@ const app = createApp({
             socket.value.on('script_status', (data) => {
                 script.value.running = data.running;
             });
+            socket.value.on('keepalive_status', (data) => {
+                keepalive.value.running = data.running;
+                keepalive.value.configured = data.configured;
+                keepalive.value.url = data.url || '';
+                keepalive.value.state = data.state || 'idle';
+                keepalive.value.last_code = data.last_code ?? null;
+                keepalive.value.last_error = data.last_error ?? null;
+                keepalive.value.last_at = data.last_at || '';
+            });
             socket.value.on('bark_server_status', (data) => {
                 bark.value.running = data.running;
             });
@@ -390,6 +409,7 @@ const app = createApp({
             envVars,
             envMessage,
             script,
+            keepalive,
             bark,
             barkTab,
             remoteBark,
