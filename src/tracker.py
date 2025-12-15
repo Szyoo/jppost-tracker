@@ -101,6 +101,9 @@ def get_latest_tracking_info(): # 不再需要 driver 参数
         # 取最后一个记录作为最新进展
         latest_date = date_cells[-1].get_text(strip=True)
         latest_row = date_cells[-1].parent
+        if latest_row is None:
+            print("未能定位到最新物流记录行。")
+            return None
         status_cell = latest_row.find("td", class_="w_150")
         latest_status = status_cell.get_text(strip=True) if status_cell else ""
         latest_info = f"{latest_date} {latest_status}"
