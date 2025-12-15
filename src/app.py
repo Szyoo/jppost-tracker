@@ -156,8 +156,11 @@ def read_script_output():
     """从追踪脚本进程的管道中实时读取输出，并发送到独立的事件。"""
     global script_process
     if script_process is None: return
+    stream = script_process.stdout
+    if stream is None:
+        return
     try:
-        for line in iter(script_process.stdout.readline, ''):
+        for line in iter(stream.readline, ''):
             log_line = f"[TRACKER] {line}"
             tracker_log_buffer.write(log_line)
             with open(TRACKER_LOG_FILE, 'a') as f:
@@ -302,8 +305,11 @@ def read_bark_output():
     """从 Bark 服务进程的管道中实时读取输出，并发送到独立的事件。"""
     global bark_server_process
     if bark_server_process is None: return
+    stream = bark_server_process.stdout
+    if stream is None:
+        return
     try:
-        for line in iter(bark_server_process.stdout.readline, ''):
+        for line in iter(stream.readline, ''):
             log_line = f"[BARK] {line}"
             bark_log_buffer.write(log_line)
             with open(BARK_LOG_FILE, 'a') as f:

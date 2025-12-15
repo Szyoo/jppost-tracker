@@ -243,8 +243,15 @@
       </div>
     </div>
 
+    <script id="initial-env" type="application/json">
+      {{ env_vars | tojson | safe }}
+    </script>
     <script>
-      window.initialEnvVars = ({{ env_vars | tojson | safe }});
+      (function () {
+        const el = document.getElementById('initial-env');
+        const text = el ? el.textContent : '{}';
+        window.initialEnvVars = JSON.parse(text || '{}');
+      })();
     </script>
     <script src="/static/app.js"></script>
   </body>
