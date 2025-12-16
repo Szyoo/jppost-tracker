@@ -9,6 +9,9 @@ const app = createApp({
         const title = ref('快递追踪器与通知服务控制台 (Vue.js)');
         const socket = ref(null);
 
+        const page = ref('home'); // home | env | logs
+        const logTab = ref('remote'); // remote | tracker | bark
+
         const envVars = ref(window.initialEnvVars || {});
         // 记录初始快照，用于只提交变更字段，避免覆盖 Render 环境变量
         const originalEnvVars = ref({ ...envVars.value });
@@ -140,6 +143,7 @@ const app = createApp({
             last_at: ''
         });
         const bark = ref({ running: false, logs: [] });
+        const remoteBarkLogs = ref([]);
 
         // Bark 面板 Tab：local / remote
         const barkTab = ref('local');
@@ -166,6 +170,7 @@ const app = createApp({
 
         const trackerLogOutput = ref(null);
         const barkLogOutput = ref(null);
+        const remoteBarkLogOutput = ref(null);
 
         // --- 方法 ---
         const startScript = () => socket.value.emit('start_script');
@@ -377,7 +382,21 @@ const app = createApp({
                 scrollToBottom(barkLogOutput.value);
             });
 
-            // 远程健康检测日志仅写本地文件，不在 UI 展示
+            socket.value.on('remote_bark_log', async (data) => {
+                remoteBarkLogs.value.push(data.data.replace(/\n/g, '<br>'));
+                if (remoteBarkLogs.value.length > MAX_LOG_LINES) {
+                    remoteBarkLogs.value.splice(0, remoteBarkLogs.value.length - MAX_LOG_LINES);
+                }
+                await nextTick();
+                scrollToBottom(remoteBarkLogOutput.value);
+            });
+
+            socket.value.on('full_remote_bark_log', async (data) => {
+                const lines = data.data ? data.data.split('\n').map(line => line.replace(/\n/g, '<br>')) : [];
+                remoteBarkLogs.value = lines.length > MAX_LOG_LINES ? lines.slice(-MAX_LOG_LINES) : lines;
+                await nextTick();
+                scrollToBottom(remoteBarkLogOutput.value);
+            });
 
             // 页面加载后自动检测一次远程健康状态
             fetchRemoteBarkStatus();
@@ -406,11 +425,14 @@ const app = createApp({
         // 返回给模板使用的所有变量和方法
         return {
             title,
+            page,
+            logTab,
             envVars,
             envMessage,
             script,
             keepalive,
             bark,
+            remoteBarkLogs,
             barkTab,
             remoteBark,
             startScript,
@@ -427,6 +449,7 @@ const app = createApp({
             saveEnv,
             trackerLogOutput,
             barkLogOutput,
+            remoteBarkLogOutput,
             barkParams,
             envDesc,
             paramOptions,

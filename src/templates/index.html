@@ -12,9 +12,14 @@
     <div id="app" class="container">
       <div class="header">
         <h1>[[ title ]]</h1>
+        <div class="page-tabs">
+          <button type="button" :class="['page-tab', { active: page === 'home' }]" @click="page = 'home'">首页</button>
+          <button type="button" :class="['page-tab', { active: page === 'env' }]" @click="page = 'env'">环境变量</button>
+          <button type="button" :class="['page-tab', { active: page === 'logs' }]" @click="page = 'logs'">日志</button>
+        </div>
       </div>
 
-      <div class="section">
+      <div class="section" v-if="page === 'home'">
         <div class="flex-container">
           <div class="flex-child">
             <div class="section service-panel">
@@ -185,7 +190,9 @@
             </div>
           </div>
         </div>
+      </div>
 
+      <div class="section" v-if="page === 'env'">
         <h2>环境变量配置</h2>
         <form @submit.prevent="saveEnv" class="env-form">
           <template v-for="(value, key) in envVars" :key="key">
@@ -240,6 +247,34 @@
           <button type="submit">保存环境变量</button>
         </form>
         <div v-if="envMessage.text" :class="['message', envMessage.type]">[[ envMessage.text ]]</div>
+      </div>
+
+      <div class="section" v-if="page === 'logs'">
+        <h2>日志</h2>
+        <div class="tab-bar logs-tabbar">
+          <button type="button" :class="['tab-btn', { active: logTab === 'remote' }]" @click="logTab = 'remote'">Remote Bark</button>
+          <button type="button" :class="['tab-btn', { active: logTab === 'tracker' }]" @click="logTab = 'tracker'">Tracker</button>
+          <button type="button" :class="['tab-btn', { active: logTab === 'bark' }]" @click="logTab = 'bark'">Bark</button>
+        </div>
+
+        <div class="log-container" v-if="logTab === 'remote'">
+          <h3>Remote Bark Log</h3>
+          <div class="log-output" ref="remoteBarkLogOutput">
+            <div v-for="(line, index) in remoteBarkLogs" :key="index" v-html="line"></div>
+          </div>
+        </div>
+        <div class="log-container" v-else-if="logTab === 'tracker'">
+          <h3>Tracker Log</h3>
+          <div class="log-output" ref="trackerLogOutput">
+            <div v-for="(line, index) in script.logs" :key="index" v-html="line"></div>
+          </div>
+        </div>
+        <div class="log-container" v-else>
+          <h3>Bark Log</h3>
+          <div class="log-output" ref="barkLogOutput">
+            <div v-for="(line, index) in bark.logs" :key="index" v-html="line"></div>
+          </div>
+        </div>
       </div>
     </div>
 
