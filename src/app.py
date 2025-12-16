@@ -27,6 +27,21 @@ BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 LOG_DIR = os.path.join(BASE_DIR, 'logs')
 os.makedirs(LOG_DIR, exist_ok=True)
 
+def _ts() -> str:
+    return time.strftime('%Y-%m-%d %H:%M:%S')
+
+def _ensure_nl(s: str) -> str:
+    return s if s.endswith("\n") else s + "\n"
+
+def _fmt(tag: str, message: str) -> str:
+    return f"{_ts()} {tag} {message}".rstrip() + "\n"
+
+def _append_log(buffer: io.StringIO, filepath: str, event: str, line: str):
+    buffer.write(line)
+    with open(filepath, 'a') as f:
+        f.write(line)
+    socketio.emit(event, {'data': line})
+
 app = Flask(__name__, template_folder=os.path.join(os.path.dirname(__file__), 'templates'),
             static_folder=os.path.join(os.path.dirname(__file__), 'static'))
 app.config['SECRET_KEY'] = 'your_secret_key_here' # 生产环境中请使用更安全的密钥
@@ -94,10 +109,7 @@ if os.path.exists(REMOTE_BARK_LOG_FILE):
 
 def log_remote_bark(line: str):
     """写入远程 Bark 健康检测日志，并推送到前端。"""
-    remote_bark_log_buffer.write(line)
-    with open(REMOTE_BARK_LOG_FILE, 'a') as f:
-        f.write(line)
-    socketio.emit('remote_bark_log', {'data': line})
+    _append_log(remote_bark_log_buffer, REMOTE_BARK_LOG_FILE, 'remote_bark_log', _ensure_nl(line))
 
 # --- 环境变量文件路径 ---
 DOTENV_PATH = os.path.join(BASE_DIR, '.env')
@@ -161,17 +173,9 @@ def read_script_output():
         return
     try:
         for line in iter(stream.readline, ''):
-            log_line = f"[TRACKER] {line}"
-            tracker_log_buffer.write(log_line)
-            with open(TRACKER_LOG_FILE, 'a') as f:
-                f.write(log_line)
-            socketio.emit('tracker_log', {'data': log_line})
+            _append_log(tracker_log_buffer, TRACKER_LOG_FILE, 'tracker_log', _fmt('[TRACKER]', line.rstrip()))
     except Exception as e:
-        error_line = f"[TRACKER] ERROR: 读取脚本输出时发生错误: {e}\n"
-        tracker_log_buffer.write(error_line)
-        with open(TRACKER_LOG_FILE, 'a') as f:
-            f.write(error_line)
-        socketio.emit('tracker_log', {'data': error_line})
+        _append_log(tracker_log_buffer, TRACKER_LOG_FILE, 'tracker_log', _fmt('[TRACKER]', f"ERROR: 读取脚本输出时发生错误: {e}"))
     finally:
         # 停止保活线程
         stop_keepalive()
@@ -179,11 +183,7 @@ def read_script_output():
             script_process.stdout.close()
         
         return_code = script_process.wait() if script_process else 'N/A'
-        final_message = f"[TRACKER] 脚本已停止，返回码: {return_code}\n"
-        tracker_log_buffer.write(final_message)
-        with open(TRACKER_LOG_FILE, 'a') as f:
-            f.write(final_message)
-        socketio.emit('tracker_log', {'data': final_message})
+        _append_log(tracker_log_buffer, TRACKER_LOG_FILE, 'tracker_log', _fmt('[TRACKER]', f"脚本已停止，返回码: {return_code}"))
         socketio.emit('script_status', {'running': False})
         script_process = None
 
@@ -247,11 +247,7 @@ def start_keepalive():
 
     keepalive_thread = threading.Thread(target=keepalive_loop, daemon=True)
     keepalive_thread.start()
-    msg = f"[SYSTEM] Render 保活已启用，每 {interval}s ping {public_url}\n"
-    tracker_log_buffer.write(msg)
-    with open(TRACKER_LOG_FILE, 'a') as f:
-        f.write(msg)
-    socketio.emit('tracker_log', {'data': msg})
+    _append_log(tracker_log_buffer, TRACKER_LOG_FILE, 'tracker_log', _fmt('[SYSTEM]', f"Render 保活已启用，每 {interval}s ping {public_url}"))
 
 def stop_keepalive():
     global keepalive_thread, keepalive_state
@@ -267,24 +263,24 @@ def start_script():
     """启动 Python 追踪脚本。"""
     global script_process, script_thread
     if script_process is not None and script_process.poll() is None:
-        emit('tracker_log', {'data': "[TRACKER] 脚本已经在运行中。\n"})
+        emit('tracker_log', {'data': _fmt('[TRACKER]', "脚本已经在运行中。")})
         emit('script_status', {'running': True})
         return
 
-    emit('tracker_log', {'data': "[SYSTEM] 正在启动追踪脚本...\n"})
+    emit('tracker_log', {'data': _fmt('[SYSTEM]', "正在启动追踪脚本...")})
     try:
         script_process = subprocess.Popen(
             [sys.executable, '-u', TRACKER_SCRIPT],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
         )
-        emit('tracker_log', {'data': "[TRACKER] 脚本已启动。\n"})
+        emit('tracker_log', {'data': _fmt('[TRACKER]', "脚本已启动。")})
         emit('script_status', {'running': True})
         start_keepalive()
         
         script_thread = threading.Thread(target=read_script_output, daemon=True)
         script_thread.start()
     except Exception as e:
-        emit('tracker_log', {'data': f"[TRACKER] 启动脚本失败: {e}\n"})
+        emit('tracker_log', {'data': _fmt('[TRACKER]', f"启动脚本失败: {e}")})
         emit('script_status', {'running': False})
 
 @socketio.on('stop_script')
@@ -292,11 +288,11 @@ def stop_script():
     """终止 Python 追踪脚本。"""
     global script_process
     if script_process is not None and script_process.poll() is None:
-        emit('tracker_log', {'data': "[SYSTEM] 终止追踪脚本信号已发送。\n"})
+        emit('tracker_log', {'data': _fmt('[SYSTEM]', "终止追踪脚本信号已发送。")})
         script_process.terminate()
         stop_keepalive()
     else:
-        emit('tracker_log', {'data': "[TRACKER] 脚本未运行。\n"})
+        emit('tracker_log', {'data': _fmt('[TRACKER]', "脚本未运行。")})
         emit('script_status', {'running': False})
 
 # --- Bark 服务控制 ---
@@ -310,27 +306,15 @@ def read_bark_output():
         return
     try:
         for line in iter(stream.readline, ''):
-            log_line = f"[BARK] {line}"
-            bark_log_buffer.write(log_line)
-            with open(BARK_LOG_FILE, 'a') as f:
-                f.write(log_line)
-            socketio.emit('bark_log', {'data': log_line})
+            _append_log(bark_log_buffer, BARK_LOG_FILE, 'bark_log', _fmt('[BARK]', line.rstrip()))
     except Exception as e:
-        error_line = f"[BARK] ERROR: 读取服务输出时发生错误: {e}\n"
-        bark_log_buffer.write(error_line)
-        with open(BARK_LOG_FILE, 'a') as f:
-            f.write(error_line)
-        socketio.emit('bark_log', {'data': error_line})
+        _append_log(bark_log_buffer, BARK_LOG_FILE, 'bark_log', _fmt('[BARK]', f"ERROR: 读取服务输出时发生错误: {e}"))
     finally:
         if bark_server_process and bark_server_process.stdout:
             bark_server_process.stdout.close()
             
         return_code = bark_server_process.wait() if bark_server_process else 'N/A'
-        final_message = f"[BARK] 服务已停止，返回码: {return_code}\n"
-        bark_log_buffer.write(final_message)
-        with open(BARK_LOG_FILE, 'a') as f:
-            f.write(final_message)
-        socketio.emit('bark_log', {'data': final_message})
+        _append_log(bark_log_buffer, BARK_LOG_FILE, 'bark_log', _fmt('[BARK]', f"服务已停止，返回码: {return_code}"))
         socketio.emit('bark_server_status', {'running': False})
         bark_server_process = None
 
@@ -339,28 +323,27 @@ def start_bark_server():
     """启动 Bark 服务。"""
     global bark_server_process, bark_server_thread
     if bark_server_process is not None and bark_server_process.poll() is None:
-        emit('bark_log', {'data': "[BARK] 服务已经在运行中。\n"})
+        emit('bark_log', {'data': _fmt('[BARK]', "服务已经在运行中。")})
         emit('bark_server_status', {'running': True})
         return
     
-    emit('bark_log', {'data': "[SYSTEM] 正在启动 Bark 服务...\n"})
+    emit('bark_log', {'data': _fmt('[SYSTEM]', "正在启动 Bark 服务...")})
     try:
         os.makedirs(BARK_DATA_DIR, exist_ok=True)
         bark_server_process = subprocess.Popen(
             [BARK_EXECUTABLE, '-addr', '0.0.0.0:8080', '-data', BARK_DATA_DIR],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
         )
-        emit('bark_log', {'data': "[BARK] 服务已启动。\n"})
+        emit('bark_log', {'data': _fmt('[BARK]', "服务已启动。")})
         emit('bark_server_status', {'running': True})
         
         bark_server_thread = threading.Thread(target=read_bark_output, daemon=True)
         bark_server_thread.start()
     except FileNotFoundError:
-        msg = f"[BARK] 启动失败: 未找到可执行文件 '{BARK_EXECUTABLE}'。\n"
-        emit('bark_log', {'data': msg})
+        emit('bark_log', {'data': _fmt('[BARK]', f"启动失败: 未找到可执行文件 '{BARK_EXECUTABLE}'。")})
         emit('bark_server_status', {'running': False})
     except Exception as e:
-        emit('bark_log', {'data': f"[BARK] 启动服务失败: {e}\n"})
+        emit('bark_log', {'data': _fmt('[BARK]', f"启动服务失败: {e}")})
         emit('bark_server_status', {'running': False})
 
 @socketio.on('stop_bark_server')
@@ -368,10 +351,10 @@ def stop_bark_server():
     """终止 Bark 服务。"""
     global bark_server_process
     if bark_server_process is not None and bark_server_process.poll() is None:
-        emit('bark_log', {'data': "[SYSTEM] 终止 Bark 服务信号已发送。\n"})
+        emit('bark_log', {'data': _fmt('[SYSTEM]', "终止 Bark 服务信号已发送。")})
         bark_server_process.terminate()
     else:
-        emit('bark_log', {'data': "[BARK] 服务未运行。\n"})
+        emit('bark_log', {'data': _fmt('[BARK]', "服务未运行。")})
         emit('bark_server_status', {'running': False})
 
 # --- 环境变量更新 ---
@@ -412,7 +395,7 @@ def update_env():
     if updated_count > 0:
         message = f"成功更新 {updated_count} 个环境变量。"
         if errors: message += " 部分变量更新失败: " + "; ".join(errors)
-        socketio.emit('tracker_log', {'data': f"[SYSTEM] {message}\n[SYSTEM] 请注意：更新的环境变量将在脚本下次启动时生效。\n"})
+        socketio.emit('tracker_log', {'data': _fmt('[SYSTEM]', message) + _fmt('[SYSTEM]', "请注意：更新的环境变量将在脚本下次启动时生效。")})
         return jsonify({"status": "success", "message": message})
     else:
         return jsonify({"status": "error", "message": "没有变量被更新或发生错误: " + "; ".join(errors)}), 500
@@ -448,12 +431,12 @@ def remote_bark_status():
     if not health_path.startswith("/"):
         health_path = "/" + health_path
     health_url = f"{bark_url}{health_path}"
-    log_remote_bark(f"[REMOTE_BARK] {time.strftime('%Y-%m-%d %H:%M:%S')} CHECK {health_url}\n")
+    log_remote_bark(_fmt('[REMOTE_BARK]', f"CHECK {health_url}"))
     start = time.time()
     try:
         resp = requests.get(health_url, timeout=5)
         latency_ms = int((time.time() - start) * 1000)
-        log_remote_bark(f"[REMOTE_BARK] {time.strftime('%Y-%m-%d %H:%M:%S')} OK HTTP {resp.status_code} {latency_ms}ms\n")
+        log_remote_bark(_fmt('[REMOTE_BARK]', f"OK HTTP {resp.status_code} {latency_ms}ms"))
         return jsonify({
             "configured": True,
             "url": bark_url,
@@ -464,7 +447,7 @@ def remote_bark_status():
         })
     except Exception as e:
         latency_ms = int((time.time() - start) * 1000)
-        log_remote_bark(f"[REMOTE_BARK] {time.strftime('%Y-%m-%d %H:%M:%S')} ERROR {latency_ms}ms {e}\n")
+        log_remote_bark(_fmt('[REMOTE_BARK]', f"ERROR {latency_ms}ms {e}"))
         return jsonify({
             "configured": True,
             "url": bark_url,
