@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>登录</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body class="auth-page">
+    <div class="auth-shell auth-single">
+      <div class="auth-card auth-card-simple">
+        <div class="auth-eyebrow">JP Post Tracker</div>
+        <h1 class="auth-single-title">登录</h1>
+        <p class="auth-subtitle">输入用户名和密码后，系统会按你的角色进入管理员后台或个人门户。</p>
+
+        {% if error %}
+        <div class="message error">{{ error }}</div>
+        {% endif %}
+
+        <form method="post" class="auth-form">
+          <input type="hidden" name="next" value="{{ next_target }}" />
+
+          <label for="username">用户名</label>
+          <input id="username" name="username" type="text" autocomplete="username" placeholder="输入用户名" required />
+
+          <label for="password">密码</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" placeholder="输入密码" required />
+
+          <button type="submit">登录</button>
+        </form>
+
+        <div class="auth-link-row">
+          <span>还没有普通用户账号？</span>
+          <a href="{{ url_for('register', next=next_target) }}">去注册</a>
+        </div>
+
+        <div class="auth-help">
+          当前管理员引导用户名：<code>{{ admin_username }}</code>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

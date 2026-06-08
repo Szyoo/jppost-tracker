@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>我的快递与 Bark 设置</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body class="portal-page">
+    <div class="container">
+      <div class="header">
+        <div class="header-copy">
+          <div class="eyebrow">My Delivery Space</div>
+          <h1>我的快递与 Bark 设置</h1>
+          <p class="page-copy">这里只管理你自己的单号、Bark 设备 key 和测试推送，不会暴露其他用户或系统控制能力。</p>
+        </div>
+        <form method="post" action="/logout" class="logout-form header-session">
+          <span class="current-user">{{ viewer_state.display_name }} · {{ viewer_state.username }}</span>
+          <button type="submit" class="ghost-btn">退出登录</button>
+        </form>
+      </div>
+
+      {% if message %}
+      <div class="message {{ status }}">{{ message }}</div>
+      {% endif %}
+
+      <div class="hero-surface compact">
+        <div class="hero-grid portal-hero-grid">
+          <div class="hero-copy">
+            <div class="eyebrow">Personal Tracking</div>
+            <h2 class="hero-title">把你的单号、推送设备和历史档案收进一块私有面板</h2>
+            <p class="hero-subtitle">
+              每个设备都需要单独注册自己的 Bark key。如果你想多端同时收到同一条消息，就把多个 key 一行一个填进来。
+            </p>
+            <div class="hero-pill-row">
+              <span class="hero-pill">账号 {{ viewer_state.username }}</span>
+              <span class="hero-pill">{{ 'Bark 已配置' if account.bark_keys else 'Bark 未配置' }}</span>
+              <span class="hero-pill">{{ '追踪启用中' if account.tracking_enabled else '追踪已关闭' }}</span>
+            </div>
+          </div>
+
+          <div class="hero-metrics">
+            <div class="hero-metric">
+              <span class="hero-metric-label">当前单号</span>
+              <strong>{{ account.tracking_number or '未填写' }}</strong>
+            </div>
+            <div class="hero-metric">
+              <span class="hero-metric-label">历史单号</span>
+              <strong>{{ account.tracking_history_count or 0 }}</strong>
+            </div>
+            <div class="hero-metric">
+              <span class="hero-metric-label">最近推送</span>
+              <strong>{{ account.last_push_at or '未推送' }}</strong>
+            </div>
+            <div class="hero-metric">
+              <span class="hero-metric-label">最近物流</span>
+              <strong>{{ account.last_error or account.last_tracking_info or '暂无记录' }}</strong>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section user-portal-grid">
+        <div class="users-editor">
+          <div class="editor-header">
+            <h2>我的资料</h2>
+          </div>
+          <form method="post" action="/me/update">
+            <div class="user-form-grid">
+              <div>
+                <label for="display_name">显示名称</label>
+                <input id="display_name" name="display_name" type="text" value="{{ account.display_name }}" />
+              </div>
+              <div>
+                <label for="username">登录用户名</label>
+                <input id="username" type="text" value="{{ account.username }}" disabled />
+              </div>
+              <div class="full">
+                <label for="note">备注</label>
+                <input id="note" name="note" type="text" value="{{ account.note }}" />
+              </div>
+              <div class="full">
+                <label for="tracking_number">日本邮政单号</label>
+                <input id="tracking_number" name="tracking_number" type="text" value="{{ account.tracking_number }}" />
+                <p class="field-hint">填写日本邮政单号后，系统会按设定间隔为你单独轮询并写回最近状态。</p>
+              </div>
+              <div>
+                <label for="check_interval">查询间隔（秒）</label>
+                <input id="check_interval" name="check_interval" type="number" min="30" value="{{ account.check_interval }}" />
+              </div>
+              <div>
+                <label for="bark_url_enabled">推送里附带追踪链接</label>
+                <input id="bark_url_enabled" name="bark_url_enabled" type="checkbox" {% if account.bark_url_enabled %}checked{% endif %} />
+              </div>
+              <div class="full">
+                <label for="bark_keys">Bark Keys（支持多端，一行一个）</label>
+                <textarea id="bark_keys" name="bark_keys" rows="5" placeholder="可以粘贴完整推送 URL，也可以只填 key">{{ account.bark_keys }}</textarea>
+                <p class="field-hint">支持直接粘贴完整推送 URL，系统会自动提取 key。多设备同时推送时，一行放一个 key。</p>
+              </div>
+              <div class="full">
+                <label for="bark_query_params">Bark 参数</label>
+                <input id="bark_query_params" name="bark_query_params" type="text" value="{{ account.bark_query_params }}" />
+                <p class="field-hint">例如 `?sound=minuet&level=timeSensitive`。这里会附加到每条 Bark 推送请求上。</p>
+              </div>
+              <div class="full">
+                <div class="test-panel">
+                  <div class="test-panel-header">
+                    <h3>Bark 预览</h3>
+                    <p class="field-hint">这里会直接使用你当前表单里的 Bark Keys、参数和“附带追踪链接”开关发一条测试消息，不需要先保存。</p>
+                  </div>
+                  <div class="test-grid">
+                    <div>
+                      <label for="test_title">测试标题</label>
+                      <input id="test_title" name="test_title" type="text" value="测试推送" />
+                    </div>
+                    <div class="full">
+                      <label for="test_body">测试内容</label>
+                      <textarea id="test_body" name="test_body" rows="4">这是 Bark 参数预览消息，用来确认通知样式、声音和链接效果。</textarea>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="full">
+                <label for="new_password">新密码（留空表示不修改）</label>
+                <input id="new_password" name="new_password" type="password" autocomplete="new-password" />
+              </div>
+            </div>
+
+            <div class="portal-actions dual">
+              <button type="submit" class="env-save-btn">保存资料</button>
+              <button type="submit" class="refresh-btn" formaction="/me/test-push" formmethod="post">发送 Bark 测试</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="portal-side-column">
+          <div class="guide-panel tracking-archive-panel">
+            <h2>单号档案</h2>
+            {% if account.tracking_history %}
+            <div class="tracking-history-list">
+              {% for item in account.tracking_history %}
+              <div class="tracking-history-item">
+                <strong>{{ item.tracking_number }}</strong>
+                <span>首次登记 {{ item.first_seen_at }}</span>
+                <span>最近保存 {{ item.last_seen_at }}</span>
+              </div>
+              {% endfor %}
+            </div>
+            {% else %}
+            <div class="section-note empty-history">你还没有保存过历史单号。</div>
+            {% endif %}
+          </div>
+
+          <div class="guide-panel">
+          <h2>Bark 设置手顺</h2>
+          <div class="guide-steps">
+            <div class="guide-step">
+              <span class="guide-step-no">01</span>
+              <div>
+                <strong>配置服务器地址</strong>
+                <p>在 iPhone / iPad 上安装 Bark，把服务器地址设为 <code>{{ bark_help.public_url or bark_help.internal_url or '未配置' }}</code>。</p>
+              </div>
+            </div>
+            <div class="guide-step">
+              <span class="guide-step-no">02</span>
+              <div>
+                <strong>复制推送 URL 或 key</strong>
+                <p>打开 Bark 后复制测试推送 URL。你可以把整条 URL 直接粘贴到 `Bark Keys`，系统会自动提取 key。</p>
+              </div>
+            </div>
+            <div class="guide-step">
+              <span class="guide-step-no">03</span>
+              <div>
+                <strong>需要多端时逐个登记</strong>
+                <p>每个设备都有自己的 key。想让同一条消息同时推送到多个终端，就把多个设备的 key 一行一个填进去。</p>
+              </div>
+            </div>
+            <div class="guide-step">
+              <span class="guide-step-no">04</span>
+              <div>
+                <strong>保存并测试</strong>
+                <p>你可以直接点“发送 Bark 测试”，预览当前参数的实际效果。若只想看服务在线，可访问 <code>{{ bark_help.public_url }}{{ bark_help.health_path }}</code>。</p>
+              </div>
+            </div>
+          </div>
+          <div class="section-note">
+            注意：同一个 Bark key 对应的是一个已注册设备。多端推送不是“一个 key 自动广播到所有设备”，而是需要把多个设备各自的 key 都填进来。
+          </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
