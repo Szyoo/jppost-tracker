@@ -1,0 +1,19 @@
+[Unit]
+Description=JP Post Tracker Web Console
+After=network-online.target tailscaled.service docker.service
+Wants=network-online.target docker.service
+
+[Service]
+Type=simple
+User=YOUR_USER
+Group=YOUR_USER
+WorkingDirectory=/opt/jppost-tracker
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/jppost-tracker/.venv/bin/python src/app.py
+Restart=always
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
