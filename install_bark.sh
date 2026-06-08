@@ -4,13 +4,36 @@
 set -e
 
 # --- 配置 ---
-# 这是 app.py 文件中硬编码的可执行文件名。
-# 脚本将创建一个指向实际下载文件的符号链接，其名称为此变量的值。
-APP_EXECUTABLE_NAME="bark-server_linux_amd64"
+# 网页控制台会优先查找这个通用可执行文件名。
+# 脚本将创建一个指向实际下载文件的符号链接，避免架构名称写死。
+APP_EXECUTABLE_NAME="bark-server"
 
 # --- 脚本开始 ---
 echo "Bark Server 自动安装脚本"
 echo "-----------------------------------"
+
+install_docker_wrapper() {
+    echo "🐳  预编译二进制不可用，改用 Docker 包装器..."
+    if ! command -v docker >/dev/null 2>&1; then
+        echo "❌ 错误: 当前系统没有可用的 docker 命令，且预编译 Bark Server 下载失败。"
+        exit 1
+    fi
+
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    WRAPPER_SOURCE="${SCRIPT_DIR}/scripts/bark-server-docker-wrapper.sh"
+    if [[ ! -f "$WRAPPER_SOURCE" ]]; then
+        echo "❌ 错误: 未找到 Docker 包装器脚本 '$WRAPPER_SOURCE'。"
+        exit 1
+    fi
+
+    cp "$WRAPPER_SOURCE" "$APP_EXECUTABLE_NAME"
+    chmod +x "$APP_EXECUTABLE_NAME"
+
+    echo ""
+    echo "🎉 已切换为 Docker 包装器模式。"
+    echo "网页控制台仍可正常启动/停止 Bark 服务，但底层将调用 Docker 容器。"
+    return 0
+}
 
 # 1. 检测操作系统和架构
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -64,6 +87,12 @@ fi
 if [ ! -f "$DOWNLOAD_FILENAME" ]; then
     echo "❌ 错误: 下载失败，请检查您的网络或访问 GitHub Releases 页面手动下载。"
     exit 1
+fi
+
+if [[ ! -s "$DOWNLOAD_FILENAME" ]] || grep -q '^Not Found$' "$DOWNLOAD_FILENAME" 2>/dev/null; then
+    rm -f "$DOWNLOAD_FILENAME"
+    install_docker_wrapper
+    exit 0
 fi
 
 # 4. 设置执行权限

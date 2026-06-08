@@ -163,3 +163,5 @@ cython_debug/
 bark-data/
 logs/
 bark-server_*
+.local/
+data/
