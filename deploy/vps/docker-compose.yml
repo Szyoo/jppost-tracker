@@ -11,7 +11,10 @@ services:
     container_name: jppost-tracker
     restart: unless-stopped
     env_file:
-      - ./.env
+      # format: raw 禁用 compose 变量插值 —— werkzeug 密码哈希里带 $，
+      # 否则会被当成变量替换成空串（portal.env 同款处理）
+      - path: ./.env
+        format: raw
     volumes:
       # SQLite 账号库与运行日志持久化在宿主机
       - ./data:/app/data
