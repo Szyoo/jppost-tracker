@@ -1,0 +1,14 @@
+# 追加到 vultr-jp 的 /opt/ingress/Caddyfile 里的两个站点块。
+# 前提：Cloudflare DNS 已添加 A 记录（灰云/DNS-only）：
+#   jppost.szyyw.xyz → 167.179.76.194
+#   bark.szyyw.xyz   → 167.179.76.194
+# Caddy 会自动申请 Let's Encrypt 证书；reverse_proxy 原生透传 WebSocket，
+# SocketIO 无需额外配置。
+
+jppost.szyyw.xyz {
+	reverse_proxy jppost-tracker:6060
+}
+
+bark.szyyw.xyz {
+	reverse_proxy jppost-bark:8080
+}

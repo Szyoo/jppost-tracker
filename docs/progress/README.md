@@ -6,7 +6,9 @@
 
 - [main.md](main.md) — `main` 分支：单用户版，Render 云端部署。
 - [codex-raspi-local-funnel.md](codex-raspi-local-funnel.md) — `codex/raspi-local-funnel` 分支：
-  树莓派本地部署改造，多用户账号体系。
+  树莓派本地部署改造，多用户账号体系（已合并进 main）。
+- [feature-vultr-vps-deploy.md](feature-vultr-vps-deploy.md) — `feature/vultr-vps-deploy` 分支：
+  部署到 vultr-jp 公网 VPS（Docker + Caddy 子域名反代）。
 
 ## 跨分支事项
 
