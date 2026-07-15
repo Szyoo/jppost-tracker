@@ -29,13 +29,42 @@
 - [docs/vultr-vps-deploy.md](../vultr-vps-deploy.md) — 完整部署步骤
   （DNS → clone → .env → compose up → Caddy reload → 手机配置 → 运维备忘）。
 
+## 2026-07-15：实机部署完成并验证通过 ✅
+
+部署过程中发现并修复的两个问题（都已提交）：
+
+1. **ingress 网络名**：实机上该网络由 `/opt/ingress` compose 项目创建，实际名称是
+   `ingress_ingress`，compose 里 external 网络需显式 `name: ingress_ingress`。
+2. **compose 变量插值截坏密码哈希**：werkzeug scrypt 哈希含 `$`，`env_file` 默认会做
+   变量插值把哈希替换成空串（现象：`docker compose` 输出一堆 "variable is not set" 警告）。
+   修复：`env_file` 用 `path: + format: raw` 写法（`/opt/ingress` 的 portal.env 同款处理）。
+
+部署记录：
+
+- DNS：用户以为已加好，实际 zone 里没有——已用 Cloudflare API
+  （tailscale2home 的 `.codex-local/cloudflare.env` token）补上 `jppost` / `bark`
+  两条灰云 A 记录 → 167.179.76.194。
+- 代码位置：VPS 上 `/opt/jppost-tracker`（clone 的本分支）；部署目录
+  `/opt/jppost-tracker/deploy/vps`，`.env` 已配好安全三件套（chmod 600，
+  管理员密码明文只在当次会话告知用户，建议用户登录后修改）。
+- 容器：`jppost-tracker`（本地构建）+ `jppost-bark`（finab/bark-server），均无
+  publish 端口，挂 `ingress_ingress` 网络。
+- Caddy：两个站点块已追加到 `/opt/ingress/Caddyfile`（追加前备份为
+  `Caddyfile.bak-jppost`），validate + reload 成功，Let's Encrypt 证书自动签发。
+- 端到端验证全部通过：
+  - `https://jppost.szyyw.xyz/login` → 200，未登录访问 `/` → 302 到登录页
+  - `https://bark.szyyw.xyz/ping` → pong（注意：在 DNS 记录创建前查询过该域名的
+    resolver 会有几分钟负缓存，从别处验证即可）
+  - 容器内 `http://bark:8080/ping` 互通、`/healthz` 正常
+  - admin 登录 POST → 302 → 登录态访问首页 200
+
 ## 待办
 
-- [ ] DNS：Cloudflare 加 `jppost` / `bark` 两条 A 记录（灰云）——需要用户或
-      tailscale2home 侧 agent 用 `.codex-local/cloudflare.env` 的 token 操作。
-- [ ] 实机部署验证（clone → compose up → Caddy reload → curl 验证 → 手机推送打通）。
+- [ ] 手机 Bark App 配置 `https://bark.szyyw.xyz`，把 device key 填进用户设置，
+      打通真实推送（需要用户手机操作）。
 - [ ] 部署验证通过后合并回 main。
 - [ ] （单独任务）修复两个安全问题；公网开放后 X-Forwarded-For 问题优先级应提高。
+- [ ] 用户登录后修改管理员初始密码。
 
 ## 设计备注
 
