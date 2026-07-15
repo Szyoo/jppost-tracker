@@ -1,5 +1,38 @@
 # main 分支进度
 
+## 2026-07-15（三续）：vultr-jp 实机情报核实（覆盖 provision 时快照）
+
+向 tailscale2home 一侧的 agent 核实了 `vultr-jp`（167.179.76.194）现状，比下面
+"新增 VPS 部署目标"那段里的 provision 时快照（2026-07-06，"未部署任何服务"）更新更准确：
+
+- **运行时**：Python 3.14.4、pip 25.1.1、python3-venv 可用、Docker 29.6.1 + Compose v5.3.1、
+  systemd 259。资源：1 vCPU/2G 内存（现约 1.0G 可用）、磁盘 47G（已用 23%）。
+- **端口现状**：22 (sshd)、80/443 (Caddy 容器)、41641/udp (tailscaled)、3000 (portal 容器，
+  仅 docker 内网)。**6060、8080 均空闲**。
+- **已在跑的服务**：Caddy（`caddy:2-alpine`，配置 `/opt/ingress/Caddyfile`，自动 Let's Encrypt）
+  + portal（自建门户，`szyyw.xyz` → portal:3000）。两者都在同一个 docker network "ingress" 里，
+  **portal 容器不 publish 端口到宿主机，靠 Caddy 反代**——这是这台机器现有的标准部署模式。
+- **安全模型的关键点**：`ufw` 只放行了 22/tcp，但 **Docker 的 iptables 规则会绕过 ufw**，
+  任何 `docker compose` 里 publish 到 `0.0.0.0` 的端口都会直接对公网开放，ufw 管不到。
+  也就是说：只要新服务不 publish 端口（只挂 ingress 网络走 Caddy 反代），就不会暴露在公网；
+  一旦 publish 了，ufw 挡不住。无 fail2ban/sshguard。
+- **域名/TLS**：`szyyw.xyz` 已解析到这台机器并在用；Cloudflare DNS API token 可用
+  （`.codex-local/cloudflare.env`），加子域名（如 `jppost.szyyw.xyz`）操作路径已就绪，
+  子域名怎么起 → 待定。Caddy 自动签证书已验证可用。
+- **Tailscale**：这台机器也在 tailnet 上（节点 `vultr`，`100.65.101.16`），所以"仅 tailnet 可访问"
+  和"经 Caddy 公网可访问"两条路都现成，选哪条 → 待定。
+- **Vultr API key**：Access Control 仍是全 IP 放开，未收紧；但对本次部署无影响
+  （防火墙走本机 ufw/docker，不经 Vultr 平台层）。
+- **需要我们决定的开放项**（详见下方对话中的规划讨论）：
+  1. 6060 管理页走 tailnet-only 还是公网+Caddy 子域名
+  2. 部署方式：跟随现有 docker-compose + Caddy ingress 模式容器化，还是复用
+     `deploy/systemd/jppost-tracker-web.service.example` 裸机跑
+  3. Bark Server 是否也通过 Caddy 开子域名给手机 App 用（沿用树莓派方案的
+     internal/public 分离思路，只是把 "Tailscale Funnel" 换成 "Caddy 反代"）
+  4. 是否顺带修掉 code review 里发现的两个安全问题（尤其 X-Forwarded-For 信任问题——
+     如果新容器不 publish 端口、只能被同网络的 Caddy 访问到，这个问题的实际风险会大幅降低，
+     但仍建议只信任来自 Caddy 的转发头，而不是无条件信任）
+
 ## 2026-07-15（续）：合并 codex/raspi-local-funnel + 新增 VPS 部署目标
 
 - 已将 `codex/raspi-local-funnel` 快进合并进 `main`（合并前已做过一轮 code review，
