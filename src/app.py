@@ -12,7 +12,7 @@ import threading
 from datetime import timedelta
 from functools import wraps
 
-from flask import Flask, render_template, request, jsonify, redirect, session, url_for
+from flask import Flask, g, render_template, request, jsonify, redirect, session, url_for
 from flask_socketio import SocketIO, emit, disconnect
 from dotenv import load_dotenv, set_key
 import requests
@@ -166,11 +166,19 @@ def current_account():
     account_id = session.get("account_id")
     if not account_id:
         return None
-    return get_account(int(account_id))
+    # 同一请求内缓存查库结果，避免鉴权判断重复访问数据库
+    cached = getattr(g, "_current_account", None)
+    if cached is not None and cached.get("id") == int(account_id):
+        return cached
+    account = get_account(int(account_id))
+    g._current_account = account
+    return account
 
 
 def is_admin() -> bool:
-    return session.get("account_role") == "admin"
+    # 角色以数据库为准；session 里缓存的角色在管理员被降级后不会失效，不可信
+    account = current_account()
+    return bool(account and account.get("role") == "admin" and account.get("login_enabled"))
 
 def is_authenticated() -> bool:
     account = current_account()
@@ -276,12 +284,23 @@ def log_tracker(line: str):
 def log_bark(line: str):
     _append_log(bark_log_buffer, BARK_LOG_FILE, 'bark_log', _ensure_nl(line))
 
+def get_trusted_proxy_count() -> int:
+    try:
+        count = int(os.getenv("TRUSTED_PROXY_COUNT", "0"))
+        return count if count > 0 else 0
+    except Exception:
+        return 0
+
 def get_client_ip() -> str:
-    forwarded = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-    if forwarded:
-        return forwarded
-    real_ip = request.headers.get("X-Real-IP", "").strip()
-    return real_ip or (request.remote_addr or "unknown")
+    # 客户端可以自带伪造的 X-Forwarded-For，取最左值会让登录限流形同虚设。
+    # 只有在明确配置了受信反代层数时才采信转发头，且取右数第 N 个值
+    # （右侧 N 个由受信代理追加，无法伪造）；否则一律用直连地址。
+    trusted = get_trusted_proxy_count()
+    if trusted > 0:
+        values = [item.strip() for item in request.headers.get("X-Forwarded-For", "").split(",") if item.strip()]
+        if len(values) >= trusted:
+            return values[-trusted]
+    return request.remote_addr or "unknown"
 
 def _prune_login_attempts(entries, now):
     window = get_login_window_seconds()
@@ -408,7 +427,6 @@ def login():
                 session.clear()
                 session.permanent = True
                 session['account_id'] = account['id']
-                session['account_role'] = account['role']
                 session['account_username'] = account['username']
                 return redirect(next_target)
             record_login_failure(ip)
@@ -442,7 +460,6 @@ def register():
         session.clear()
         session.permanent = True
         session['account_id'] = account['id']
-        session['account_role'] = account['role']
         session['account_username'] = account['username']
         return redirect(next_target)
     except Exception as exc:
