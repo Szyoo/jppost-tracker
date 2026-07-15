@@ -35,3 +35,5 @@ services:
 networks:
   ingress:
     external: true
+    # 实机上该网络由 /opt/ingress 的 compose 项目创建，实际名称带项目前缀
+    name: ingress_ingress
