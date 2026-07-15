@@ -58,9 +58,29 @@
   - 容器内 `http://bark:8080/ping` 互通、`/healthz` 正常
   - admin 登录 POST → 302 → 登录态访问首页 200
 
+## 2026-07-15：bark.szyyw.xyz DNS 故障排查（已解决）
+
+现象：容器内 `PUBLIC 自检失败`（`bark.szyyw.xyz` 解析不到），回退 INTERNAL 正常。排查结论分两层：
+
+1. **DNS 负缓存链**：`bark` 记录创建前的查询在多级缓存留下了 NXDOMAIN——
+   Cloudflare 部分边缘 PoP 传播卡住（权威 NS 一度回 NXDOMAIN，删除重建记录解决，
+   新记录 id `60a325d6b6886e0201c7c0eb6de0352d`）；宿主机 DNS 走 **Tailscale MagicDNS
+   (100.100.100.100)**，tailscaled 缓存了负结果，`resolvectl flush-caches` 无效，
+   **重启 tailscaled 才清掉**。容器 DNS 上游即宿主机 resolv.conf，跟着恢复。
+2. **hairpin NAT（遗留小瑕疵，不影响功能）**：DNS 恢复后容器访问
+   `https://bark.szyyw.xyz`（= 宿主机公网 IP:443）TCP 超时——Docker 桥接网络访问
+   宿主机自己 published 端口的经典 hairpin 问题。健康检查每次多等 15s 超时后回退
+   INTERNAL。**修复方案已定**：给 `/opt/ingress/docker-compose.yml` 的 caddy 服务
+   加 ingress 网络 aliases（`jppost.szyyw.xyz`、`bark.szyyw.xyz`），容器内直连 Caddy。
+   已交给 tailscale2home 侧 agent 执行（2026-07-15）。
+
+另：外部访问始终正常，手机推送已打通（key 填在管理页「用户管理」的用户编辑表单里）。
+
 ## 待办
 
 - [x] 手机侧验证 —— 2026-07-15 用户确认验证 OK。
+- [ ] Caddy 网络别名修复 hairpin（tailscale2home 侧执行后，确认容器内
+      `https://bark.szyyw.xyz/ping` 秒回）。
 - [ ] 合并回 main —— **用户明确表示暂时不合并**（2026-07-15），等用户发话再操作。
 - [ ] （单独任务）修复两个安全问题；公网开放后 X-Forwarded-For 问题优先级应提高。
 - [ ] 用户登录后修改管理员初始密码（是否已改未确认）。
