@@ -79,8 +79,9 @@
 ## 待办
 
 - [x] 手机侧验证 —— 2026-07-15 用户确认验证 OK。
-- [ ] Caddy 网络别名修复 hairpin（tailscale2home 侧执行后，确认容器内
-      `https://bark.szyyw.xyz/ping` 秒回）。
+- [x] Caddy 网络别名修复 hairpin —— 2026-07-15 tailscale2home 侧执行完毕，
+      双方复核通过：容器内 `bark.szyyw.xyz` 解析到 Caddy 容器 IP（172.18.0.2），
+      `/ping` 0.4s 内返回 pong，外部访问不受影响。
 - [ ] 合并回 main —— **用户明确表示暂时不合并**（2026-07-15），等用户发话再操作。
 - [ ] （单独任务）修复两个安全问题；公网开放后 X-Forwarded-For 问题优先级应提高。
 - [ ] 用户登录后修改管理员初始密码（是否已改未确认）。
