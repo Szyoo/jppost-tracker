@@ -10,7 +10,10 @@
 
 ## 跨分支事项
 
-- 2026-07-15：新建 `AGENTS.md` 与本进度目录约定。此前两个分支各自独立演进，尚未讨论合并计划；
-  `codex/raspi-local-funnel` 领先 main 3 个提交（多用户账号、登录鉴权、树莓派部署文档），
-  已完成一轮 code review（见 [codex-raspi-local-funnel.md](codex-raspi-local-funnel.md)），
-  是否/何时合并回 main 待用户决定。
+- 2026-07-15：新建 `AGENTS.md` 与本进度目录约定。
+- 2026-07-15：`codex/raspi-local-funnel` 已快进合并进 `main`，两分支历史已统一，
+  之前"是否合并"的待定事项已解决（见 [main.md](main.md)）。合并前发现的两个安全问题
+  （权限降级不即时生效、登录限流可被绕过）仍未修复，详见
+  [codex-raspi-local-funnel.md](codex-raspi-local-funnel.md)。
+- 2026-07-15：新增第三种部署目标——Vultr 东京 VPS（公网直连，非 Tailscale/树莓派方案），
+  详见 [main.md](main.md)。即将开新分支做相关改动。
