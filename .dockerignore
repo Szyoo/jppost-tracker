@@ -1,0 +1,17 @@
+# 运行时数据与本地产物不进镜像
+.git
+.gitignore
+.env
+data/
+logs/
+bark-data/
+bark-server*
+docs/
+deploy/
+scripts/
+*.md
+run.bat
+install_bark.sh
+__pycache__/
+*.pyc
+.venv/
