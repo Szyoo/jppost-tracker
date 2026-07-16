@@ -66,6 +66,19 @@ const app = createApp({
         const envMessage = ref({ text: '', type: '' });
         const sendingTestPush = ref(false);
 
+        // 行内反馈：成功 3 秒、错误 5 秒后自动消失（DESIGN.md §9）
+        const messageTimers = new WeakMap();
+        const flashMessage = (target, text, type) => {
+            target.value = { text, type };
+            clearTimeout(messageTimers.get(target));
+            messageTimers.set(
+                target,
+                setTimeout(() => {
+                    target.value = { text: '', type: '' };
+                }, type === 'error' ? 5000 : 3000)
+            );
+        };
+
         const countBarkKeys = (value) =>
             String(value || '')
                 .split(/\n+/)
@@ -258,10 +271,7 @@ const app = createApp({
                 });
                 const result = await handleApiResponse(response);
                 if (!result) return;
-                envMessage.value = {
-                    text: result.message,
-                    type: result.status === 'success' ? 'success' : 'error'
-                };
+                flashMessage(envMessage, result.message, result.status === 'success' ? 'success' : 'error');
                 if (result.status === 'success' && result.env_vars) {
                     envVars.value = { ...result.env_vars };
                     originalEnvVars.value = { ...result.env_vars };
@@ -270,7 +280,7 @@ const app = createApp({
                     barkHelp.value = { ...result.bark_help };
                 }
             } catch (error) {
-                envMessage.value = { text: '保存系统设置时发生错误。', type: 'error' };
+                flashMessage(envMessage, '保存系统设置时发生错误。', 'error');
             }
         };
 
@@ -288,10 +298,7 @@ const app = createApp({
                 });
                 const result = await handleApiResponse(response);
                 if (!result) return;
-                userMessage.value = {
-                    text: result.message,
-                    type: result.status === 'success' ? 'success' : 'error'
-                };
+                flashMessage(userMessage, result.message, result.status === 'success' ? 'success' : 'error');
                 if (result.status === 'success') {
                     syncUserState(result.user_state);
                     if (result.user) {
@@ -308,7 +315,7 @@ const app = createApp({
                     createUserExpanded.value = false;
                 }
             } catch (error) {
-                userMessage.value = { text: '创建账号时发生错误。', type: 'error' };
+                flashMessage(userMessage, '创建账号时发生错误。', 'error');
             }
         };
 
@@ -322,10 +329,7 @@ const app = createApp({
                 });
                 const result = await handleApiResponse(response);
                 if (!result) return;
-                userMessage.value = {
-                    text: result.message,
-                    type: result.status === 'success' ? 'success' : 'error'
-                };
+                flashMessage(userMessage, result.message, result.status === 'success' ? 'success' : 'error');
                 if (result.status === 'success') {
                     syncUserState(result.user_state);
                     if (result.user) {
@@ -333,7 +337,7 @@ const app = createApp({
                     }
                 }
             } catch (error) {
-                userMessage.value = { text: '保存账号时发生错误。', type: 'error' };
+                flashMessage(userMessage, '保存账号时发生错误。', 'error');
             }
         };
 
@@ -348,12 +352,9 @@ const app = createApp({
                 });
                 const result = await handleApiResponse(response);
                 if (!result) return;
-                userMessage.value = {
-                    text: result.message,
-                    type: result.status === 'success' ? 'success' : 'error'
-                };
+                flashMessage(userMessage, result.message, result.status === 'success' ? 'success' : 'error');
             } catch (error) {
-                userMessage.value = { text: '发送测试推送失败。', type: 'error' };
+                flashMessage(userMessage, '发送测试推送失败。', 'error');
             } finally {
                 sendingTestPush.value = false;
             }
