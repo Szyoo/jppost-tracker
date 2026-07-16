@@ -1,5 +1,27 @@
 # main 分支进度
 
+## 2026-07-17：前端界面按 szyyw.xyz 设计语言从头重构
+
+参照 `tailscale2home/vps/portal/DESIGN.md`（深空底色 + DotField 点阵背景 + 毛玻璃 +
+青紫渐变 + 克制弹性动效）重写了全部前端，后端接口未动：
+
+- **新增** `src/static/dotfield.js`：portal 的 React DotField 移植为零依赖纯 JS，
+  挂到全屏 fixed `.bg-layer`（canvas 点阵 + SVG 光晕，参数与 portal 默认一致）。
+- **新增** `src/static/ui.js`：spotlight 聚光效果（document 级 mousemove 委托，
+  给 `.spot` 元素写入 `--mx/--my`）。
+- **重写** `src/static/style.css`：完全按 DESIGN.md tokens 重建
+  （`--bg #0b1020`、青紫渐变唯一品牌色、`.glass`/`.btn`/`.btn-ghost`/`.field`/`.switch`、
+  rise/stagger/shake 动效、1080px 居中布局、角色徽章青=admin 紫=user）。
+- **重写** 四个模板：`login.html`/`register.html`（居中玻璃卡 + 错误 shake）、
+  `index.html`（管理后台，保持全部 Vue 绑定与 app.js 兼容，四页签结构不变）、
+  `user_portal.html`（个人门户，`/me/update`、`/me/test-push` 表单字段不变）。
+- **微调** `src/static/app.js`：行内反馈改为自动消失（成功 3s / 错误 5s），其余逻辑未动。
+- **新增** `.claude/launch.json`：`web` 配置（`.venv/bin/python src/app.py`，端口 6060），
+  供本地预览调试用。
+- **验证**：本地起服务实机走查——登录/注册/管理后台四个页签/用户门户全部渲染正常，
+  Vue 挂载、Socket.IO 状态推送、切换页签、注册登录流程无控制台报错。
+  测试账号已从本地 `data/app.db` 清理。
+
 ## 2026-07-15（三续）：vultr-jp 实机情报核实（覆盖 provision 时快照）
 
 向 tailscale2home 一侧的 agent 核实了 `vultr-jp`（167.179.76.194）现状，比下面

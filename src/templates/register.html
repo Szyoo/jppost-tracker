@@ -3,14 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>注册普通用户</title>
+    <title>注册 · JP Post Tracker</title>
     <link rel="stylesheet" href="/static/style.css" />
   </head>
-  <body class="auth-page">
-    <div class="auth-shell auth-single">
-      <div class="auth-card auth-card-simple">
+  <body>
+    <div class="bg-layer"></div>
+
+    <div class="auth-shell">
+      <div class="auth-card glass rise{% if error %} shake{% endif %}">
         <div class="auth-eyebrow">Create Account</div>
-        <h1 class="auth-single-title">注册普通用户</h1>
+        <h1 class="auth-title">注册普通用户</h1>
         <p class="auth-subtitle">注册后只会看到自己的快递与 Bark 设置页，不会看到管理员的系统控制功能。</p>
 
         {% if error %}
@@ -25,6 +27,7 @@
             id="register_display_name"
             name="register_display_name"
             type="text"
+            class="field"
             autocomplete="name"
             placeholder="例如 张三 / 家人共用账号"
             required
@@ -35,6 +38,7 @@
             id="register_username"
             name="register_username"
             type="text"
+            class="field"
             autocomplete="username"
             placeholder="仅支持小写字母、数字、点、下划线、短横线"
             required
@@ -45,12 +49,13 @@
             id="register_password"
             name="register_password"
             type="password"
+            class="field"
             autocomplete="new-password"
             placeholder="设置登录密码"
             required
           />
 
-          <button type="submit">注册并登录</button>
+          <button type="submit" class="btn">注册并登录</button>
         </form>
 
         <div class="auth-link-row">
@@ -59,5 +64,7 @@
         </div>
       </div>
     </div>
+
+    <script src="/static/dotfield.js"></script>
   </body>
 </html>

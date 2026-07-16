@@ -3,83 +3,75 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>快递追踪器后台</title>
+    <title>快递追踪控制台</title>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.min.js"></script>
     <link rel="stylesheet" href="/static/style.css" />
   </head>
-  <body class="dashboard-page">
-    <div id="app" class="container">
-      <div class="header">
-        <div class="header-copy">
-          <div class="eyebrow">Admin Control Room</div>
-          <h1>[[ title ]]</h1>
-          <p class="page-copy">本地 Bark、自建公网入口、多用户追踪和日志都集中在这块管理面板里。</p>
+  <body>
+    <div class="bg-layer"></div>
+
+    <div id="app" class="page">
+      <header class="site-header rise">
+        <div class="brand">
+          <span class="brand-sub">Admin Control Room</span>
+          <h1 class="brand-title">[[ title ]]</h1>
         </div>
-        <form method="post" action="/logout" class="logout-form header-session">
+        <form method="post" action="/logout" class="header-session">
           <span class="current-user">{{ viewer_state.display_name }} · {{ viewer_state.username }}</span>
-          <button type="submit" class="ghost-btn">退出登录</button>
+          <span class="role-badge admin">admin</span>
+          <button type="submit" class="btn-ghost btn-small danger">退出</button>
         </form>
-        <div class="page-tabs header-nav">
-          <button type="button" :class="['page-tab', { active: page === 'home' }]" @click="page = 'home'">首页</button>
-          <button type="button" :class="['page-tab', { active: page === 'env' }]" @click="page = 'env'">系统设置</button>
-          <button type="button" :class="['page-tab', { active: page === 'users' }]" @click="page = 'users'">用户管理</button>
-          <button type="button" :class="['page-tab', { active: page === 'logs' }]" @click="page = 'logs'">日志</button>
-        </div>
-      </div>
+      </header>
 
-      <div class="section" v-if="page === 'home'">
-        <div class="hero-surface">
-          <div class="hero-grid compact-grid">
-            <div class="hero-copy">
-              <div class="eyebrow">Tracking Focus</div>
-              <h2 class="hero-title">首页直接切换账号、填写单号并管理追踪节奏</h2>
-              <p class="hero-subtitle">
-                这里优先处理追踪本身：选账号、填日本邮政单号、决定是否启用追踪，同时把历史单号档案留在同一页。服务日志单独放到日志页。
-              </p>
-              <div class="hero-pill-row">
-                <span class="hero-pill">当前账号 [[ selectedUser ? (selectedUser.display_name + ' · ' + selectedUser.username) : '未选择账号' ]]</span>
-                <span class="hero-pill">当前单号 [[ selectedUser && selectedUser.tracking_number ? selectedUser.tracking_number : '未填写' ]]</span>
-                <span :class="['status-badge', selectedUserTrackingState.tone]">
-                  [[ selectedUserTrackingState.label ]]
-                </span>
-              </div>
-            </div>
+      <nav class="nav-tabs glass rise">
+        <button type="button" :class="['tab', { active: page === 'home' }]" @click="page = 'home'">首页</button>
+        <button type="button" :class="['tab', { active: page === 'env' }]" @click="page = 'env'">系统设置</button>
+        <button type="button" :class="['tab', { active: page === 'users' }]" @click="page = 'users'">用户管理</button>
+        <button type="button" :class="['tab', { active: page === 'logs' }]" @click="page = 'logs'">日志</button>
+      </nav>
 
-            <div class="hero-metrics">
-              <div class="hero-metric">
-                <span class="hero-metric-label">历史单号</span>
-                <strong>[[ selectedUserHistoryCount ]]</strong>
-              </div>
-              <div class="hero-metric">
-                <span class="hero-metric-label">启用追踪</span>
-                <strong>[[ trackedUsersCount ]]</strong>
-              </div>
-              <div class="hero-metric">
-                <span class="hero-metric-label">Bark 设备</span>
-                <strong>[[ selectedUserDeviceCount || 0 ]]</strong>
-              </div>
-              <div class="hero-metric">
-                <span class="hero-metric-label">累计档案</span>
-                <strong>[[ trackedNumbersCount ]]</strong>
-              </div>
-            </div>
+      <!-- ============ 首页 ============ -->
+      <section class="section" v-if="page === 'home'">
+        <h2 class="section-name">追踪概览</h2>
+        <div class="widget-grid stagger">
+          <div class="widget glass lift spot">
+            <p class="widget-title">当前账号</p>
+            <p class="widget-value small">[[ selectedUser ? (selectedUser.display_name + ' · ' + selectedUser.username) : '未选择账号' ]]</p>
+          </div>
+          <div class="widget glass lift spot">
+            <p class="widget-title">当前单号</p>
+            <p class="widget-value small">[[ selectedUser && selectedUser.tracking_number ? selectedUser.tracking_number : '未填写' ]]</p>
+          </div>
+          <div class="widget glass lift spot">
+            <p class="widget-title">追踪状态</p>
+            <p class="widget-value small"><span :class="['pill', selectedUserTrackingState.tone]">[[ selectedUserTrackingState.label ]]</span></p>
+          </div>
+          <div class="widget glass lift spot">
+            <p class="widget-title">历史单号</p>
+            <p class="widget-value">[[ selectedUserHistoryCount ]]</p>
+          </div>
+          <div class="widget glass lift spot">
+            <p class="widget-title">启用追踪</p>
+            <p class="widget-value">[[ trackedUsersCount ]]</p>
+          </div>
+          <div class="widget glass lift spot">
+            <p class="widget-title">Bark 设备</p>
+            <p class="widget-value">[[ selectedUserDeviceCount || 0 ]]</p>
           </div>
         </div>
 
-        <div class="section-note">首页只放追踪本身和必要的服务控制。账号权限、密码、Bark Keys 和详细日志分别留在“用户管理”和“日志”页。</div>
-
-        <div class="home-focus-grid">
-          <div class="users-editor tracking-center-panel">
-            <div class="editor-header">
-              <h2>追踪中心</h2>
-              <div :class="['status-badge', selectedUserTrackingState.tone]">[[ selectedUserTrackingState.label ]]</div>
+        <div class="section layout-main-side">
+          <div class="panel glass rise">
+            <div class="panel-head">
+              <h2 class="panel-title">追踪中心</h2>
+              <span :class="['pill', selectedUserTrackingState.tone]">[[ selectedUserTrackingState.label ]]</span>
             </div>
 
-            <div class="user-form-grid home-tracking-grid">
+            <div class="form-grid">
               <div class="full">
                 <label for="homeSelectedUser">当前账号</label>
-                <select id="homeSelectedUser" v-model.number="selectedUserId" class="param-input">
+                <select id="homeSelectedUser" v-model.number="selectedUserId" class="field">
                   <option v-for="user in users" :key="user.id" :value="user.id">
                     [[ user.display_name ]] · [[ user.username ]]
                   </option>
@@ -87,105 +79,104 @@
               </div>
               <div class="full">
                 <label for="homeTrackingNumber">日本邮政单号</label>
-                <input id="homeTrackingNumber" type="text" v-model="userForm.tracking_number" />
-                <p class="field-hint">单号入口放在首页。保存后会写入该账号，并进入这个账号的单号档案。</p>
+                <input id="homeTrackingNumber" type="text" class="field" v-model="userForm.tracking_number" />
+                <p class="hint">保存后会写入该账号，并进入这个账号的单号档案。</p>
               </div>
               <div>
                 <label for="homeCheckInterval">查询间隔（秒）</label>
-                <input id="homeCheckInterval" type="number" min="30" v-model.number="userForm.check_interval" />
+                <input id="homeCheckInterval" type="number" min="30" class="field" v-model.number="userForm.check_interval" />
               </div>
-              <div class="home-status-card">
-                <span class="hero-metric-label">最近物流结果</span>
-                <strong>[[ selectedUserLatestStatus ]]</strong>
+              <div>
+                <label>最近物流结果</label>
+                <div class="inner" style="padding: 10px 12px; font-size: 13px; color: var(--text-dim);">[[ selectedUserLatestStatus ]]</div>
               </div>
-              <div class="full tracking-toggle-row">
-                <label class="checkbox-row"><input type="checkbox" v-model="userForm.tracking_enabled" /> 启用追踪</label>
-                <label class="checkbox-row"><input type="checkbox" v-model="userForm.bark_url_enabled" /> 推送附带追踪链接</label>
+              <div class="full switch-group">
+                <label class="switch-row">
+                  <span class="switch"><input type="checkbox" v-model="userForm.tracking_enabled" /><span class="track"></span><span class="knob"></span></span>
+                  启用追踪
+                </label>
+                <label class="switch-row">
+                  <span class="switch"><input type="checkbox" v-model="userForm.bark_url_enabled" /><span class="track"></span><span class="knob"></span></span>
+                  推送附带追踪链接
+                </label>
               </div>
             </div>
 
-            <div class="portal-actions dual home-actions">
-              <button type="button" class="env-save-btn" @click="saveUser" :disabled="!selectedUserId || !userForm.username.trim()">保存追踪设置</button>
-              <button type="button" class="ghost-btn" @click="page = 'users'">打开完整账号设置</button>
+            <div class="actions">
+              <button type="button" class="btn" @click="saveUser" :disabled="!selectedUserId || !userForm.username.trim()">保存</button>
+              <button type="button" class="btn-ghost" @click="page = 'users'">完整账号设置</button>
             </div>
             <div v-if="userMessage.text" :class="['message', userMessage.type]">[[ userMessage.text ]]</div>
           </div>
 
-          <div class="home-side-column">
-            <div class="guide-panel tracking-archive-panel">
-              <div class="section-header-row">
-                <h2>单号档案</h2>
-                <div class="panel-user-chip">累计 [[ selectedUserHistoryCount ]] 个</div>
+          <div class="side-stack">
+            <div class="panel glass rise">
+              <div class="panel-head">
+                <h2 class="panel-title">单号档案</h2>
+                <span class="pill">累计 [[ selectedUserHistoryCount ]] 个</span>
               </div>
-
-              <div v-if="selectedUserHistory.length" class="tracking-history-list">
-                <div v-for="item in selectedUserHistory" :key="item.tracking_number + '-' + item.last_seen_at" class="tracking-history-item">
+              <div v-if="selectedUserHistory.length" class="history-list stagger">
+                <div v-for="item in selectedUserHistory" :key="item.tracking_number + '-' + item.last_seen_at" class="history-item inner">
                   <strong>[[ item.tracking_number ]]</strong>
                   <span>首次登记 [[ item.first_seen_at ]]</span>
                   <span>最近保存 [[ item.last_seen_at ]]</span>
                 </div>
               </div>
-              <div v-else class="section-note empty-history">这个账号还没有保存过历史单号。</div>
+              <div v-else class="empty-note">这个账号还没有保存过历史单号。</div>
             </div>
 
-            <div class="guide-panel service-summary-panel">
-              <div class="section-header-row">
-                <h2>服务控制</h2>
-                <div class="panel-user-chip">日志已移到单独页面</div>
+            <div class="panel glass rise">
+              <div class="panel-head">
+                <h2 class="panel-title">服务控制</h2>
               </div>
 
-              <div class="service-summary-grid">
-                <div class="service-summary-card">
-                  <div class="section-header-row compact">
+              <div class="service-grid">
+                <div class="service-card inner">
+                  <div class="service-card-head">
                     <h3>追踪脚本</h3>
-                    <div class="status-group">
-                      <span :class="['status-indicator', { running: script.running, stopped: !script.running }]"></span>
-                      <span class="status-label">[[ script.running ? '运行中' : '未启动' ]]</span>
-                    </div>
+                    <span class="status-line">
+                      <span :class="['status-dot', script.running ? 'on' : 'off']"></span>
+                      [[ script.running ? '运行中' : '未启动' ]]
+                    </span>
                   </div>
-                  <p class="field-hint">当前有 [[ trackedUsersCount ]] 个账号启用追踪。脚本不会再在 Web 启动时自动开始。</p>
-                  <div class="portal-actions dual compact-actions">
-                    <button @click="startScript" :disabled="script.running" class="start">启动脚本</button>
-                    <button @click="stopScript" :disabled="!script.running" class="stop">停止脚本</button>
+                  <p class="hint" style="margin: 0 0 10px;">当前有 [[ trackedUsersCount ]] 个账号启用追踪。</p>
+                  <div class="actions" style="margin-top: 0;">
+                    <button type="button" class="btn btn-small" @click="startScript" :disabled="script.running">启动</button>
+                    <button type="button" class="btn-ghost btn-small danger" @click="stopScript" :disabled="!script.running">停止</button>
                   </div>
-                  <div class="service-summary-note" v-if="keepalive.configured">
+                  <p class="hint" v-if="keepalive.configured" style="margin-top: 10px;">
                     保活 [[ keepalive.running ? '已启用' : '未启用' ]] · [[ keepalive.url ]]
-                  </div>
+                  </p>
                 </div>
 
-                <div class="service-summary-card">
-                  <div class="section-header-row compact">
+                <div class="service-card inner">
+                  <div class="service-card-head">
                     <h3>Bark 服务</h3>
-                    <div class="status-group">
-                      <span :class="['status-indicator', { running: bark.running, stopped: !bark.running }]"></span>
-                      <span class="status-label">[[ bark.running ? '运行中' : '未启动' ]]</span>
-                    </div>
+                    <span class="status-line">
+                      <span :class="['status-dot', bark.running ? 'on' : 'off']"></span>
+                      [[ bark.running ? '运行中' : '未启动' ]]
+                    </span>
                   </div>
-                  <div class="portal-actions dual compact-actions">
-                    <button @click="startBarkServer" :disabled="bark.running" class="start">启动 Bark</button>
-                    <button @click="stopBarkServer" :disabled="!bark.running" class="stop">停止 Bark</button>
+                  <div class="actions" style="margin-top: 0;">
+                    <button type="button" class="btn btn-small" @click="startBarkServer" :disabled="bark.running">启动</button>
+                    <button type="button" class="btn-ghost btn-small danger" @click="stopBarkServer" :disabled="!bark.running">停止</button>
                   </div>
-                  <div class="remote-panel service-panel-body compact-remote">
-                    <div class="section-header-row compact">
-                      <h3>公网健康状态</h3>
-                      <button type="button" class="refresh-btn compact-btn" @click="fetchRemoteBarkStatus" :disabled="remoteBark.loading">刷新</button>
-                    </div>
-                    <div v-if="remoteBark.loading" class="remote-line">正在检查...</div>
-                    <div v-else>
-                      <div class="remote-line">
-                        <span class="remote-label">公网:</span>
-                        <span>[[ remoteBark.url || barkHelp.public_url || '未配置' ]]</span>
-                      </div>
-                      <div class="remote-line">
-                        <span class="remote-label">本机:</span>
-                        <span>[[ barkHelp.internal_url || '未配置' ]]</span>
-                      </div>
-                      <div class="remote-line">
-                        <span class="remote-label">状态:</span>
-                        <span :class="['remote-status', { ok: remoteBark.ok, bad: !remoteBark.ok }]">
-                          [[ remoteBark.ok ? (remoteBark.fallback_used ? '在线(本机回退)' : '在线') : '离线/冷启动中' ]]
-                        </span>
-                      </div>
+                </div>
+
+                <div class="service-card inner">
+                  <div class="service-card-head">
+                    <h3>公网健康状态</h3>
+                    <button type="button" class="btn-ghost btn-small" @click="fetchRemoteBarkStatus" :disabled="remoteBark.loading">刷新</button>
+                  </div>
+                  <div v-if="remoteBark.loading" class="remote-line">加载中…</div>
+                  <div v-else>
+                    <div class="remote-line"><span class="remote-label">公网</span><span>[[ remoteBark.url || barkHelp.public_url || '未配置' ]]</span></div>
+                    <div class="remote-line"><span class="remote-label">本机</span><span>[[ barkHelp.internal_url || '未配置' ]]</span></div>
+                    <div class="remote-line">
+                      <span class="remote-label">状态</span>
+                      <span :class="remoteBark.ok ? 'remote-ok' : 'remote-bad'">
+                        [[ remoteBark.ok ? (remoteBark.fallback_used ? '在线（本机回退）' : '在线') : '离线 / 冷启动中' ]]
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -193,299 +184,223 @@
             </div>
           </div>
         </div>
-      </div>
+      </section>
 
-      <div class="section" v-if="page === 'env'">
-        <div class="hero-surface compact">
-          <div class="hero-grid single-pane">
-            <div class="hero-copy">
-              <div class="eyebrow">System Layer</div>
-              <h2 class="hero-title">这里只放系统级地址与服务参数</h2>
-              <p class="hero-subtitle">用户自己的单号、Bark keys 和个人推送参数都不在这里改，避免全局配置和用户数据混在一起。</p>
-            </div>
-            <div class="hero-metrics summary-strip single">
-              <div class="hero-metric">
-                <span class="hero-metric-label">当前公网 Bark</span>
-                <strong class="metric-url">[[ barkHelp.public_url || '未配置' ]]</strong>
+      <!-- ============ 系统设置 ============ -->
+      <section class="section" v-if="page === 'env'">
+        <h2 class="section-name">系统设置</h2>
+        <div class="panel glass rise">
+          <p class="hint" style="margin: 0 0 16px;">这里编辑的是全局 <code>.env</code>。用户自己的单号、Bark Keys 和推送参数不在这里改。</p>
+          <form @submit.prevent="saveEnv">
+            <div class="env-grid stagger">
+              <div v-for="(value, key) in envVars" :key="key">
+                <label :for="key">[[ key ]]<template v-if="envDesc[key]"> · [[ envDesc[key] ]]</template></label>
+                <input type="text" class="field" :id="key" v-model="envVars[key]" />
               </div>
             </div>
-          </div>
-        </div>
-
-        <h2>系统设置</h2>
-        <div class="section-note">这里编辑的是全局 `.env`。用户自己的单号、Bark Keys 和推送参数不在这里改。</div>
-        <form @submit.prevent="saveEnv" class="env-form">
-          <template v-for="(value, key) in envVars" :key="key">
-            <div class="env-field-card">
-              <label :for="key">[[ key ]] ([[ envDesc[key] || '系统配置' ]])</label>
-              <input type="text" :id="key" v-model="envVars[key]" />
+            <div class="actions">
+              <button type="submit" class="btn">保存</button>
             </div>
-          </template>
-          <div class="env-actions">
-            <button type="submit" class="env-save-btn">保存系统设置</button>
-          </div>
-        </form>
-        <div v-if="envMessage.text" :class="['message', envMessage.type]">[[ envMessage.text ]]</div>
-      </div>
-
-      <div class="section" v-if="page === 'users'">
-        <div class="hero-surface compact">
-          <div class="hero-grid single-pane">
-            <div class="hero-copy">
-              <div class="eyebrow">Accounts</div>
-              <h2 class="hero-title">管理员控制账号权限，普通用户只维护自己的投递信息</h2>
-              <p class="hero-subtitle">这里创建和修改账户、开关登录能力、启用追踪、代发测试推送。普通用户看不到这一区域。</p>
-            </div>
-            <div class="hero-metrics summary-strip">
-              <div class="hero-metric">
-                <span class="hero-metric-label">总账号</span>
-                <strong>[[ users.length ]]</strong>
-              </div>
-              <div class="hero-metric">
-                <span class="hero-metric-label">可登录</span>
-                <strong>[[ loginUsersCount ]]</strong>
-              </div>
-            </div>
-          </div>
+          </form>
+          <div v-if="envMessage.text" :class="['message', envMessage.type]">[[ envMessage.text ]]</div>
         </div>
+      </section>
 
-        <div class="section-header-row">
-          <h2>用户管理</h2>
-          <div class="panel-user-chip">总用户 [[ users.length ]] 人</div>
-        </div>
-
+      <!-- ============ 用户管理 ============ -->
+      <section class="section" v-if="page === 'users'">
+        <h2 class="section-name">用户管理 · 总账号 [[ users.length ]] · 可登录 [[ loginUsersCount ]]</h2>
         <div class="users-layout">
-          <div class="users-sidebar">
-            <h3>账号列表</h3>
-            <div class="user-list">
+          <div class="panel glass rise">
+            <div class="panel-head">
+              <h2 class="panel-title">账号列表</h2>
+              <button type="button" class="btn-ghost btn-small" @click="createUserExpanded = !createUserExpanded">
+                [[ createUserExpanded ? '收起新增' : '新增' ]]
+              </button>
+            </div>
+
+            <div v-if="createUserExpanded" class="inner" style="padding: 14px; margin-bottom: 14px;">
+              <div class="form-grid">
+                <div>
+                  <label for="createUsername">用户名</label>
+                  <input id="createUsername" type="text" class="field" v-model="newUserForm.username" />
+                </div>
+                <div>
+                  <label for="createDisplayName">显示名称</label>
+                  <input id="createDisplayName" type="text" class="field" v-model="newUserForm.display_name" />
+                </div>
+                <div>
+                  <label for="createPassword">初始密码</label>
+                  <input id="createPassword" type="password" class="field" v-model="newUserForm.password" />
+                </div>
+                <div>
+                  <label for="createRole">角色</label>
+                  <select id="createRole" v-model="newUserForm.role" class="field">
+                    <option value="user">user</option>
+                    <option value="admin">admin</option>
+                  </select>
+                </div>
+                <div class="full switch-group">
+                  <label class="switch-row">
+                    <span class="switch"><input type="checkbox" v-model="newUserForm.login_enabled" /><span class="track"></span><span class="knob"></span></span>
+                    允许登录
+                  </label>
+                  <label class="switch-row">
+                    <span class="switch"><input type="checkbox" v-model="newUserForm.tracking_enabled" /><span class="track"></span><span class="knob"></span></span>
+                    启用追踪
+                  </label>
+                </div>
+              </div>
+              <div class="actions">
+                <button type="button" class="btn btn-small" @click="createUser" :disabled="!newUserForm.username.trim() || !newUserForm.password.trim()">新增</button>
+              </div>
+            </div>
+
+            <div class="user-list stagger">
               <button
                 v-for="user in users"
                 :key="user.id"
                 type="button"
-                :class="['user-card', { active: selectedUserId === user.id }]"
+                :class="['user-item', { active: selectedUserId === user.id }]"
                 @click="selectUser(user.id)"
               >
-                <div class="user-card-top">
+                <div class="user-item-top">
                   <strong>[[ user.display_name ]]</strong>
-                  <span class="user-badge">[[ user.role ]]</span>
+                  <span :class="['role-badge', user.role === 'admin' ? 'admin' : 'user']">[[ user.role ]]</span>
                 </div>
-                <div class="user-card-line">用户名：[[ user.username ]]</div>
-                <div class="user-card-line">追踪：[[ user.tracking_enabled ? '开' : '关' ]] / 登录：[[ user.login_enabled ? '开' : '关' ]]</div>
-                <div class="user-card-line">当前单号：[[ user.tracking_number || '未填写' ]]</div>
-                <div class="user-card-line">历史单号：[[ user.tracking_history_count || 0 ]] 个</div>
-                <div class="user-card-line">多端 Keys：[[ user.bark_keys_masked || '未设置' ]]</div>
-                <div class="user-card-line">最近推送：[[ user.last_push_at || '-' ]]</div>
+                <div class="user-item-line">用户名 [[ user.username ]]</div>
+                <div class="user-item-line">追踪 [[ user.tracking_enabled ? '开' : '关' ]] · 登录 [[ user.login_enabled ? '开' : '关' ]]</div>
+                <div class="user-item-line">当前单号 [[ user.tracking_number || '未填写' ]]</div>
+                <div class="user-item-line">历史 [[ user.tracking_history_count || 0 ]] 个 · Keys [[ user.bark_keys_masked || '未设置' ]]</div>
+                <div class="user-item-line">最近推送 [[ user.last_push_at || '-' ]]</div>
               </button>
-            </div>
-
-            <div class="users-create">
-              <div class="section-header-row compact">
-                <h3>创建账号</h3>
-                <button type="button" class="refresh-btn compact-btn" @click="createUserExpanded = !createUserExpanded">
-                  [[ createUserExpanded ? '收起' : '展开' ]]
-                </button>
-              </div>
-
-              <div v-if="createUserExpanded" class="users-create-body">
-                <div class="users-create-grid">
-                  <div>
-                    <label for="createUsername">用户名</label>
-                    <input id="createUsername" type="text" v-model="newUserForm.username" />
-                  </div>
-                  <div>
-                    <label for="createDisplayName">显示名称</label>
-                    <input id="createDisplayName" type="text" v-model="newUserForm.display_name" />
-                  </div>
-                  <div>
-                    <label for="createPassword">初始密码</label>
-                    <input id="createPassword" type="password" v-model="newUserForm.password" />
-                  </div>
-                  <div>
-                    <label for="createRole">角色</label>
-                    <select id="createRole" v-model="newUserForm.role" class="param-input">
-                      <option value="user">user</option>
-                      <option value="admin">admin</option>
-                    </select>
-                  </div>
-                  <div class="full">
-                    <label class="checkbox-row"><input type="checkbox" v-model="newUserForm.login_enabled" /> 允许登录</label>
-                  </div>
-                  <div class="full">
-                    <label class="checkbox-row"><input type="checkbox" v-model="newUserForm.tracking_enabled" /> 启用追踪</label>
-                  </div>
-                </div>
-                <div class="users-create-actions">
-                  <button type="button" class="refresh-btn full" @click="createUser" :disabled="!newUserForm.username.trim() || !newUserForm.password.trim()">创建账号</button>
-                </div>
-              </div>
             </div>
           </div>
 
-          <div class="users-editor" v-if="selectedUserId">
-            <div class="editor-header">
-              <h3>账号详情</h3>
-              <div :class="['status-badge', selectedUserTrackingState.tone]">[[ selectedUserTrackingState.label ]]</div>
+          <div class="panel glass rise" v-if="selectedUserId">
+            <div class="panel-head">
+              <h2 class="panel-title">账号详情</h2>
+              <span :class="['pill', selectedUserTrackingState.tone]">[[ selectedUserTrackingState.label ]]</span>
             </div>
 
-            <div class="user-insight-grid" v-if="selectedUser">
-              <div class="user-insight-card">
-                <span class="hero-metric-label">当前单号</span>
-                <strong>[[ selectedUser.tracking_number || '未填写' ]]</strong>
+            <div class="widget-grid" style="margin-bottom: 18px;" v-if="selectedUser">
+              <div class="widget inner">
+                <p class="widget-title">当前单号</p>
+                <p class="widget-value small">[[ selectedUser.tracking_number || '未填写' ]]</p>
               </div>
-              <div class="user-insight-card">
-                <span class="hero-metric-label">历史单号</span>
-                <strong>[[ selectedUserHistoryCount ]]</strong>
+              <div class="widget inner">
+                <p class="widget-title">最近推送</p>
+                <p class="widget-value small">[[ selectedUser.last_push_at || '未推送' ]]</p>
               </div>
-              <div class="user-insight-card">
-                <span class="hero-metric-label">最近推送</span>
-                <strong>[[ selectedUser.last_push_at || '未推送' ]]</strong>
-              </div>
-              <div class="user-insight-card">
-                <span class="hero-metric-label">最近物流</span>
-                <strong>[[ selectedUser.last_error || selectedUser.last_tracking_info || '暂无记录' ]]</strong>
+              <div class="widget inner">
+                <p class="widget-title">最近物流</p>
+                <p class="widget-value small">[[ selectedUser.last_error || selectedUser.last_tracking_info || '暂无记录' ]]</p>
               </div>
             </div>
 
-            <div class="user-form-grid">
+            <div class="form-grid">
               <div>
                 <label for="userUsername">用户名</label>
-                <input id="userUsername" type="text" v-model="userForm.username" />
+                <input id="userUsername" type="text" class="field" v-model="userForm.username" />
               </div>
               <div>
                 <label for="userDisplayName">显示名称</label>
-                <input id="userDisplayName" type="text" v-model="userForm.display_name" />
+                <input id="userDisplayName" type="text" class="field" v-model="userForm.display_name" />
               </div>
               <div>
                 <label for="userRole">角色</label>
-                <select id="userRole" v-model="userForm.role" class="param-input">
+                <select id="userRole" v-model="userForm.role" class="field">
                   <option value="user">user</option>
                   <option value="admin">admin</option>
                 </select>
               </div>
               <div>
                 <label for="userCheckInterval">查询间隔（秒）</label>
-                <input id="userCheckInterval" type="number" min="30" v-model.number="userForm.check_interval" />
+                <input id="userCheckInterval" type="number" min="30" class="field" v-model.number="userForm.check_interval" />
               </div>
               <div class="full">
                 <label for="userNote">备注</label>
-                <input id="userNote" type="text" v-model="userForm.note" />
+                <input id="userNote" type="text" class="field" v-model="userForm.note" />
               </div>
               <div class="full">
                 <label for="userTrackingNumber">日本邮政单号</label>
-                <input id="userTrackingNumber" type="text" v-model="userForm.tracking_number" />
-                <p class="field-hint">该用户启用追踪后，后台会按独立间隔轮询这个单号。</p>
+                <input id="userTrackingNumber" type="text" class="field" v-model="userForm.tracking_number" />
+                <p class="hint">该用户启用追踪后，后台会按独立间隔轮询这个单号。</p>
               </div>
               <div class="full">
                 <label for="userBarkKeys">Bark Keys（支持多端，一行一个）</label>
-                <textarea id="userBarkKeys" v-model="userForm.bark_keys" rows="5"></textarea>
-                <p class="field-hint">支持直接粘贴完整推送 URL。多端推送时，一行放一个设备 key。</p>
+                <textarea id="userBarkKeys" class="field" v-model="userForm.bark_keys" rows="5"></textarea>
+                <p class="hint">支持直接粘贴完整推送 URL，后端会自动提取 key。</p>
               </div>
               <div class="full">
                 <label for="userBarkQueryParams">Bark 参数</label>
-                <input id="userBarkQueryParams" type="text" v-model="userForm.bark_query_params" />
+                <input id="userBarkQueryParams" type="text" class="field" v-model="userForm.bark_query_params" />
               </div>
-              <div class="full">
-                <div class="test-panel">
-                  <div class="test-panel-header">
-                    <h3>Bark 预览</h3>
-                    <p class="field-hint">测试会直接使用当前编辑器里的 Bark Keys、参数和追踪链接开关，不需要先保存账号。</p>
-                  </div>
-                  <div class="test-grid">
-                    <div>
-                      <label for="userTestTitle">测试标题</label>
-                      <input id="userTestTitle" type="text" v-model="userForm.test_title" />
-                    </div>
-                    <div class="full">
-                      <label for="userTestBody">测试内容</label>
-                      <textarea id="userTestBody" v-model="userForm.test_body" rows="4"></textarea>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div>
-                <label class="checkbox-row"><input type="checkbox" v-model="userForm.bark_url_enabled" /> 推送附带追踪链接</label>
-              </div>
-              <div>
-                <label class="checkbox-row"><input type="checkbox" v-model="userForm.login_enabled" /> 允许登录</label>
-              </div>
-              <div>
-                <label class="checkbox-row"><input type="checkbox" v-model="userForm.tracking_enabled" /> 启用追踪</label>
+              <div class="full switch-group">
+                <label class="switch-row">
+                  <span class="switch"><input type="checkbox" v-model="userForm.bark_url_enabled" /><span class="track"></span><span class="knob"></span></span>
+                  推送附带追踪链接
+                </label>
+                <label class="switch-row">
+                  <span class="switch"><input type="checkbox" v-model="userForm.login_enabled" /><span class="track"></span><span class="knob"></span></span>
+                  允许登录
+                </label>
+                <label class="switch-row">
+                  <span class="switch"><input type="checkbox" v-model="userForm.tracking_enabled" /><span class="track"></span><span class="knob"></span></span>
+                  启用追踪
+                </label>
               </div>
               <div class="full">
                 <label for="userNewPassword">重置密码（留空不修改）</label>
-                <input id="userNewPassword" type="password" v-model="userForm.new_password" />
+                <input id="userNewPassword" type="password" class="field" v-model="userForm.new_password" />
               </div>
-            </div>
-
-            <div class="portal-actions dual">
-              <button type="button" class="env-save-btn" @click="saveUser" :disabled="!userForm.username.trim()">保存账号</button>
-              <button type="button" class="refresh-btn" @click="sendUserTestPush" :disabled="sendingTestPush">发送 Bark 测试</button>
-            </div>
-            <div v-if="userMessage.text" :class="['message', userMessage.type]">[[ userMessage.text ]]</div>
-
-            <div class="guide-panel slim tracking-archive-panel">
-              <h3>单号档案</h3>
-              <div v-if="selectedUserHistory.length" class="tracking-history-list">
-                <div v-for="item in selectedUserHistory" :key="item.tracking_number + '-' + item.last_seen_at" class="tracking-history-item">
-                  <strong>[[ item.tracking_number ]]</strong>
-                  <span>首次登记 [[ item.first_seen_at ]]</span>
-                  <span>最近保存 [[ item.last_seen_at ]]</span>
+              <div class="full">
+                <div class="inner" style="padding: 14px;">
+                  <h3 class="section-name" style="margin-bottom: 4px;">Bark 预览</h3>
+                  <p class="hint" style="margin: 0 0 12px;">测试直接使用当前编辑器里的 Keys、参数和链接开关，不需要先保存。</p>
+                  <div class="form-grid">
+                    <div class="full">
+                      <label for="userTestTitle">测试标题</label>
+                      <input id="userTestTitle" type="text" class="field" v-model="userForm.test_title" />
+                    </div>
+                    <div class="full">
+                      <label for="userTestBody">测试内容</label>
+                      <textarea id="userTestBody" class="field" v-model="userForm.test_body" rows="3"></textarea>
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div v-else class="section-note empty-history">这个账号还没有保存过历史单号。</div>
             </div>
 
-            <div class="guide-panel slim">
-              <h3>Bark 配置说明</h3>
-              <ol class="guide-list">
-                <li>用户登录后只看到自己的“我的快递与 Bark 设置”页面。</li>
-                <li>服务器地址填 `[[ barkHelp.public_url || barkHelp.internal_url || '未配置' ]]`。</li>
-                <li>多端推送时，每个设备都要单独复制一个 key，然后一行填一个。</li>
-                <li>这里可以直接粘贴完整推送 URL，后端会自动提取 key。</li>
-                <li>“发送 Bark 测试”会使用当前编辑器里的 Bark 参数和测试文案直接预览效果。</li>
-              </ol>
+            <div class="actions">
+              <button type="button" class="btn" @click="saveUser" :disabled="!userForm.username.trim()">保存</button>
+              <button type="button" class="btn-ghost" @click="sendUserTestPush" :disabled="sendingTestPush">发送 Bark 测试</button>
             </div>
+            <div v-if="userMessage.text" :class="['message', userMessage.type]">[[ userMessage.text ]]</div>
           </div>
         </div>
-      </div>
+      </section>
 
-      <div class="section" v-if="page === 'logs'">
-        <div class="hero-surface compact">
-          <div class="hero-grid single-pane">
-            <div class="hero-copy">
-              <div class="eyebrow">Observability</div>
-              <h2 class="hero-title">把实时输出和历史排障痕迹放在同一个观察层</h2>
-              <p class="hero-subtitle">Remote Bark、Tracker 和 Bark Server 的流式日志都会收进这里，便于确认每个用户和每个服务的状态。</p>
-            </div>
-          </div>
-        </div>
+      <!-- ============ 日志 ============ -->
+      <section class="section" v-if="page === 'logs'">
+        <h2 class="section-name">日志</h2>
+        <nav class="nav-tabs glass rise" style="margin-bottom: 16px;">
+          <button type="button" :class="['tab', { active: logTab === 'remote' }]" @click="logTab = 'remote'">Remote Bark</button>
+          <button type="button" :class="['tab', { active: logTab === 'tracker' }]" @click="logTab = 'tracker'">Tracker</button>
+          <button type="button" :class="['tab', { active: logTab === 'bark' }]" @click="logTab = 'bark'">Bark</button>
+        </nav>
 
-        <h2>日志</h2>
-        <div class="tab-bar logs-tabbar">
-          <button type="button" :class="['tab-btn', { active: logTab === 'remote' }]" @click="logTab = 'remote'">Remote Bark</button>
-          <button type="button" :class="['tab-btn', { active: logTab === 'tracker' }]" @click="logTab = 'tracker'">Tracker</button>
-          <button type="button" :class="['tab-btn', { active: logTab === 'bark' }]" @click="logTab = 'bark'">Bark</button>
-        </div>
-
-        <div class="log-container" v-if="logTab === 'remote'">
-          <h3>Remote Bark Log</h3>
-          <div class="log-output" ref="remoteBarkLogOutput">
+        <div class="panel glass rise" style="padding: 10px;">
+          <div class="log-view inner" v-if="logTab === 'remote'" ref="remoteBarkLogOutput">
             <div v-for="(line, index) in remoteBarkLogs" :key="index" v-html="line"></div>
           </div>
-        </div>
-        <div class="log-container" v-else-if="logTab === 'tracker'">
-          <h3>Tracker Log</h3>
-          <div class="log-output" ref="trackerLogOutput">
+          <div class="log-view inner" v-else-if="logTab === 'tracker'" ref="trackerLogOutput">
             <div v-for="(line, index) in script.logs" :key="index" v-html="line"></div>
           </div>
-        </div>
-        <div class="log-container" v-else>
-          <h3>Bark Log</h3>
-          <div class="log-output" ref="barkLogOutput">
+          <div class="log-view inner" v-else ref="barkLogOutput">
             <div v-for="(line, index) in bark.logs" :key="index" v-html="line"></div>
           </div>
         </div>
-      </div>
+      </section>
     </div>
 
     <script id="initial-env" type="application/json">{{ env_vars | tojson | safe }}</script>
@@ -500,6 +415,8 @@
         window.initialBarkHelp = JSON.parse((document.getElementById('initial-bark-help') || {}).textContent || '{}');
       })();
     </script>
+    <script src="/static/dotfield.js"></script>
+    <script src="/static/ui.js"></script>
     <script src="/static/app.js"></script>
   </body>
 </html>
