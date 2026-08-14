@@ -8,7 +8,13 @@
 - [codex-raspi-local-funnel.md](codex-raspi-local-funnel.md) — `codex/raspi-local-funnel` 分支：
   树莓派本地部署改造，多用户账号体系（已合并进 main）。
 - [feature-vultr-vps-deploy.md](feature-vultr-vps-deploy.md) — `feature/vultr-vps-deploy` 分支：
-  部署到 vultr-jp 公网 VPS（Docker + Caddy 子域名反代）。
+  部署到 vultr-jp 公网 VPS（Docker + Caddy 子域名反代，已合并 main 并上线）。
+- [feature-vultr-vps-deploy.md](feature-vultr-vps-deploy.md) 之后的重构梳理见
+  [../app-logic-review.md](../app-logic-review.md)。
+- `refactor/streamline-services` 分支 — 重构第一刀：tracker 自动运行 + 按部署形态裁剪 UI
+  （进度记在 [main.md](main.md) 对应日期，改动本身见分支提交）。
+- [feature-szyyw-design-package.md](feature-szyyw-design-package.md) — `feature/szyyw-design-package`
+  分支：前端接入 @szyyw/design v0.3.0（vendor + 明暗三态），基于 streamline-services。
 
 ## 跨分支事项
 
