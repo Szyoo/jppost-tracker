@@ -1,11 +1,17 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="nebula">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>快递追踪控制台</title>
+    <script>
+      // 首帧前恢复明暗偏好（默认跟随系统），避免闪烁；持久化由 boot.js 接管
+      try { document.documentElement.dataset.scheme = localStorage.getItem('jppost_scheme') || 'auto'; } catch (e) { document.documentElement.dataset.scheme = 'auto'; }
+    </script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.min.js"></script>
+    <link rel="stylesheet" href="/static/vendor/szyyw-design/tokens.css" />
+    <link rel="stylesheet" href="/static/vendor/szyyw-design/components.css" />
     <link rel="stylesheet" href="/static/style.css" />
   </head>
   <body>
@@ -416,8 +422,7 @@
         window.initialBarkHelp = JSON.parse((document.getElementById('initial-bark-help') || {}).textContent || '{}');
       })();
     </script>
-    <script src="/static/dotfield.js"></script>
-    <script src="/static/ui.js"></script>
+    <script type="module" src="/static/boot.js"></script>
     <script src="/static/app.js"></script>
   </body>
 </html>

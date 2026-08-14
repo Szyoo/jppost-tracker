@@ -1,57 +1,11 @@
 /* ============================================================
-   jppost-tracker 前端样式 —— 按 szyyw.xyz 设计语言从头重写
-   深空底色 + 点阵背景 + 毛玻璃浮层 + 青紫渐变点缀 + 克制弹性动效
+   jppost-tracker 应用层样式
+   基础层来自 vendor 的 @szyyw/design（tokens.css + components.css），
+   这里只放本项目特有的组件；颜色一律引用 token，禁止硬编码
+   （否则浅色模式/换配色会漏色，见上游 DESIGN.md §2）。
    ============================================================ */
 
-:root {
-  /* 底色与文字 */
-  --bg: #0b1020;
-  --text: #e2e8f0;
-  --text-dim: #94a3b8;
-
-  /* 强调色（唯一品牌色组合） */
-  --accent: #38bdf8;
-  --accent2: #a855f7;
-  --grad: linear-gradient(120deg, var(--accent), var(--accent2));
-
-  /* 玻璃 */
-  --glass-bg: rgba(15, 23, 42, 0.55);
-  --glass-border: rgba(148, 163, 184, 0.18);
-
-  /* 次级容器（玻璃上不再叠玻璃，用更深的半透明） */
-  --inner-bg: rgba(2, 6, 23, 0.35);
-  --field-bg: rgba(2, 6, 23, 0.55);
-
-  /* 状态色 */
-  --err: #ef4444;
-  --ok: #34d399;
-
-  /* 动效 */
-  --ease: cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-* {
-  box-sizing: border-box;
-}
-
-html,
-body {
-  margin: 0;
-  padding: 0;
-}
-
-body {
-  background: var(--bg);
-  color: var(--text);
-  font-family: 'Inter', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
-  font-size: 15px;
-  line-height: 1.6;
-  min-height: 100vh;
-}
-
 code {
-  font-family: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
-  font-size: 0.88em;
   color: var(--accent);
   background: var(--inner-bg);
   border: 1px solid var(--glass-border);
@@ -60,14 +14,7 @@ code {
   word-break: break-all;
 }
 
-/* ---------- 层级模型 ---------- */
-
-.bg-layer {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  overflow: hidden;
-}
+/* ---------- 页面骨架 ---------- */
 
 .page {
   position: relative;
@@ -77,111 +24,7 @@ code {
   padding: 28px 24px 64px;
 }
 
-/* ---------- 动效 ---------- */
-
-@keyframes rise {
-  from {
-    opacity: 0;
-    transform: translateY(18px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes shake {
-  0%,
-  100% {
-    transform: translateX(0);
-  }
-  20%,
-  60% {
-    transform: translateX(-9px);
-  }
-  40%,
-  80% {
-    transform: translateX(9px);
-  }
-}
-
-.rise {
-  animation: rise 0.65s var(--ease) both;
-}
-
-.stagger > * {
-  animation: rise 0.6s var(--ease) both;
-}
-.stagger > *:nth-child(1) { animation-delay: 0ms; }
-.stagger > *:nth-child(2) { animation-delay: 70ms; }
-.stagger > *:nth-child(3) { animation-delay: 140ms; }
-.stagger > *:nth-child(4) { animation-delay: 210ms; }
-.stagger > *:nth-child(5) { animation-delay: 280ms; }
-.stagger > *:nth-child(6) { animation-delay: 350ms; }
-.stagger > *:nth-child(7) { animation-delay: 420ms; }
-.stagger > *:nth-child(8) { animation-delay: 490ms; }
-.stagger > *:nth-child(9) { animation-delay: 560ms; }
-.stagger > *:nth-child(10) { animation-delay: 630ms; }
-.stagger > *:nth-child(n + 11) { animation-delay: 700ms; }
-
-.shake {
-  animation: shake 0.4s var(--ease);
-}
-
-/* ---------- 玻璃容器 ---------- */
-
-.glass {
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  border-radius: 16px;
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-}
-
-.panel {
-  padding: 22px;
-}
-
-/* 悬停抬升 + spotlight（卡片类容器） */
-.lift {
-  position: relative;
-  transition: transform 0.2s var(--ease), border-color 0.2s var(--ease), box-shadow 0.2s var(--ease);
-}
-
-.lift:hover {
-  transform: translateY(-4px);
-  border-color: rgba(56, 189, 248, 0.45);
-  box-shadow: 0 14px 34px rgba(2, 6, 23, 0.5);
-}
-
-.spot {
-  position: relative;
-  overflow: hidden;
-}
-
-.spot::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: radial-gradient(360px circle at var(--mx, 50%) var(--my, 50%), rgba(56, 189, 248, 0.14), transparent 65%);
-  opacity: 0;
-  transition: opacity 0.3s var(--ease);
-  pointer-events: none;
-}
-
-.spot:hover::before {
-  opacity: 1;
-}
-
-/* 次级容器（玻璃内的深色块） */
-.inner {
-  background: var(--inner-bg);
-  border: 1px solid var(--glass-border);
-  border-radius: 10px;
-}
-
-/* ---------- 页头 ---------- */
+/* ---------- 页头（右侧给固定定位的 .scheme-toggle 让位） ---------- */
 
 .site-header {
   display: flex;
@@ -190,6 +33,7 @@ code {
   gap: 18px;
   flex-wrap: wrap;
   margin-bottom: 26px;
+  padding-right: 44px;
 }
 
 .brand {
@@ -228,7 +72,7 @@ code {
   color: var(--text-dim);
 }
 
-/* 角色徽章：胶囊、细描边同色文字，青=admin 紫=user */
+/* 角色徽章：青=admin 紫=user */
 .role-badge {
   display: inline-block;
   padding: 2px 10px;
@@ -240,12 +84,14 @@ code {
 
 .role-badge.admin {
   color: var(--accent);
-  border-color: rgba(56, 189, 248, 0.5);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  background: var(--tint-cyan-bg);
 }
 
 .role-badge.user {
   color: var(--accent2);
-  border-color: rgba(168, 85, 247, 0.5);
+  border-color: color-mix(in srgb, var(--accent2) 50%, transparent);
+  background: var(--tint-violet-bg);
 }
 
 /* ---------- 页签 ---------- */
@@ -278,125 +124,15 @@ code {
 
 .tab.active {
   color: var(--accent);
-  background: rgba(56, 189, 248, 0.1);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
-/* ---------- 区块标题 ---------- */
+/* ---------- 表单补充 ---------- */
 
-.section {
-  margin-top: 28px;
-}
-
-.section-name {
+.hint {
   font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
   color: var(--text-dim);
-  margin: 0 0 12px;
-}
-
-.panel-title {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 600;
-}
-
-.panel-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 16px;
-  flex-wrap: wrap;
-}
-
-/* ---------- 按钮 ---------- */
-
-.btn {
-  appearance: none;
-  border: none;
-  border-radius: 10px;
-  padding: 10px 20px;
-  font: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  color: #04101c;
-  background: var(--grad);
-  cursor: pointer;
-  transition: transform 0.15s var(--ease), box-shadow 0.2s var(--ease), opacity 0.2s var(--ease);
-}
-
-.btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 24px rgba(56, 189, 248, 0.35);
-}
-
-.btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.btn-ghost {
-  appearance: none;
-  background: transparent;
-  border: 1px solid var(--glass-border);
-  border-radius: 10px;
-  padding: 10px 20px;
-  font: inherit;
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text-dim);
-  cursor: pointer;
-  transition: color 0.2s var(--ease), border-color 0.2s var(--ease), transform 0.15s var(--ease);
-}
-
-.btn-ghost:hover:not(:disabled) {
-  color: var(--accent);
-  border-color: rgba(56, 189, 248, 0.5);
-}
-
-.btn-ghost.danger:hover:not(:disabled) {
-  color: var(--err);
-  border-color: rgba(239, 68, 68, 0.5);
-}
-
-.btn-ghost:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.btn-small {
-  padding: 8px 14px;
-  font-size: 13px;
-}
-
-.actions {
-  display: flex;
-  gap: 12px;
-  margin-top: 18px;
-  flex-wrap: wrap;
-}
-
-/* ---------- 表单 ---------- */
-
-label {
-  display: block;
-  font-size: 13px;
-  color: var(--text-dim);
-  margin-bottom: 6px;
-}
-
-.field {
-  width: 100%;
-  background: var(--field-bg);
-  border: 1px solid var(--glass-border);
-  border-radius: 10px;
-  padding: 10px 12px;
-  font: inherit;
-  font-size: 14px;
-  color: var(--text);
-  transition: border-color 0.2s var(--ease), box-shadow 0.2s var(--ease);
+  margin: 6px 0 0;
 }
 
 textarea.field {
@@ -406,39 +142,13 @@ textarea.field {
   font-size: 13px;
 }
 
-select.field {
-  appearance: none;
-  background-image: linear-gradient(45deg, transparent 50%, var(--text-dim) 50%), linear-gradient(135deg, var(--text-dim) 50%, transparent 50%);
-  background-position: calc(100% - 18px) 50%, calc(100% - 13px) 50%;
-  background-size: 5px 5px;
-  background-repeat: no-repeat;
-  padding-right: 34px;
-}
-
-select.field option {
-  background: #0f172a;
-  color: var(--text);
-}
-
-.field:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.18);
-}
-
 .field:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
 
-.hint {
-  font-size: 12px;
-  color: var(--text-dim);
-  margin: 6px 0 0;
-}
-
+/* 本项目表单用固定两列 + .full 跨行（覆盖包里的 auto-fit 网格） */
 .form-grid {
-  display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
 }
@@ -480,7 +190,7 @@ select.field option {
   position: absolute;
   inset: 0;
   border-radius: 999px;
-  background: rgba(148, 163, 184, 0.25);
+  background: color-mix(in srgb, var(--text-dim) 30%, transparent);
   transition: background 0.2s var(--ease);
   pointer-events: none;
 }
@@ -492,7 +202,8 @@ select.field option {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--sheet-bg);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--text) 25%, transparent);
   transition: transform 0.2s var(--ease);
   pointer-events: none;
 }
@@ -526,7 +237,7 @@ select.field option {
   color: var(--err);
 }
 
-/* ---------- 状态点 / 胶囊 ---------- */
+/* ---------- 状态点 / 胶囊语义别名 ---------- */
 
 .status-line {
   display: inline-flex;
@@ -540,42 +251,31 @@ select.field option {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: rgba(148, 163, 184, 0.5);
+  background: color-mix(in srgb, var(--text-dim) 50%, transparent);
   flex: none;
 }
 
 .status-dot.on {
   background: var(--ok);
-  box-shadow: 0 0 8px rgba(52, 211, 153, 0.6);
-}
-
-.status-dot.off {
-  background: rgba(148, 163, 184, 0.5);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--ok) 60%, transparent);
 }
 
 .status-dot.err {
   background: var(--err);
-  box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--err) 60%, transparent);
 }
 
-.pill {
-  display: inline-block;
-  padding: 3px 12px;
-  border-radius: 999px;
-  font-size: 12px;
-  color: var(--text-dim);
-  border: 1px solid var(--glass-border);
-  background: var(--inner-bg);
-}
-
+/* 模板里用的是语义名（ok/error/pending），映射到 token */
 .pill.ok {
   color: var(--ok);
-  border-color: rgba(52, 211, 153, 0.45);
+  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+  background: var(--tint-green-bg);
 }
 
 .pill.error {
   color: var(--err);
-  border-color: rgba(239, 68, 68, 0.45);
+  border-color: color-mix(in srgb, var(--err) 45%, transparent);
+  background: var(--tint-red-bg);
 }
 
 .pill.pending {
@@ -691,12 +391,12 @@ select.field option {
 }
 
 .user-item:hover {
-  border-color: rgba(56, 189, 248, 0.35);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 .user-item.active {
-  border-color: rgba(56, 189, 248, 0.55);
-  background: rgba(56, 189, 248, 0.08);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
 }
 
 .user-item-top {
@@ -753,7 +453,7 @@ select.field option {
   color: var(--text-dim);
 }
 
-/* ---------- 日志 ---------- */
+/* ---------- 日志（终端窗：刻意保持深色，浅色模式不变，DESIGN.md §9） ---------- */
 
 .log-view {
   padding: 14px;
@@ -763,9 +463,11 @@ select.field option {
   font-family: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
   font-size: 12px;
   line-height: 1.7;
-  color: var(--text-dim);
   white-space: pre-wrap;
   word-break: break-all;
+  background: var(--term-bg);
+  color: var(--term-text);
+  border-color: var(--term-border);
 }
 
 .log-view div {
@@ -842,7 +544,6 @@ select.field option {
 
 .auth-link-row a {
   color: var(--accent);
-  text-decoration: none;
 }
 
 .auth-link-row a:hover {
@@ -910,12 +611,12 @@ select.field option {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.25);
+  background: color-mix(in srgb, var(--text-dim) 30%, transparent);
   border-radius: 999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(148, 163, 184, 0.4);
+  background: color-mix(in srgb, var(--text-dim) 45%, transparent);
 }
 
 /* ---------- 响应式 ---------- */
