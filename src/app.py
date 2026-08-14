@@ -58,6 +58,8 @@ SYSTEM_ENV_KEYS = [
     "PUBLIC_URL",
     "APP_PORT",
     "AUTO_START_BARK_SERVER",
+    "AUTO_START_TRACKER",
+    "LOCAL_BARK_ENABLED",
 ]
 
 def _first_non_empty(*values: str) -> str:
@@ -222,6 +224,8 @@ bark_server_thread = None
 # --- 脚本运行状态变量 ---
 script_process = None
 script_thread = None
+# 区分"用户主动停止"与"脚本意外退出"，后者在自动模式下会被拉起来
+script_stop_requested = False
 
 # --- Render free 保活 ---
 keepalive_thread = None
@@ -501,6 +505,8 @@ def build_bark_help_state():
         "public_url": get_bark_public_url(),
         "internal_url": get_bark_internal_url(),
         "health_path": get_bark_health_path(),
+        "local_bark_enabled": local_bark_enabled(),
+        "tracker_auto_start": tracker_auto_start_enabled(),
     }
 
 def check_bark_endpoint(bark_url: str, label: str = "BARK") -> dict:
@@ -687,14 +693,29 @@ def read_script_output():
         stop_keepalive()
         if script_process and script_process.stdout:
             script_process.stdout.close()
-        
+
         return_code = script_process.wait() if script_process else 'N/A'
         log_tracker(_fmt('[TRACKER]', f"脚本已停止，返回码: {return_code}"))
         socketio.emit('script_status', {'running': False})
         script_process = None
 
+        # 自动模式下，意外退出（非用户主动停止）10 秒后自动拉起
+        if tracker_auto_start_enabled() and not script_stop_requested:
+            log_tracker(_fmt('[SYSTEM]', "检测到脚本意外退出，10 秒后自动重启。"))
+            threading.Thread(target=_delayed_tracker_restart, daemon=True).start()
+
+def tracker_auto_start_enabled() -> bool:
+    return _env_enabled("AUTO_START_TRACKER", "1")
+
+def _delayed_tracker_restart():
+    time.sleep(10)
+    # 等待期间用户可能手动停止或已重新启动，再核对一次
+    if script_stop_requested or (script_process is not None and script_process.poll() is None):
+        return
+    start_tracker_script(start_reason="auto")
+
 def start_tracker_script(start_reason: str = "manual") -> bool:
-    global script_process, script_thread
+    global script_process, script_thread, script_stop_requested
     if script_process is not None and script_process.poll() is None:
         log_tracker(_fmt('[TRACKER]', "脚本已经在运行中。"))
         socketio.emit('script_status', {'running': True})
@@ -703,6 +724,7 @@ def start_tracker_script(start_reason: str = "manual") -> bool:
     action = "自动启动" if start_reason == "auto" else "正在启动"
     log_tracker(_fmt('[SYSTEM]', f"{action}追踪脚本..."))
     try:
+        script_stop_requested = False
         script_process = subprocess.Popen(
             [sys.executable, '-u', TRACKER_SCRIPT],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
@@ -800,8 +822,10 @@ def start_script():
 @socket_admin_required
 def stop_script():
     """终止 Python 追踪脚本。"""
-    global script_process
+    global script_process, script_stop_requested
     if script_process is not None and script_process.poll() is None:
+        # 标记为主动停止，避免自动重启机制把它拉起来
+        script_stop_requested = True
         log_tracker(_fmt('[SYSTEM]', "终止追踪脚本信号已发送。"))
         script_process.terminate()
         stop_keepalive()
@@ -832,8 +856,17 @@ def read_bark_output():
         socketio.emit('bark_server_status', {'running': False})
         bark_server_process = None
 
+def local_bark_enabled() -> bool:
+    # VPS 容器部署下 Bark 由 compose 独立管理，设 LOCAL_BARK_ENABLED=0
+    # 可以隐藏控制台里的本地 Bark 启停卡片并禁用子进程管理
+    return _env_enabled("LOCAL_BARK_ENABLED", "1")
+
 def start_local_bark_server(start_reason: str = "manual") -> bool:
     global bark_server_process, bark_server_thread
+    if not local_bark_enabled():
+        log_bark(_fmt('[BARK]', "本地 Bark 管理已禁用（LOCAL_BARK_ENABLED=0），Bark 由部署环境独立运行。"))
+        socketio.emit('bark_server_status', {'running': False})
+        return False
     if bark_server_process is not None and bark_server_process.poll() is None:
         log_bark(_fmt('[BARK]', "服务已经在运行中。"))
         socketio.emit('bark_server_status', {'running': True})
@@ -926,7 +959,7 @@ def update_env():
         message = f"成功更新 {updated_count} 个系统环境变量。"
         if errors: message += " 部分变量更新失败: " + "; ".join(errors)
         log_tracker(_fmt('[SYSTEM]', message))
-        log_tracker(_fmt('[SYSTEM]', "请注意：更新的环境变量将在脚本下次启动时生效。"))
+        log_tracker(_fmt('[SYSTEM]', "生效说明：Bark 地址/健康检查类配置对追踪脚本即时生效；APP_PORT、AUTO_START_*、LOCAL_BARK_ENABLED 等启动参数需重启 Web 服务。"))
         return jsonify({"status": "success", "message": message, "env_vars": build_system_env(), "bark_help": build_bark_help_state()})
     return jsonify({"status": "error", "message": "没有变量被更新或发生错误: " + "; ".join(errors)}), 500
 
@@ -1112,13 +1145,14 @@ def remote_bark_status():
     return jsonify(fallback_result)
 
 def auto_start_configured_services():
-    auto_start_bark = _env_enabled("AUTO_START_BARK_SERVER")
-
-    if auto_start_bark:
+    if local_bark_enabled() and _env_enabled("AUTO_START_BARK_SERVER"):
         log_bark(_fmt('[SYSTEM]', "检测到 AUTO_START_BARK_SERVER=1，准备启动 Bark 服务。"))
         start_local_bark_server(start_reason="auto")
-    if _env_enabled("AUTO_START_TRACKER"):
-        log_tracker(_fmt('[SYSTEM]', "AUTO_START_TRACKER 已停用。当前版本不会在 Web 启动时自动开始追踪，请在后台手动启动脚本。"))
+    # 默认开启：Web 启动即拉起追踪脚本，消除"填好单号却没人点启动"的隐形门闸；
+    # 设 AUTO_START_TRACKER=0 恢复纯手动模式
+    if tracker_auto_start_enabled():
+        log_tracker(_fmt('[SYSTEM]', "AUTO_START_TRACKER 已启用，Web 启动后自动拉起追踪脚本，意外退出会自动重启。"))
+        start_tracker_script(start_reason="auto")
 
 if __name__ == '__main__':
     auto_start_configured_services()
