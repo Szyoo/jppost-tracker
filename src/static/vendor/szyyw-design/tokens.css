@@ -1,0 +1,112 @@
+/* ============================================================
+   @szyyw/design · tokens.css
+   三层结构：
+     主题（theme）    html[data-theme]，一整套：背景效果 + 动效 + 光效 + 配色族。
+                      目前唯一主题 "nebula"（深空：DotField 点阵 + 毛玻璃 + 光晕/光斑）。
+                      新主题 = 新 token 块 + （可选）新的背景/光效模块。
+     配色（palette）  html[data-palette]，主题的附属色彩变体，只覆盖 hue 相关 token。
+                      nebula 缺省配色为青紫；附属配色 "aurora"（极光翠青）。
+     明暗（scheme）   html[data-scheme="dark" | "light" | "auto"]，缺省 dark。
+
+   每个颜色 token 用 light-dark() 同时给出两套值，由 color-scheme 决定取哪套：
+     dark  → color-scheme: dark        （始终深色）
+     light → color-scheme: light      （始终浅色）
+     auto  → color-scheme: light dark（跟随系统设置）
+   ============================================================ */
+
+:root,
+:root[data-scheme="dark"] {
+  color-scheme: dark;
+}
+:root[data-scheme="light"] {
+  color-scheme: light;
+}
+:root[data-scheme="auto"] {
+  color-scheme: light dark;
+}
+
+/* ---------- 主题 nebula（唯一主题）· 深空 —— 缺省配色 青紫 ---------- */
+
+:root {
+  /* 基底 */
+  --bg: light-dark(#eef1f8, #0b1020);
+  --text: light-dark(#1e293b, #e2e8f0);
+  --text-dim: light-dark(#5b6b81, #94a3b8);
+
+  /* 点缀 */
+  --accent: light-dark(#0369a1, #38bdf8);
+  --accent2: light-dark(#7e22ce, #a855f7);
+  --grad: linear-gradient(120deg, var(--accent), var(--accent2));
+  /* 渐变按钮上的文字色：深色模式下渐变亮所以用深字，浅色模式反之 */
+  --on-accent: light-dark(#ffffff, #04101c);
+
+  /* 玻璃层级 */
+  --glass-bg: light-dark(rgba(255, 255, 255, 0.6), rgba(15, 23, 42, 0.55));
+  --glass-border: light-dark(rgba(90, 108, 133, 0.26), rgba(148, 163, 184, 0.18));
+  --inner-bg: light-dark(rgba(148, 163, 184, 0.14), rgba(2, 6, 23, 0.35));
+  --field-bg: light-dark(rgba(255, 255, 255, 0.72), rgba(2, 6, 23, 0.55));
+  --sheet-bg: light-dark(rgba(246, 248, 252, 0.94), rgba(15, 23, 42, 0.92));
+  --overlay-bg: light-dark(rgba(30, 41, 59, 0.35), rgba(2, 6, 23, 0.55));
+
+  /* 细线与悬浮着色 */
+  --line-soft: light-dark(rgba(90, 108, 133, 0.18), rgba(148, 163, 184, 0.1));
+  --hover-tint: light-dark(rgba(3, 105, 161, 0.07), rgba(56, 189, 248, 0.06));
+  --lift-shadow: light-dark(0 10px 32px rgba(30, 41, 59, 0.12), 0 10px 32px rgba(0, 0, 0, 0.35));
+
+  /* 语义色 */
+  --err: light-dark(#dc2626, #ef4444);
+  --ok: light-dark(#059669, #34d399);
+  --warn: light-dark(#b45309, #fbbf24);
+  --exp: light-dark(#dc2626, #f87171);
+  --inc: light-dark(#059669, #34d399);
+
+  /* 语义色的淡底（pill/badge 用） */
+  --tint-red-bg: light-dark(rgba(220, 38, 38, 0.12), rgba(239, 68, 68, 0.16));
+  --tint-amber-bg: light-dark(rgba(180, 83, 9, 0.13), rgba(251, 191, 36, 0.14));
+  --tint-green-bg: light-dark(rgba(5, 150, 105, 0.12), rgba(52, 211, 153, 0.14));
+  --tint-cyan-bg: light-dark(rgba(3, 105, 161, 0.11), rgba(56, 189, 248, 0.14));
+  --tint-violet-bg: light-dark(rgba(126, 34, 206, 0.11), rgba(168, 85, 247, 0.16));
+
+  /* 点阵背景（DotField 从这里取色与取参——主题级效果旋钮） */
+  --df-sparkle: 1;
+  --df-wave: 2.5;
+  --df-from: light-dark(rgba(3, 105, 161, 0.4), rgba(56, 189, 248, 0.5));
+  --df-to: light-dark(rgba(126, 34, 206, 0.32), rgba(168, 85, 247, 0.4));
+  --df-glow: light-dark(#eef1f8, #0b1020);
+
+  /* 动效与结构（不分明暗） */
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --nav-h: 62px;
+  --sidebar-w: 224px;
+
+  /* 终端窗（刻意保持深色——真实终端的样子，两种模式共用固定色板） */
+  --term-bg: rgba(2, 6, 23, 0.72);
+  --term-text: #cbd5e1;
+  --term-dim: #64748b;
+  --term-border: rgba(148, 163, 184, 0.14);
+  --term-accent: #38bdf8;
+  --term-ok: #34d399;
+  --term-warn: #fbbf24;
+  --term-err: #ef4444;
+}
+
+/* ---------- nebula 附属配色 aurora · 极光 翠绿 + 青蓝（只覆盖 hue） ---------- */
+
+:root[data-palette="aurora"] {
+  --bg: light-dark(#edf6f2, #081412);
+  --accent: light-dark(#047857, #34d399);
+  --accent2: light-dark(#0369a1, #38bdf8);
+
+  --glass-bg: light-dark(rgba(255, 255, 255, 0.6), rgba(6, 24, 21, 0.55));
+  --inner-bg: light-dark(rgba(134, 168, 155, 0.16), rgba(2, 16, 13, 0.38));
+  --field-bg: light-dark(rgba(255, 255, 255, 0.72), rgba(2, 16, 13, 0.55));
+  --sheet-bg: light-dark(rgba(244, 250, 247, 0.94), rgba(8, 26, 22, 0.92));
+  --hover-tint: light-dark(rgba(4, 120, 87, 0.08), rgba(52, 211, 153, 0.07));
+
+  --tint-cyan-bg: light-dark(rgba(3, 105, 161, 0.11), rgba(56, 189, 248, 0.14));
+  --tint-violet-bg: light-dark(rgba(4, 120, 87, 0.12), rgba(52, 211, 153, 0.15));
+
+  --df-from: light-dark(rgba(4, 120, 87, 0.38), rgba(52, 211, 153, 0.45));
+  --df-to: light-dark(rgba(3, 105, 161, 0.3), rgba(56, 189, 248, 0.38));
+  --df-glow: light-dark(#edf6f2, #081412);
+}

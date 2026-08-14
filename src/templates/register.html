@@ -1,9 +1,14 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="nebula">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>注册 · JP Post Tracker</title>
+    <script>
+      try { document.documentElement.dataset.scheme = localStorage.getItem('jppost_scheme') || 'auto'; } catch (e) { document.documentElement.dataset.scheme = 'auto'; }
+    </script>
+    <link rel="stylesheet" href="/static/vendor/szyyw-design/tokens.css" />
+    <link rel="stylesheet" href="/static/vendor/szyyw-design/components.css" />
     <link rel="stylesheet" href="/static/style.css" />
   </head>
   <body>
@@ -65,6 +70,6 @@
       </div>
     </div>
 
-    <script src="/static/dotfield.js"></script>
+    <script type="module" src="/static/boot.js"></script>
   </body>
 </html>
