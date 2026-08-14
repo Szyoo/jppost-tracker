@@ -23,8 +23,10 @@ const app = createApp({
             BARK_HEALTH_TIMEOUT: 'Bark 健康检测超时(秒)',
             BARK_BIND_ADDRESS: '本地 Bark 监听地址',
             PUBLIC_URL: '控制台公网地址(保活用)',
-            APP_PORT: 'Web 控制台端口',
-            AUTO_START_BARK_SERVER: 'Web 启动时自动拉起本地 Bark'
+            APP_PORT: 'Web 控制台端口(改后需重启 Web)',
+            AUTO_START_BARK_SERVER: 'Web 启动时自动拉起本地 Bark(需重启 Web)',
+            AUTO_START_TRACKER: 'Web 启动时自动运行追踪脚本,默认开(需重启 Web)',
+            LOCAL_BARK_ENABLED: '是否由控制台管理本地 Bark 子进程,容器部署设 0(需重启 Web)'
         };
 
         const pickDefaultUserId = (list = []) =>

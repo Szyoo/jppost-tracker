@@ -96,8 +96,10 @@ curl -I https://jppost.szyyw.xyz/login  # 应返回 200
 - **备份**：`tar czf jppost-backup.tgz deploy/vps/.env deploy/vps/data deploy/vps/bark-data`
 - **资源**：机器只有 2G 内存（现约 1.0G 可用），本项目两个容器合计占用预计 <200M，
   但再往这台机器加服务时留意。
-- 网页控制台里"启动/停止 Bark 服务"按钮在此形态下无效（Bark 在独立容器里），
-  健康检查用的是 `BARK_SERVER_PUBLIC`，正常工作。
+- `.env` 设 `LOCAL_BARK_ENABLED=0` 后，控制台不再显示"Bark 服务"启停卡片
+  （Bark 在独立容器里，由 compose 管理）；健康检查用的是 `BARK_SERVER_PUBLIC`，正常工作。
+- `.env` 设 `AUTO_START_TRACKER=1`（默认即开）后，Web 容器启动会自动运行追踪脚本，
+  脚本意外退出 10 秒后自动重启；只有在控制台手动点"停止"才会保持停止。
 - **已知未修问题**（详见 [进度记录](progress/codex-raspi-local-funnel.md)）：
   1. 登录限流信任 `X-Forwarded-For` 首值——即使经过 Caddy，攻击者也能自带伪造头绕过限流；
      强口令是当前的实际防线。

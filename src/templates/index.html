@@ -140,6 +140,7 @@
                     </span>
                   </div>
                   <p class="hint" style="margin: 0 0 10px;">当前有 [[ trackedUsersCount ]] 个账号启用追踪。</p>
+                  <p class="hint" v-if="barkHelp.tracker_auto_start" style="margin: 0 0 10px;">自动模式：Web 启动即运行，意外退出会自动重启；手动停止后不会被拉起。</p>
                   <div class="actions" style="margin-top: 0;">
                     <button type="button" class="btn btn-small" @click="startScript" :disabled="script.running">启动</button>
                     <button type="button" class="btn-ghost btn-small danger" @click="stopScript" :disabled="!script.running">停止</button>
@@ -149,7 +150,7 @@
                   </p>
                 </div>
 
-                <div class="service-card inner">
+                <div class="service-card inner" v-if="barkHelp.local_bark_enabled">
                   <div class="service-card-head">
                     <h3>Bark 服务</h3>
                     <span class="status-line">
@@ -175,7 +176,7 @@
                     <div class="remote-line">
                       <span class="remote-label">状态</span>
                       <span :class="remoteBark.ok ? 'remote-ok' : 'remote-bad'">
-                        [[ remoteBark.ok ? (remoteBark.fallback_used ? '在线（本机回退）' : '在线') : '离线 / 冷启动中' ]]
+                        [[ remoteBark.ok ? (remoteBark.fallback_used ? '在线（本机回退）' : '在线') : '离线' ]]
                       </span>
                     </div>
                   </div>
