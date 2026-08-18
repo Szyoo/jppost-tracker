@@ -6,11 +6,11 @@
   （tokens.css / components.css / dotfield.js / scheme.js / corner.js / settings.js /
   version.js），原样拷贝不做修改。
 
-## 升级流程（一键）
+## 升级流程（一键，以远端为准）
 
 ```bash
-bash scripts/update-design.sh          # 从本机上游 clone 同步（默认）
-bash scripts/update-design.sh --remote # 不依赖本机 clone，直接拉 GitHub 最新 tag
+bash scripts/update-design.sh          # 默认：拉 GitHub 最新 tag
+bash scripts/update-design.sh --local  # 例外：同步本机 clone 工作区（调试未发版改动用）
 ```
 
 之后本地起服务走查一遍，确认无回归再提交。
