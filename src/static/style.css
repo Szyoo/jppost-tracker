@@ -282,6 +282,12 @@ textarea.field {
   color: var(--text-dim);
 }
 
+.pill.warn {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+  background: var(--tint-amber-bg);
+}
+
 /* ---------- 指标 widget ---------- */
 
 .widget-grid {
@@ -313,10 +319,111 @@ textarea.field {
   overflow-wrap: anywhere;
 }
 
-.widget-value.small {
+/* 有异常时这块指标要自己跳出来，不用用户去数 */
+.widget.alert {
+  border-color: color-mix(in srgb, var(--err) 45%, transparent);
+  background: var(--tint-red-bg);
+}
+
+.widget.alert .widget-value {
+  color: var(--err);
+}
+
+/* ---------- 首页任务总览（跨账号一行一个任务） ---------- */
+
+.overview-table {
+  display: grid;
+  gap: 10px;
+}
+
+/* 桌面像表格，窄屏塌成卡片。末列写死宽度而不用 auto：
+   表头那一格是空的，auto 会算成 0，剩余空间分配就跟数据行错开了 */
+.overview-head,
+.overview-row {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1.1fr) minmax(0, 0.9fr) minmax(0, 1.8fr) 84px;
+  gap: 12px;
+  align-items: center;
+}
+
+.overview-head {
+  /* 左边多 3px 补数据行的状态色条，表头才和单元格对齐 */
+  padding: 0 14px 0 17px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+}
+
+.overview-row {
+  padding: 12px 14px;
+  border-left: 3px solid color-mix(in srgb, var(--text-dim) 30%, transparent);
+  transition: border-color 0.2s var(--ease), background 0.2s var(--ease);
+}
+
+.overview-row:hover {
+  background: var(--hover-tint);
+}
+
+/* 左侧色条：一眼扫出哪条出了问题 */
+.overview-row.state-error {
+  border-left-color: var(--err);
+  background: var(--tint-red-bg);
+}
+
+.overview-row.state-idle,
+.overview-row.state-fresh {
+  border-left-color: var(--warn);
+}
+
+.overview-row.state-ok {
+  border-left-color: var(--ok);
+}
+
+.overview-row.state-archived {
+  opacity: 0.72;
+}
+
+/* justify-items 让胶囊按内容宽度收缩，不然它会被网格拉成整格宽的横条 */
+.overview-cell {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  justify-items: start;
+}
+
+.overview-number {
   font-size: 14px;
-  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.03em;
+  overflow-wrap: anywhere;
+}
+
+.overview-owner {
+  font-size: 13px;
   color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.overview-sub {
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+.overview-result {
+  font-size: 13px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.overview-result.bad {
+  color: var(--err);
+}
+
+.overview-action {
+  justify-items: end;
 }
 
 /* ---------- 布局网格 ---------- */
@@ -621,9 +728,12 @@ textarea.field {
 
 /* ---------- 服务控制 ---------- */
 
+/* 首页里这块是整行宽，卡片能并排就并排 */
 .service-grid {
   display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 14px;
+  align-items: start;
 }
 
 .service-card {
@@ -689,11 +799,35 @@ textarea.field {
   .users-layout {
     grid-template-columns: 1fr;
   }
+
+  /* 表头只在列能对齐时才有意义；窄屏每条任务塌成一张卡片 */
+  .overview-head {
+    display: none;
+  }
+
+  .overview-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .overview-action {
+    justify-items: start;
+  }
 }
 
 @media (max-width: 640px) {
   .page {
     padding: 20px 14px 48px;
+  }
+
+  /* 手机上指标卡两列并排，否则一屏只装得下两三个数字 */
+  .widget-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .widget {
+    padding: 12px 14px;
   }
 
   .form-grid,
