@@ -54,19 +54,149 @@ DOTENV_PATH = os.path.join(BASE_DIR, '.env')
 load_dotenv(DOTENV_PATH)
 ensure_storage(DOTENV_PATH)
 
-SYSTEM_ENV_KEYS = [
-    "BARK_SERVER_INTERNAL",
-    "BARK_SERVER_PUBLIC",
-    "BARK_SERVER",
-    "BARK_HEALTH_PATH",
-    "BARK_HEALTH_TIMEOUT",
-    "BARK_BIND_ADDRESS",
-    "PUBLIC_URL",
-    "APP_PORT",
-    "AUTO_START_BARK_SERVER",
-    "AUTO_START_TRACKER",
-    "LOCAL_BARK_ENABLED",
+# 系统设置的分组元数据。分组、文案、生效时机在这里定义一份，白名单直接由它派生，
+# 避免"UI 一份、白名单一份"改了一处漏另一处。
+# apply=live：追踪脚本每轮重读 .env、控制台每次用时重读 os.environ，保存即生效；
+# apply=restart：只在进程启动时读一次的启动参数，必须重启 Web 服务。
+SYSTEM_ENV_GROUPS = [
+    {
+        "key": "bark_endpoint",
+        "title": "Bark 推送地址",
+        "desc": "决定推送发往哪台 Bark。脚本走内网地址直连，手机客户端用公网 HTTPS 地址注册设备；两者都留空时才会回退到兼容地址。",
+        "fields": [
+            {
+                "key": "BARK_SERVER_INTERNAL",
+                "label": "脚本推送地址（内网）",
+                "desc": "追踪脚本发推送时访问的地址，同机或同容器网络直连即可，例如 http://127.0.0.1:8080。",
+                "placeholder": "http://127.0.0.1:8080",
+                "apply": "live",
+                "wide": True,
+            },
+            {
+                "key": "BARK_SERVER_PUBLIC",
+                "label": "手机接入地址（公网）",
+                "desc": "手机 Bark 客户端注册设备用的 HTTPS 地址，会显示在用户门户的接入指引里。",
+                "placeholder": "https://bark.example.com",
+                "apply": "live",
+                "wide": True,
+            },
+            {
+                "key": "BARK_SERVER",
+                "label": "兼容地址（旧版单地址）",
+                "desc": "上面两项留空时的回退值，只为兼容早期「一个地址通用」的配置保留，新部署留空即可。",
+                "placeholder": "留空",
+                "apply": "live",
+                "legacy": True,
+                "wide": True,
+            },
+        ],
+    },
+    {
+        "key": "bark_health",
+        "title": "Bark 健康检查",
+        "desc": "控制台探测 Bark 是否活着时用的请求参数，只影响首页那个健康状态显示。",
+        "fields": [
+            {
+                "key": "BARK_HEALTH_PATH",
+                "label": "健康检查路径",
+                "desc": "拼在 Bark 地址后面的探测路径，留空按 /ping 处理。",
+                "placeholder": "/ping",
+                "apply": "live",
+            },
+            {
+                "key": "BARK_HEALTH_TIMEOUT",
+                "label": "健康检查超时（秒）",
+                "desc": "单次探测的等待上限，留空或填非法值按 15 秒处理。",
+                "placeholder": "15",
+                "apply": "live",
+            },
+        ],
+    },
+    {
+        "key": "local_bark",
+        "title": "本地 Bark 服务",
+        "badge": "仅控制台托管 Bark 时有效",
+        "badge_tone": "amber",
+        "desc": "只有让控制台自己以子进程方式跑 Bark Server 时，这一组才有意义。线上 VPS 用的是独立 Bark 容器，整组保持关闭即可。",
+        "fields": [
+            {
+                "key": "LOCAL_BARK_ENABLED",
+                "label": "由控制台托管 Bark 子进程",
+                "desc": "关闭后首页不再出现本地 Bark 启停按钮，控制台也不去管子进程。独立容器部署应关闭。",
+                "type": "bool",
+                "default": "1",
+                "apply": "restart",
+            },
+            {
+                "key": "AUTO_START_BARK_SERVER",
+                "label": "Web 启动时自动拉起 Bark",
+                "desc": "需要上一项先打开才有效果。",
+                "type": "bool",
+                "default": "0",
+                "apply": "restart",
+            },
+            {
+                "key": "BARK_BIND_ADDRESS",
+                "label": "本地 Bark 监听地址",
+                "desc": "托管的 Bark 子进程监听的地址与端口，留空按 0.0.0.0:8080 处理。",
+                "placeholder": "0.0.0.0:8080",
+                "apply": "restart",
+            },
+        ],
+    },
+    {
+        "key": "web_runtime",
+        "title": "Web 服务与追踪",
+        "desc": "控制台自身的启动参数，改完要重启 Web 服务才会读到。",
+        "fields": [
+            {
+                "key": "APP_PORT",
+                "label": "Web 控制台端口",
+                "desc": "控制台监听端口，留空按 6060 处理；改了要同步改反向代理的转发目标。",
+                "placeholder": "6060",
+                "apply": "restart",
+            },
+            {
+                "key": "AUTO_START_TRACKER",
+                "label": "启动时自动运行追踪脚本",
+                "desc": "开启后 Web 一起来就拉起追踪脚本，脚本意外退出也会自动重启，省掉每次手动点启动。",
+                "type": "bool",
+                "default": "1",
+                "apply": "restart",
+            },
+        ],
+    },
+    {
+        "key": "keepalive",
+        "title": "云端保活（Render 遗留）",
+        "badge": "当前部署无需配置",
+        "badge_tone": "amber",
+        "desc": "Render 免费实例闲置会休眠，靠保活线程定时访问自己撑住。现在跑在常驻的公网 VPS 上，留空即可。",
+        "fields": [
+            {
+                "key": "PUBLIC_URL",
+                "label": "控制台公网地址",
+                "desc": "保活线程定时访问的自身地址；留空则保活不做事。",
+                "placeholder": "留空",
+                "apply": "live",
+                "legacy": True,
+                "wide": True,
+            },
+            {
+                "key": "KEEPALIVE_INTERVAL",
+                "label": "保活间隔（秒）",
+                "desc": "两次自我访问之间的间隔，默认 600。只在填了上面的公网地址时才有意义。",
+                "default": "600",
+                "apply": "restart",
+                "legacy": True,
+            },
+        ],
+    },
 ]
+
+# 白名单：update_env 只认这里出现过的键，防止请求写入任意 .env 键
+SYSTEM_ENV_KEYS = [field["key"] for group in SYSTEM_ENV_GROUPS for field in group["fields"]]
+SYSTEM_ENV_FIELDS = {field["key"]: field for group in SYSTEM_ENV_GROUPS for field in group["fields"]}
 
 def _first_non_empty(*values: str) -> str:
     for value in values:
@@ -517,6 +647,21 @@ def build_system_env():
     system_env = load_system_env(DOTENV_PATH, SYSTEM_ENV_KEYS)
     return {key: system_env.get(key, "") for key in SYSTEM_ENV_KEYS}
 
+def build_env_apply_note(keys) -> str:
+    """只讲这次真改动的字段的生效时机——笼统一句"部分即时部分要重启"没人看得懂。"""
+    def label_of(key: str) -> str:
+        field = SYSTEM_ENV_FIELDS.get(key) or {}
+        return f"{field.get('label', key)}（{key}）"
+
+    live = [label_of(key) for key in keys if (SYSTEM_ENV_FIELDS.get(key) or {}).get("apply") == "live"]
+    restart = [label_of(key) for key in keys if (SYSTEM_ENV_FIELDS.get(key) or {}).get("apply") == "restart"]
+    parts = []
+    if live:
+        parts.append("已即时生效：" + "、".join(live))
+    if restart:
+        parts.append("需重启 Web 服务后生效：" + "、".join(restart))
+    return "；".join(parts)
+
 def build_bark_help_state():
     return {
         "public_url": get_bark_public_url(),
@@ -667,6 +812,7 @@ def index():
             'index.html',
             viewer_state=viewer_state,
             env_vars=system_env,
+            env_schema=SYSTEM_ENV_GROUPS,
             user_state=user_state,
             bark_help=bark_help,
             initial_tracker_log=initial_tracker_log,
@@ -968,14 +1114,15 @@ def update_env():
     if not system_changes:
         return jsonify({"status": "error", "message": "没有可更新的系统配置。"}), 400
 
-    updated_count = 0
+    updated_keys = []
     errors = []
     for key, value in system_changes.items():
         try:
             set_key(DOTENV_PATH, key, value)
-            updated_count += 1
+            updated_keys.append(key)
         except Exception as e:
             errors.append(f"更新 {key} 失败: {e}")
+    updated_count = len(updated_keys)
 
     for key, value in system_changes.items():
         if isinstance(value, str) and value.strip() == "":
@@ -990,9 +1137,17 @@ def update_env():
     if updated_count > 0:
         message = f"成功更新 {updated_count} 个系统环境变量。"
         if errors: message += " 部分变量更新失败: " + "; ".join(errors)
+        apply_note = build_env_apply_note(updated_keys)
         log_tracker(_fmt('[SYSTEM]', message))
-        log_tracker(_fmt('[SYSTEM]', "生效说明：Bark 地址/健康检查类配置对追踪脚本即时生效；APP_PORT、AUTO_START_*、LOCAL_BARK_ENABLED 等启动参数需重启 Web 服务。"))
-        return jsonify({"status": "success", "message": message, "env_vars": build_system_env(), "bark_help": build_bark_help_state()})
+        if apply_note:
+            log_tracker(_fmt('[SYSTEM]', apply_note))
+        return jsonify({
+            "status": "success",
+            "message": message,
+            "apply_note": apply_note,
+            "env_vars": build_system_env(),
+            "bark_help": build_bark_help_state(),
+        })
     return jsonify({"status": "error", "message": "没有变量被更新或发生错误: " + "; ".join(errors)}), 500
 
 @app.route('/api/users', methods=['GET'])

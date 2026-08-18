@@ -13,20 +13,41 @@ const app = createApp({
         const barkHelp = ref(window.initialBarkHelp || {});
         const envVars = ref(window.initialEnvVars || {});
         const originalEnvVars = ref({ ...envVars.value });
+        // 分组/文案/生效时机由后端 SYSTEM_ENV_GROUPS 下发，前端不再自带一份说明字典
+        const envGroups = ref(window.initialEnvSchema || []);
+        const envApplyNote = ref('');
         const initialUserState = window.initialUserState || { users: [], task_count: 0, active_task_count: 0, login_count: 0 };
 
-        const envDesc = {
-            BARK_SERVER_INTERNAL: '追踪脚本访问的 Bark 地址',
-            BARK_SERVER_PUBLIC: '手机 Bark 客户端访问的 HTTPS 地址',
-            BARK_SERVER: '兼容旧版的单 Bark 地址',
-            BARK_HEALTH_PATH: 'Bark 健康检测路径',
-            BARK_HEALTH_TIMEOUT: 'Bark 健康检测超时(秒)',
-            BARK_BIND_ADDRESS: '本地 Bark 监听地址',
-            PUBLIC_URL: '控制台公网地址(保活用)',
-            APP_PORT: 'Web 控制台端口(改后需重启 Web)',
-            AUTO_START_BARK_SERVER: 'Web 启动时自动拉起本地 Bark(需重启 Web)',
-            AUTO_START_TRACKER: 'Web 启动时自动运行追踪脚本,默认开(需重启 Web)',
-            LOCAL_BARK_ENABLED: '是否由控制台管理本地 Bark 子进程,容器部署设 0(需重启 Web)'
+        // 与后端 _env_enabled 同一套真值；空值落回字段默认值，否则"没写进 .env 但默认开"
+        // 的开关（AUTO_START_TRACKER / LOCAL_BARK_ENABLED）在界面上会显示成关闭
+        const ENV_TRUTHY = ['1', 'true', 'yes', 'on'];
+
+        const envBoolValue = (field) => {
+            const raw = String(envVars.value[field.key] ?? '').trim();
+            const effective = raw === '' ? String(field.default ?? '0') : raw;
+            return ENV_TRUTHY.includes(effective.toLowerCase());
+        };
+
+        const setEnvBool = (field, on) => {
+            envVars.value[field.key] = on ? '1' : '0';
+        };
+
+        const envChangedEntries = computed(() => {
+            const changed = {};
+            for (const [key, value] of Object.entries(envVars.value)) {
+                if (originalEnvVars.value[key] !== value) {
+                    changed[key] = value;
+                }
+            }
+            return changed;
+        });
+
+        const envDirtyCount = computed(() => Object.keys(envChangedEntries.value).length);
+
+        const resetEnv = () => {
+            envVars.value = { ...originalEnvVars.value };
+            envMessage.value = { text: '', type: '' };
+            envApplyNote.value = '';
         };
 
         // 账号表单只管身份与 Bark；单号/间隔属于任务，走 taskDrafts
@@ -430,12 +451,9 @@ const app = createApp({
 
         const saveEnv = async () => {
             try {
-                const changed = {};
-                for (const [key, value] of Object.entries(envVars.value)) {
-                    if (originalEnvVars.value[key] !== value) {
-                        changed[key] = value;
-                    }
-                }
+                // 只提交有改动的字段：整表提交会把留空的可选项显式写成空串
+                const changed = { ...envChangedEntries.value };
+                envApplyNote.value = '';
                 const response = await fetch('/update_env', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -444,6 +462,7 @@ const app = createApp({
                 const result = await handleApiResponse(response);
                 if (!result) return;
                 flashMessage(envMessage, result.message, result.status === 'success' ? 'success' : 'error');
+                envApplyNote.value = result.apply_note || '';
                 if (result.status === 'success' && result.env_vars) {
                     envVars.value = { ...result.env_vars };
                     originalEnvVars.value = { ...result.env_vars };
@@ -754,7 +773,12 @@ const app = createApp({
             viewer,
             barkHelp,
             envVars,
-            envDesc,
+            envGroups,
+            envBoolValue,
+            setEnvBool,
+            envDirtyCount,
+            envApplyNote,
+            resetEnv,
             envMessage,
             users,
             selectedUserId,
