@@ -146,14 +146,23 @@ a {
 
 .spot:hover::after { opacity: 1; }
 
-/* ---------- 明暗切换按钮（常驻右上角） ---------- */
+/* ---------- 右上角常驻工具位 ---------- */
 
-.scheme-toggle {
+/* 容器管定位，按钮只管长相。order 小的在左边：明暗切换 10、背景参数 20 */
+.corner-tools {
   position: fixed;
   top: calc(10px + env(safe-area-inset-top, 0px));
   right: calc(12px + env(safe-area-inset-right, 0px));
-  /* 高于 sticky 顶栏(30)，低于弹层(50)——弹开的 sheet 不该被它盖住 */
+  /* 高于 sticky 顶栏(30) 与背景参数抽屉(44)，低于弹层(50)——
+     弹开的 sheet 不该被它盖住，但抽屉开着时齿轮要还能点 */
   z-index: 45;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.corner-tool {
+  position: relative;
   width: 34px;
   height: 34px;
   display: grid;
@@ -172,12 +181,12 @@ a {
   transition: transform 0.15s var(--ease), border-color 0.15s var(--ease), background 0.15s var(--ease);
 }
 
-.scheme-toggle:hover {
+.corner-tool:hover {
   transform: translateY(-1px);
   border-color: color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
-.scheme-toggle:active { transform: scale(0.94); }
+.corner-tool:active { transform: scale(0.94); }
 
 /* auto 模式加一枚小角标，跟固定模式区分开 */
 .scheme-toggle[data-scheme="auto"]::after {
@@ -190,6 +199,202 @@ a {
   border-radius: 50%;
   background: var(--accent);
 }
+
+/* 面板开着时齿轮点亮，表明这枚按钮就是开关 */
+.settings-toggle[aria-expanded="true"] {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+/* 有新版时齿轮加一枚 warn 色小角标（跟 scheme 的 auto 角标同一位置语言） */
+.settings-toggle[data-update="1"]::after {
+  content: "";
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
+/* ---------- 背景参数抽屉 ---------- */
+
+.panel-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 43;
+  background: var(--overlay-bg);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s var(--ease);
+}
+
+.panel-backdrop.show {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* 顶端让开工具位（34px 按钮 + 间距），齿轮开着时仍露在外面 */
+.settings-panel {
+  position: fixed;
+  top: calc(56px + env(safe-area-inset-top, 0px));
+  right: calc(12px + env(safe-area-inset-right, 0px));
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  z-index: 44;
+  width: min(340px, calc(100vw - 24px));
+  display: flex;
+  flex-direction: column;
+  transform: translateX(calc(100% + 24px));
+  transition: transform 0.35s var(--ease);
+}
+
+/* 终值是 none 而不是 translateX(0)——后者照样是包含块，
+   会困住面板里弹出的 fixed 子元素；none 与位移之间仍可插值，动画不受影响 */
+.settings-panel.open { transform: none; }
+
+.settings-panel .panel-head {
+  margin-bottom: 0;
+  padding: 16px 18px 10px;
+  flex-wrap: nowrap;
+}
+
+.panel-body {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.panel-foot {
+  display: flex;
+  gap: 10px;
+  padding: 14px 18px 16px;
+}
+
+.panel-foot .btn, .panel-foot .btn-ghost { flex: 1; }
+
+.guest-note {
+  flex: 1;
+  align-self: center;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* ---------- 参数控件 ---------- */
+
+.ctl {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ctl[hidden] { display: none; }
+
+.ctl-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ctl-label { font-size: 13px; color: var(--text); }
+.ctl-hint { display: block; font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+.ctl-value { font-size: 12px; color: var(--accent); }
+
+/* 版本检测区：变更链接与动作按钮 */
+.update-link { color: var(--accent); text-decoration: none; }
+.update-link:hover { text-decoration: underline; }
+.update-actions { display: flex; gap: 8px; }
+.update-actions .btn { flex: 1; }
+
+.ctl-toggle {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+input[type="range"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--text-dim) 28%, transparent);
+  outline: none;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 15px;
+  height: 15px;
+  border: none;
+  border-radius: 50%;
+  background: var(--grad);
+  cursor: pointer;
+  transition: transform 0.15s var(--ease);
+}
+
+input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.25); }
+
+input[type="range"]::-moz-range-thumb {
+  width: 15px;
+  height: 15px;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+}
+
+input[type="color"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 34px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+input[type="color"]::-webkit-color-swatch-wrapper { padding: 2px; }
+input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
+input[type="color"]::-moz-color-swatch { border: none; border-radius: 4px; }
+
+.switch {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  flex: none;
+  width: 40px;
+  height: 22px;
+  border-radius: 11px;
+  /* 轨道要压得住白色滑块——浅色模式下太淡就看不见关着的开关 */
+  background: color-mix(in srgb, var(--text-dim) 55%, transparent);
+  cursor: pointer;
+  transition: background 0.2s var(--ease);
+}
+
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--on-accent);
+  transition: transform 0.2s var(--ease);
+}
+
+.switch:checked { background: var(--grad); }
+.switch:checked::after { transform: translateX(18px); }
 
 /* ---------- 文本 ---------- */
 
@@ -577,6 +782,128 @@ table.tbl {
   border: none;
 }
 
+/* ---------- 终端窗（日志回放） ----------
+   刻意保持深色——真实终端的样子，浅色模式也不翻转，用独立的 --term-* 色板。
+   过滤 / 自动跟随滚动 / 复制反馈是行为，由各项目自己接；这里只定样子。 */
+
+.term {
+  border: 1px solid var(--term-border);
+  border-radius: 12px;
+  background: var(--term-bg);
+  overflow: hidden;
+}
+
+/* 整条头是按钮：点哪都能折叠，不用瞄准那个小箭头 */
+.term-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  color: var(--term-dim);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.term-head:hover { color: var(--term-text); }
+
+.term-title { flex: 1; letter-spacing: 0.03em; }
+.term-caret { color: var(--term-dim); }
+
+.term-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--term-dim);
+  flex: none;
+}
+
+/* 实时接流时脉冲一下，静止的历史日志不动 */
+.term-dot[data-live="1"] {
+  background: var(--term-ok);
+  animation: term-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes term-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 color-mix(in srgb, var(--term-ok) 50%, transparent); }
+  50% { opacity: 0.55; box-shadow: 0 0 0 5px transparent; }
+}
+
+.term-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--term-border);
+  border-bottom: 1px solid var(--term-border);
+}
+
+.term-lvl {
+  appearance: none;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--term-dim);
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  cursor: pointer;
+  transition: color 0.15s var(--ease), border-color 0.15s var(--ease);
+}
+
+.term-lvl:hover { color: var(--term-text); }
+
+.term-lvl.active {
+  color: var(--term-accent);
+  border-color: color-mix(in srgb, var(--term-accent) 45%, transparent);
+}
+
+.term-copy { min-width: 30px; text-align: center; }
+
+.term-copy.copied {
+  color: var(--term-ok);
+  border-color: color-mix(in srgb, var(--term-ok) 50%, transparent);
+}
+
+.term-body {
+  max-height: 260px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px 10px;
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.65;
+  color: var(--term-text);
+  scrollbar-width: thin;
+}
+
+.term-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 分级着色：debug 暗 / info 青 / warn 黄 / error 红 */
+.term-line.debug { color: var(--term-dim); }
+.term-line.info { color: var(--term-accent); }
+.term-line.warn { color: var(--term-warn); }
+.term-line.error { color: var(--term-err); }
+
+.term-time { color: color-mix(in srgb, var(--term-dim) 80%, transparent); margin-right: 6px; }
+.term-detail { color: var(--term-dim); }
+
+.term-cursor {
+  color: var(--term-accent);
+  animation: term-blink 1s steps(2, start) infinite;
+}
+
+@keyframes term-blink {
+  to { visibility: hidden; }
+}
+
 /* ---------- 桌面适配（弹层与统计卡的通用部分） ---------- */
 
 @media (min-width: 900px) {
@@ -603,4 +930,7 @@ table.tbl {
 @media (prefers-reduced-motion: reduce) {
   .rise, .stagger > *, .sheet { animation: none; }
   .spot::after { display: none; }
+  .term-dot[data-live="1"], .term-cursor { animation: none; }
+  /* 抽屉直接到位，不滑；transform 终值仍是 translateX(0)，不困住子孙 fixed */
+  .settings-panel, .panel-backdrop { transition: none; }
 }

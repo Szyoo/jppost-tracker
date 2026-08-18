@@ -11,11 +11,14 @@
 
 const TWO_PI = Math.PI * 2;
 
-const DEFAULTS = {
+export const DEFAULTS = {
   dotRadius: 1.6,
   dotSpacing: 16,
   cursorRadius: 420,
   cursorForce: 0.12,
+  /** 指针模型：false=点被推开回弹（常驻斥力）；true=鼠标压出凹陷（随移动涨落） */
+  bulgeOnly: false,
+  bulgeStrength: 40,
   waveAmplitude: 2.5,
   sparkle: true,
   glow: true,
@@ -36,6 +39,31 @@ function parseColor(text) {
   return null;
 }
 
+/* 颜色 token 要「解析后」的值，不能直读自定义属性：
+   自定义属性不做条件求值，getPropertyValue("--df-from") 拿到的是未展开的
+   light-dark(...) 字面量，parseColor 必然失败、静默退回兜底色——
+   于是浅色模式与 aurora 配色根本没生效过。
+   把它套到真实的 color 属性上，浏览器才会算出 rgb()。
+   探针放在一个哨兵色容器里：var() 无效时声明会退化成继承，
+   继承到哨兵色即说明取值失败，可以跟真实颜色区分开。 */
+const PROBE_SENTINEL = "rgb(1, 2, 3)";
+let probe = null;
+
+export function resolveTokenColor(name) {
+  if (!probe?.isConnected) {
+    const host = document.createElement("span");
+    host.style.cssText =
+      "position:absolute;width:0;height:0;overflow:hidden;visibility:hidden;pointer-events:none;color:" +
+      PROBE_SENTINEL;
+    probe = document.createElement("span");
+    host.appendChild(probe);
+    document.documentElement.appendChild(host);
+  }
+  probe.style.color = `var(${name})`;
+  const value = getComputedStyle(probe).color;
+  return value === PROBE_SENTINEL ? null : value;
+}
+
 function readThemeColors() {
   const cs = getComputedStyle(document.documentElement);
   const num = (name, fallback) => {
@@ -43,9 +71,9 @@ function readThemeColors() {
     return Number.isFinite(v) ? v : fallback;
   };
   return {
-    from: parseColor(cs.getPropertyValue("--df-from")) ?? { r: 56, g: 189, b: 248, a: 0.5 },
-    to: parseColor(cs.getPropertyValue("--df-to")) ?? { r: 168, g: 85, b: 247, a: 0.4 },
-    glow: (cs.getPropertyValue("--df-glow") || "#0b1020").trim(),
+    from: parseColor(resolveTokenColor("--df-from")) ?? { r: 56, g: 189, b: 248, a: 0.5 },
+    to: parseColor(resolveTokenColor("--df-to")) ?? { r: 168, g: 85, b: 247, a: 0.4 },
+    glow: resolveTokenColor("--df-glow") ?? "#0b1020",
     // 主题级效果旋钮：主题可以只用 CSS 重配背景行为
     sparkle: num("--df-sparkle", 1) > 0,
     wave: num("--df-wave", 2.5)
@@ -54,10 +82,15 @@ function readThemeColors() {
 
 /**
  * 挂载点阵背景到容器（容器需 position:fixed/absolute 且铺满，如 .bg-layer）。
- * 返回 { destroy, refreshColors }。
+ * 返回 { destroy, refreshColors, setOptions, getOptions, resetOptions }。
  */
 export function mountDotField(container, options = {}) {
   const props = { ...DEFAULTS, ...options };
+  // 构造时传进来的取值是这个实例的基线，恢复默认回到它而不是包缺省
+  const baseline = { ...props };
+  /* 被显式指定过的参数不再跟随主题旋钮（--df-sparkle / --df-wave）——
+     「手动调过就归你管」，恢复默认才交还给主题 */
+  const explicit = new Set(Object.keys(options));
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const finePointer = window.matchMedia("(pointer: fine)").matches;
 
@@ -119,8 +152,8 @@ export function mountDotField(container, options = {}) {
 
   function rebuildColors() {
     const { from, to, glow, sparkle, wave } = readThemeColors();
-    if (options.sparkle === undefined) props.sparkle = sparkle;
-    if (options.waveAmplitude === undefined) props.waveAmplitude = wave;
+    if (!explicit.has("sparkle")) props.sparkle = sparkle;
+    if (!explicit.has("waveAmplitude")) props.waveAmplitude = wave;
     colorCache = [];
     for (let gi = 0; gi <= GRAD_STEPS; gi++) {
       const t = gi / GRAD_STEPS;
@@ -185,12 +218,12 @@ export function mountDotField(container, options = {}) {
   let tick = 0;
   let lastFrame = 0;
   let frameCount = 0;
-  const FRAME_INTERVAL = 1000 / props.fps;
+  let frameInterval = 1000 / props.fps;
 
   function frame(now) {
     if (!running || destroyed) return;
     raf = requestAnimationFrame(frame);
-    if (now - lastFrame < FRAME_INTERVAL) return;
+    if (now - lastFrame < frameInterval) return;
     // 真实时间驱动：rAF 被滚动节流后相位平滑续接，不会跳变闪烁
     const dt = Math.min(now - lastFrame, 100);
     lastFrame = now;
@@ -223,13 +256,23 @@ export function mountDotField(container, options = {}) {
       const dx = d.ox - mouse.x;
       const dy = d.oy - mouse.y;
       const dist = Math.hypot(dx, dy);
+      let follow = 0.12;
       if (dist < props.cursorRadius && dist > 0.01) {
-        const force = (1 - dist / props.cursorRadius) * props.cursorForce * 60;
+        let force;
+        if (props.bulgeOnly) {
+          // 凹陷模式：位移随互动强度涨落，鼠标一停就回填。
+          // 二次衰减让坑边缘平滑，不会在半径处出现硬边
+          const falloff = 1 - dist / props.cursorRadius;
+          force = falloff * falloff * props.bulgeStrength * engagement;
+          follow = 0.15;
+        } else {
+          force = (1 - dist / props.cursorRadius) * props.cursorForce * 60;
+        }
         tx += (dx / dist) * force;
         ty += (dy / dist) * force;
       }
-      d.x += (tx - d.x) * 0.12;
-      d.y += (ty - d.y) * 0.12;
+      d.x += (tx - d.x) * follow;
+      d.y += (ty - d.y) * follow;
       const twinkle = 0.55 + 0.45 * Math.sin(tick * 2 + d.tw);
       const gi = Math.min(GRAD_STEPS, Math.max(0, Math.round(((d.x * invW + d.y * invH) / 2) * GRAD_STEPS)));
       const ai = Math.min(ALPHA_STEPS, Math.max(0, Math.round(twinkle * ALPHA_STEPS)));
@@ -265,9 +308,45 @@ export function mountDotField(container, options = {}) {
     }
   }
 
-  // 主题/明暗切换 → 换色；auto 模式下系统切换也要响应
+  /**
+   * 改参数并立即生效（设置面板用）。只认 DEFAULTS 里有的键。
+   * 颜色不走这里——颜色是 token，改 --df-from/--df-to/--df-glow 即可，
+   * 下面的 observer 会接住。
+   */
+  function setOptions(patch = {}) {
+    let regrid = false;
+    for (const [key, value] of Object.entries(patch)) {
+      if (!(key in DEFAULTS) || props[key] === value) continue;
+      props[key] = value;
+      explicit.add(key);
+      if (key === "dotSpacing") regrid = true;
+      if (key === "fps") frameInterval = 1000 / props.fps;
+      if (key === "glowRadius" && glowEl) glowEl.setAttribute("r", String(props.glowRadius));
+    }
+    if (regrid) rebuild();
+    else if (reducedMotion) drawStatic();
+    return { ...props };
+  }
+
+  /** 回到挂载时的参数，并把主题旋钮的控制权交还给主题 */
+  function resetOptions() {
+    Object.assign(props, baseline);
+    explicit.clear();
+    for (const key of Object.keys(options)) explicit.add(key);
+    frameInterval = 1000 / props.fps;
+    if (glowEl) glowEl.setAttribute("r", String(props.glowRadius));
+    rebuildColors();
+    rebuild();
+    return { ...props };
+  }
+
+  // 主题/明暗切换 → 换色；auto 模式下系统切换也要响应。
+  // style 也听：设置面板把颜色写成 <html> 上的行内 token
   const attrObserver = new MutationObserver(rebuildColors);
-  attrObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-palette", "data-scheme"] });
+  attrObserver.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["data-theme", "data-palette", "data-scheme", "style"]
+  });
   const mql = window.matchMedia("(prefers-color-scheme: dark)");
   mql.addEventListener("change", rebuildColors);
 
@@ -285,6 +364,9 @@ export function mountDotField(container, options = {}) {
 
   return {
     refreshColors: rebuildColors,
+    setOptions,
+    resetOptions,
+    getOptions: () => ({ ...props }),
     destroy() {
       destroyed = true;
       running = false;

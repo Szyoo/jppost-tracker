@@ -7,6 +7,8 @@
    框架无关：React/Vue/Flask 静态页都能用。
    ============================================================ */
 
+import { mountCornerTool, CORNER_ORDER } from "./corner.js";
+
 const SCHEMES = ["auto", "light", "dark"];
 const ICONS = { auto: "🌗", light: "☀️", dark: "🌙" };
 const EVENT = "szyyw:schemechange";
@@ -87,6 +89,17 @@ export function cycleScheme() {
   return setScheme(SCHEMES[(i + 1) % SCHEMES.length]);
 }
 
+/* auto 模式下系统切换时底色会变，theme-color 也得跟着走。
+   监听只绑一次：configureScheme 可能被重复调用（SPA 热更新、多入口），
+   每次都绑会叠出一堆同样的监听器。 */
+let systemMql = null;
+
+function bindSystemListener() {
+  if (systemMql) return;
+  systemMql = window.matchMedia("(prefers-color-scheme: dark)");
+  systemMql.addEventListener("change", syncThemeColor);
+}
+
 /**
  * 配置持久化方式并对齐初始状态。
  * 服务端已经渲染了 data-scheme（SSR 项目）时不覆盖它——那份才是无闪烁的真相；
@@ -98,9 +111,15 @@ export function configureScheme(options = {}) {
   const attr = document.documentElement.dataset.scheme;
   if (!SCHEMES.includes(attr) && stored) setScheme(stored, { persist: false });
   else syncThemeColor();
-  // auto 模式下系统切换时底色会变，theme-color 也得跟着走
-  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", syncThemeColor);
+  bindSystemListener();
   return getScheme();
+}
+
+/** 解绑系统明暗监听（SPA 卸载时用；不改 data-scheme，配色保持现状） */
+export function destroyScheme() {
+  if (!systemMql) return;
+  systemMql.removeEventListener("change", syncThemeColor);
+  systemMql = null;
 }
 
 /** 订阅变化（返回解绑函数），用于让框架内的 UI 与按钮状态保持同步 */
@@ -111,16 +130,17 @@ export function onSchemeChange(handler) {
 }
 
 /**
- * 挂载常驻切换按钮（默认固定在右上角）。
+ * 挂载常驻切换按钮（缺省进右上角工具位，背景参数按钮排在它右边）。
  * labels 用于 title/aria-label，传当前语言的文案即可。
+ * container 传了就挂到那里，不进工具位——设置页里内嵌一枚时用。
  */
 export function mountSchemeToggle({
-  container = document.body,
+  container = null,
   labels = { auto: "Follow system", light: "Light", dark: "Dark" }
 } = {}) {
   const btn = document.createElement("button");
   btn.type = "button";
-  btn.className = "scheme-toggle";
+  btn.className = "corner-tool scheme-toggle";
 
   const render = () => {
     const s = getScheme();
@@ -134,12 +154,19 @@ export function mountSchemeToggle({
   btn.addEventListener("click", () => cycleScheme());
   const off = onSchemeChange(render);
   render();
-  container.appendChild(btn);
+
+  let unmount;
+  if (container) {
+    container.appendChild(btn);
+    unmount = () => btn.remove();
+  } else {
+    unmount = mountCornerTool(btn, { order: CORNER_ORDER.scheme });
+  }
 
   return {
     destroy() {
       off();
-      btn.remove();
+      unmount();
     },
     update: render
   };
