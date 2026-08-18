@@ -471,7 +471,8 @@
                 添加后立即启用
               </label>
               <div class="actions">
-                <button type="button" class="btn btn-small" @click="createTask()" :disabled="!newTaskForm.tracking_number.trim()">添加任务</button>
+                <button type="button" class="btn btn-small" @click="createTask()" :disabled="!newTaskForm.tracking_number.trim()" :title="!newTaskForm.tracking_number.trim() ? '请先填写日本邮政单号' : ''">添加任务</button>
+                <span class="hint" v-if="!newTaskForm.tracking_number.trim()" style="margin: 0; align-self: center;">填入单号后可添加</span>
               </div>
             </div>
 
@@ -587,7 +588,8 @@
                 添加后立即启用
               </label>
               <div class="actions">
-                <button type="button" class="btn btn-small" @click="createTask('me')" :disabled="!myTaskForm.tracking_number.trim()">添加任务</button>
+                <button type="button" class="btn btn-small" @click="createTask('me')" :disabled="!myTaskForm.tracking_number.trim()" :title="!myTaskForm.tracking_number.trim() ? '请先填写日本邮政单号' : ''">添加任务</button>
+                <span class="hint" v-if="!myTaskForm.tracking_number.trim()" style="margin: 0; align-self: center;">填入单号后可添加</span>
               </div>
               <p class="hint">再次添加同一个单号会复活它的归档记录，不会新建重复任务。</p>
             </div>
