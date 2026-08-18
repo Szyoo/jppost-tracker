@@ -194,19 +194,59 @@
       <section class="section" v-if="page === 'env'">
         <h2 class="section-name">系统设置</h2>
         <div class="panel glass rise">
-          <p class="hint" style="margin: 0 0 16px;">这里编辑的是全局 <code>.env</code>。用户自己的单号、Bark Keys 和推送参数不在这里改。</p>
+          <div class="env-intro">
+            <p class="hint" style="margin: 0;">这里编辑的是全局 <code>.env</code>。用户自己的单号、Bark Keys 和推送参数不在这里改。</p>
+            <p class="hint" style="margin: 0;">
+              字段右上角标着生效时机：<span class="pill green">即时生效</span> 保存即可，
+              <span class="pill amber">需重启 Web</span> 要重启控制台进程才会被读到。
+            </p>
+          </div>
           <form @submit.prevent="saveEnv">
-            <div class="env-grid stagger">
-              <div v-for="(value, key) in envVars" :key="key">
-                <label :for="key">[[ key ]]<template v-if="envDesc[key]"> · [[ envDesc[key] ]]</template></label>
-                <input type="text" class="field" :id="key" v-model="envVars[key]" />
-              </div>
+            <div class="env-groups stagger">
+              <section v-for="group in envGroups" :key="group.key" class="env-group inner">
+                <div class="env-group-head">
+                  <h3 class="env-group-title">[[ group.title ]]</h3>
+                  <span v-if="group.badge" :class="['pill', group.badge_tone || 'amber']">[[ group.badge ]]</span>
+                </div>
+                <p class="env-group-desc">[[ group.desc ]]</p>
+
+                <div class="env-fields">
+                  <div v-for="field in group.fields" :key="field.key" :class="['env-field', { full: field.wide || field.type === 'bool' }]">
+                    <div class="env-field-head">
+                      <label :for="'env-' + field.key" class="env-field-label">
+                        [[ field.label ]]
+                        <span v-if="field.legacy" class="pill">遗留</span>
+                      </label>
+                      <span :class="['pill', field.apply === 'live' ? 'green' : 'amber']">
+                        [[ field.apply === 'live' ? '即时生效' : '需重启 Web' ]]
+                      </span>
+                    </div>
+
+                    <label v-if="field.type === 'bool'" class="switch-row">
+                      <span class="switch">
+                        <input type="checkbox" :id="'env-' + field.key" :checked="envBoolValue(field)" @change="setEnvBool(field, $event.target.checked)" />
+                        <span class="track"></span><span class="knob"></span>
+                      </span>
+                      [[ envBoolValue(field) ? '已开启' : '已关闭' ]]
+                    </label>
+                    <input v-else type="text" class="field" :id="'env-' + field.key" :placeholder="field.placeholder || ''" v-model="envVars[field.key]" />
+
+                    <p class="env-field-desc">[[ field.desc ]]</p>
+                    <code class="env-key">[[ field.key ]]</code>
+                  </div>
+                </div>
+              </section>
             </div>
             <div class="actions">
-              <button type="submit" class="btn">保存</button>
+              <button type="submit" class="btn" :disabled="!envDirtyCount">
+                [[ envDirtyCount ? '保存 ' + envDirtyCount + ' 项改动' : '没有改动' ]]
+              </button>
+              <button type="button" class="btn-ghost" @click="resetEnv" :disabled="!envDirtyCount">撤销改动</button>
             </div>
           </form>
           <div v-if="envMessage.text" :class="['message', envMessage.type]">[[ envMessage.text ]]</div>
+          <!-- 生效说明比那条 3 秒后自动消失的反馈更需要留着看，所以单独一行、不跟着消失 -->
+          <p v-if="envApplyNote" class="env-apply-note">[[ envApplyNote ]]</p>
         </div>
       </section>
 
@@ -678,12 +718,14 @@
     </div>
 
     <script id="initial-env" type="application/json">{{ env_vars | tojson | safe }}</script>
+    <script id="initial-env-schema" type="application/json">{{ env_schema | tojson | safe }}</script>
     <script id="initial-user-state" type="application/json">{{ user_state | tojson | safe }}</script>
     <script id="initial-viewer-state" type="application/json">{{ viewer_state | tojson | safe }}</script>
     <script id="initial-bark-help" type="application/json">{{ bark_help | tojson | safe }}</script>
     <script>
       (function () {
         window.initialEnvVars = JSON.parse((document.getElementById('initial-env') || {}).textContent || '{}');
+        window.initialEnvSchema = JSON.parse((document.getElementById('initial-env-schema') || {}).textContent || '[]');
         window.initialUserState = JSON.parse((document.getElementById('initial-user-state') || {}).textContent || '{}');
         window.initialViewerState = JSON.parse((document.getElementById('initial-viewer-state') || {}).textContent || '{}');
         window.initialBarkHelp = JSON.parse((document.getElementById('initial-bark-help') || {}).textContent || '{}');

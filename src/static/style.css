@@ -644,12 +644,107 @@ textarea.field {
   min-height: 1em;
 }
 
-/* ---------- 系统设置 ---------- */
+/* ---------- 系统设置（按使用场景分组，字段自带生效时机标记） ---------- */
 
-.env-grid {
+.env-intro {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.env-groups {
+  display: grid;
+  gap: 14px;
+}
+
+.env-group {
+  padding: 16px 18px;
+}
+
+.env-group-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.env-group-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.env-group-desc {
+  margin: 0 0 14px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+.env-fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
+}
+
+.env-field {
+  min-width: 0;
+}
+
+.env-field.full {
+  grid-column: 1 / -1;
+}
+
+/* 标签与生效胶囊同一行两端对齐：胶囊要和字段名一样显眼，扫一眼就知道要不要重启 */
+.env-field-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.env-field-label {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.env-field-desc {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+.env-apply-note {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  border-left-width: 3px;
+  background: var(--tint-cyan-bg);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text);
+}
+
+/* 变量名是运维改 .env 时的索引，保留但压成次要信息 */
+.env-key {
+  display: inline-block;
+  margin-top: 6px;
+  font-family: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--text-dim) 10%, transparent);
+  border-color: color-mix(in srgb, var(--glass-border) 60%, transparent);
 }
 
 /* ---------- 认证页 ---------- */
@@ -831,9 +926,20 @@ textarea.field {
   }
 
   .form-grid,
-  .env-grid,
+  .env-fields,
   .task-fields {
     grid-template-columns: 1fr;
+  }
+
+  .env-group {
+    padding: 14px;
+  }
+
+  /* 窄屏字段名容易被挤断，胶囊换到下一行 */
+  .env-field-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
   }
 
   .brand-title {
