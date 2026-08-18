@@ -333,6 +333,65 @@ textarea.field {
   gap: 16px;
 }
 
+/* ---------- 追踪任务 ---------- */
+
+.task-list {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.task-item {
+  padding: 14px 16px;
+  display: grid;
+  gap: 8px;
+}
+
+.task-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.task-item-head strong {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.03em;
+  overflow-wrap: anywhere;
+}
+
+/* 单号最宽、间隔最窄，窄屏塌成一列 */
+.task-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 0.8fr);
+  gap: 12px;
+}
+
+.task-field {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: text;
+}
+
+.task-meta {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+.task-create {
+  padding: 14px 16px;
+}
+
+.task-item .actions {
+  margin-top: 4px;
+}
+
 /* ---------- 单号档案 ---------- */
 
 .history-list {
@@ -355,6 +414,10 @@ textarea.field {
 .history-item span {
   font-size: 12px;
   color: var(--text-dim);
+}
+
+.history-item .actions {
+  margin-top: 8px;
 }
 
 .empty-note {
@@ -634,7 +697,8 @@ textarea.field {
   }
 
   .form-grid,
-  .env-grid {
+  .env-grid,
+  .task-fields {
     grid-template-columns: 1fr;
   }
 

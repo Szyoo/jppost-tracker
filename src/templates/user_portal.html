@@ -34,20 +34,125 @@
       <h2 class="section-name">我的概览</h2>
       <div class="widget-grid stagger">
         <div class="widget glass lift spot">
-          <p class="widget-title">当前单号</p>
-          <p class="widget-value small">{{ account.tracking_number or '未填写' }}</p>
+          <p class="widget-title">启用中任务</p>
+          <p class="widget-value">{{ account.active_task_count or 0 }}</p>
         </div>
         <div class="widget glass lift spot">
-          <p class="widget-title">历史单号</p>
-          <p class="widget-value">{{ account.tracking_history_count or 0 }}</p>
+          <p class="widget-title">全部任务（含归档）</p>
+          <p class="widget-value">{{ account.task_count or 0 }}</p>
         </div>
         <div class="widget glass lift spot">
-          <p class="widget-title">最近推送</p>
-          <p class="widget-value small">{{ account.last_push_at or '未推送' }}</p>
+          <p class="widget-title">归档任务</p>
+          <p class="widget-value">{{ account.archived_tasks | length }}</p>
         </div>
         <div class="widget glass lift spot">
-          <p class="widget-title">最近物流</p>
-          <p class="widget-value small">{{ account.last_error or account.last_tracking_info or '暂无记录' }}</p>
+          <p class="widget-title">Bark 设备</p>
+          <p class="widget-value">{{ account.bark_device_count or 0 }}</p>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="panel glass rise">
+          <div class="panel-head">
+            <h2 class="panel-title">我的追踪任务</h2>
+            <span class="pill {{ 'ok' if account.active_task_count else 'pending' }}">
+              {{ '启用中 %d 个' % account.active_task_count if account.active_task_count else '暂无启用任务' }}
+            </span>
+          </div>
+
+          {% if account.tasks %}
+          <div class="task-list stagger">
+            {% for task in account.tasks %}
+            <form method="post" action="/me/tasks/{{ task.id }}/update" class="task-item inner">
+              <div class="task-item-head">
+                <strong>{{ task.tracking_number }}</strong>
+                <span class="pill {% if not task.enabled %}pending{% elif task.last_error %}error{% else %}ok{% endif %}">
+                  {% if not task.enabled %}已停用{% elif task.last_error %}轮询异常{% else %}追踪中{% endif %}
+                </span>
+              </div>
+              <div class="task-fields">
+                <label class="task-field">
+                  <span>日本邮政单号</span>
+                  <input name="tracking_number" type="text" class="field" value="{{ task.tracking_number }}" />
+                </label>
+                <label class="task-field">
+                  <span>备注名</span>
+                  <input name="label" type="text" class="field" value="{{ task.label }}" />
+                </label>
+                <label class="task-field">
+                  <span>查询间隔（秒）</span>
+                  <input name="check_interval" type="number" min="30" class="field" value="{{ task.check_interval }}" />
+                </label>
+              </div>
+              <label class="switch-row">
+                <span class="switch"><input name="enabled" type="checkbox" {% if task.enabled %}checked{% endif %} /><span class="track"></span><span class="knob"></span></span>
+                启用追踪
+              </label>
+              <p class="task-meta">最近结果 {{ task.last_error or task.last_tracking_info or '暂无记录' }}</p>
+              <p class="task-meta">最近检查 {{ task.last_checked_at or '-' }} · 最近推送 {{ task.last_push_at or '-' }}</p>
+              <div class="actions">
+                <button type="submit" class="btn btn-small">保存</button>
+                <button type="submit" class="btn-ghost btn-small" formaction="/me/tasks/{{ task.id }}/archive">归档</button>
+                <button type="submit" class="btn-ghost btn-small danger" formaction="/me/tasks/{{ task.id }}/delete">删除</button>
+              </div>
+            </form>
+            {% endfor %}
+          </div>
+          {% else %}
+          <div class="empty-note" style="margin-bottom: 16px;">你还没有追踪任务，用下面的表单添加第一个单号。</div>
+          {% endif %}
+
+          <form method="post" action="/me/tasks" class="inner task-create">
+            <h3 class="section-name" style="margin-bottom: 12px;">添加任务</h3>
+            <div class="task-fields">
+              <label class="task-field">
+                <span>日本邮政单号</span>
+                <input name="tracking_number" type="text" class="field" />
+              </label>
+              <label class="task-field">
+                <span>备注名</span>
+                <input name="label" type="text" class="field" placeholder="例如：键盘" />
+              </label>
+              <label class="task-field">
+                <span>查询间隔（秒）</span>
+                <input name="check_interval" type="number" min="30" class="field" value="300" />
+              </label>
+            </div>
+            <label class="switch-row" style="margin-top: 12px;">
+              <span class="switch"><input name="enabled" type="checkbox" checked /><span class="track"></span><span class="knob"></span></span>
+              添加后立即启用
+            </label>
+            <div class="actions">
+              <button type="submit" class="btn btn-small">添加任务</button>
+            </div>
+            <p class="hint">再次添加同一个单号会复活它的归档记录，不会新建重复任务。</p>
+          </form>
+
+          {% if account.archived_tasks %}
+          <div class="divider"></div>
+          <h3 class="section-name" style="margin-bottom: 12px;">归档任务</h3>
+          <div class="task-list stagger">
+            {% for task in account.archived_tasks %}
+            <form method="post" action="/me/tasks" class="task-item inner">
+              <div class="task-item-head">
+                <strong>{{ task.tracking_number }}</strong>
+                <span class="pill pending">已归档</span>
+              </div>
+              <p class="task-meta">
+                首次登记 {{ task.first_seen_at }} · 登记次数 {{ task.seen_count }}{% if task.label %} · 备注 {{ task.label }}{% endif %}
+              </p>
+              <input type="hidden" name="tracking_number" value="{{ task.tracking_number }}" />
+              <input type="hidden" name="label" value="{{ task.label }}" />
+              <input type="hidden" name="check_interval" value="{{ task.check_interval }}" />
+              <input type="hidden" name="enabled" value="1" />
+              <div class="actions">
+                <button type="submit" class="btn btn-small">恢复</button>
+                <button type="submit" class="btn-ghost btn-small danger" formaction="/me/tasks/{{ task.id }}/delete">删除</button>
+              </div>
+            </form>
+            {% endfor %}
+          </div>
+          {% endif %}
         </div>
       </div>
 
@@ -55,7 +160,7 @@
         <div class="panel glass rise">
           <div class="panel-head">
             <h2 class="panel-title">我的资料</h2>
-            <span class="pill {{ 'ok' if account.tracking_enabled else 'pending' }}">{{ '追踪启用中' if account.tracking_enabled else '追踪已关闭' }}</span>
+            <span class="pill">{{ account.bark_device_count or 0 }} 个 Bark 设备</span>
           </div>
 
           <form method="post" action="/me/update">
@@ -73,19 +178,11 @@
                 <input id="note" name="note" type="text" class="field" value="{{ account.note }}" />
               </div>
               <div class="full">
-                <label for="tracking_number">日本邮政单号</label>
-                <input id="tracking_number" name="tracking_number" type="text" class="field" value="{{ account.tracking_number }}" />
-                <p class="hint">填写后系统会按设定间隔为你单独轮询，并写回最近状态。</p>
-              </div>
-              <div>
-                <label for="check_interval">查询间隔（秒）</label>
-                <input id="check_interval" name="check_interval" type="number" min="30" class="field" value="{{ account.check_interval }}" />
-              </div>
-              <div style="align-self: end;">
-                <label class="switch-row" style="padding-bottom: 10px;">
+                <label class="switch-row">
                   <span class="switch"><input id="bark_url_enabled" name="bark_url_enabled" type="checkbox" {% if account.bark_url_enabled %}checked{% endif %} /><span class="track"></span><span class="knob"></span></span>
                   推送附带追踪链接
                 </label>
+                <p class="hint">开启后每条物流通知都会带上对应任务的日本邮政查询链接。</p>
               </div>
               <div class="full">
                 <label for="bark_keys">Bark Keys（支持多端，一行一个）</label>
@@ -110,6 +207,15 @@
                       <label for="test_body">测试内容</label>
                       <textarea id="test_body" name="test_body" class="field" rows="3">这是 Bark 参数预览消息，用来确认通知样式、声音和链接效果。</textarea>
                     </div>
+                    <div class="full">
+                      <label for="task_id">推送链接取自哪个任务</label>
+                      <select id="task_id" name="task_id" class="field">
+                        <option value="">不附带追踪链接</option>
+                        {% for task in account.tasks %}
+                        <option value="{{ task.id }}">{{ task.tracking_number }}{% if task.label %} · {{ task.label }}{% endif %}</option>
+                        {% endfor %}
+                      </select>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -127,26 +233,6 @@
         </div>
 
         <div class="side-stack">
-          <div class="panel glass rise">
-            <div class="panel-head">
-              <h2 class="panel-title">单号档案</h2>
-              <span class="pill">累计 {{ account.tracking_history_count or 0 }} 个</span>
-            </div>
-            {% if account.tracking_history %}
-            <div class="history-list stagger">
-              {% for item in account.tracking_history %}
-              <div class="history-item inner">
-                <strong>{{ item.tracking_number }}</strong>
-                <span>首次登记 {{ item.first_seen_at }}</span>
-                <span>最近保存 {{ item.last_seen_at }}</span>
-              </div>
-              {% endfor %}
-            </div>
-            {% else %}
-            <div class="empty-note">你还没有保存过历史单号。</div>
-            {% endif %}
-          </div>
-
           <div class="panel glass rise">
             <div class="panel-head">
               <h2 class="panel-title">Bark 设置手顺</h2>
