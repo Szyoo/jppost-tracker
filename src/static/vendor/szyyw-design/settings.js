@@ -1,6 +1,6 @@
 /* ============================================================
    @szyyw/design · settings.js
-   背景参数面板 —— 右上角齿轮按钮 + 右侧抽屉，实时调点阵背景。
+   背景参数面板 —— 右上角调色板按钮 + 右侧抽屉，实时调点阵背景。
 
    参数分两路，面板里看不出区别，但底下各归各家：
      行为参数（点大小/间距/指针模型/波浪…）→ field.setOptions()
@@ -9,7 +9,7 @@
                不从组件层硬塞进画布。
    ============================================================ */
 
-import { mountCornerTool, CORNER_ORDER } from "./corner.js";
+import { mountCornerTool, CORNER_ORDER, syncCornerRail } from "./corner.js";
 import { DEFAULTS, resolveTokenColor } from "./dotfield.js";
 import { VERSION, REPO } from "./version.js";
 
@@ -174,7 +174,7 @@ export function restoreDotFieldSettings({ storageKey = "szyyw:dotfield" } = {}) 
 }
 
 /**
- * 挂载背景参数面板。齿轮按钮进右上角工具位，排在明暗切换右边。
+ * 挂载背景参数面板。调色板按钮进右上角工具位，排在明暗切换右边。
  *
  * @param field      mountDotField() 的返回值（必需）
  * @param onSave     传了才显示「保存」按钮（存服务端用）；异步，抛错即算失败
@@ -230,10 +230,13 @@ export function mountDotFieldSettings({
   btn.type = "button";
   btn.title = text.open;
   btn.setAttribute("aria-label", text.open);
+  // 调色板而不是调色板：这里调的是外观/主题，调色板会被读成系统设置
   btn.innerHTML =
-    '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-    '<circle cx="12" cy="12" r="3"></circle>' +
-    '<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>' +
+    '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M12 2.6c-5.2 0-9.4 4.2-9.4 9.4s4.2 9.4 9.4 9.4a2.3 2.3 0 0 0 2.3-2.3c0-.6-.2-1.1-.6-1.5a2.2 2.2 0 0 1 1.6-3.8h1.8a4 4 0 0 0 4-4c0-4-4-7.2-9.1-7.2z"></path>' +
+    '<circle cx="7.2" cy="12.6" r="1.15" fill="currentColor" stroke="none"></circle>' +
+    '<circle cx="9.4" cy="8.2" r="1.15" fill="currentColor" stroke="none"></circle>' +
+    '<circle cx="14.2" cy="7.7" r="1.15" fill="currentColor" stroke="none"></circle>' +
     "</svg>";
 
   const backdrop = el("div", "panel-backdrop");
@@ -438,7 +441,7 @@ export function mountDotFieldSettings({
     };
 
     checkBtn.addEventListener("click", () => runCheck(true));
-    // 挂载后静默查一次（走缓存，至多 6h 一次网络请求），有新版就点亮齿轮角标
+    // 挂载后静默查一次（走缓存，至多 6h 一次网络请求），有新版就点亮调色板角标
     setTimeout(() => runCheck(false), 800);
   }
 
@@ -513,6 +516,8 @@ export function mountDotFieldSettings({
     if (open) panel.removeAttribute("inert");
     else panel.setAttribute("inert", "");
     if (open) {
+      // 抽屉顶端靠 --corner-rail-h 让开工具位，弹出前先把它量准
+      syncCornerRail();
       scrollLock = document.body.style.overflow;
       document.body.style.overflow = "hidden";
       for (const fn of rerenders) fn();
