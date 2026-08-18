@@ -157,6 +157,9 @@ a {
      弹开的 sheet 不该被它盖住，但抽屉开着时齿轮要还能点 */
   z-index: 45;
   display: flex;
+  /* 排列方向是 token 旋钮：紧凑布局要纵向就在自己的 :root 设 column，
+     别用同权重 CSS 覆盖整条规则。order 在两个方向下同样生效 */
+  flex-direction: var(--corner-tools-dir, row);
   align-items: center;
   gap: 8px;
 }
