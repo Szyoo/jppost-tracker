@@ -1,25 +1,37 @@
 import os
 import time
 import urllib.parse
-import time as _time
 
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
-from storage import ensure_storage, list_tracked_accounts, load_system_env, parse_bark_keys, update_tracking_state
+from storage import (
+    build_tracking_url,
+    ensure_storage,
+    list_due_tasks,
+    load_system_env,
+    parse_bark_keys,
+    update_task_state,
+)
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 DOTENV_PATH = os.path.join(BASE_DIR, ".env")
 SYSTEM_ENV_KEYS = ["BARK_SERVER_INTERNAL", "BARK_SERVER", "BARK_SERVER_PUBLIC", "REQUEST_TIMEOUT"]
 
+# 主循环单次休眠上限：即使所有任务都还没到期，也最多 30 秒后重查一次数据库，
+# 这样后台新建或改过间隔的任务不必等满一个 check_interval 才被感知。
+MAX_LOOP_SLEEP = 30
+IDLE_LOOP_SLEEP = 5
+
 load_dotenv(DOTENV_PATH)
 ensure_storage(DOTENV_PATH)
 
+# 日本邮政官网只给日本时间，进程时区固定成东京，日志与解析结果才对得上。
 os.environ.setdefault("TZ", "Asia/Tokyo")
-if hasattr(_time, "tzset"):
+if hasattr(time, "tzset"):
     try:
-        _time.tzset()
+        time.tzset()
     except Exception:
         pass
 
@@ -52,50 +64,72 @@ def _parse_query_params(query_string: str) -> dict:
     return result
 
 
-def build_tracking_url(tracking_number: str) -> str:
-    return (
-        "https://trackings.post.japanpost.jp/services/srv/search/direct"
-        f"?reqCodeNo1={tracking_number}&searchKind=S002&locale=ja"
+def _build_log_prefix(display_name: str, label: str, tracking_number: str) -> str:
+    """一个账号可能同时追多个包裹，日志前缀必须带上任务身份，否则看不出是谁的哪一件。"""
+    number = tracking_number or "未填单号"
+    if label:
+        return f"[{display_name} · {label}({number})]"
+    return f"[{display_name} · {number}]"
+
+
+def build_push_message(config: dict, latest_info: str) -> tuple[str, str]:
+    """推送的标题与正文也必须带任务标识：同一账号的多个包裹会推到同一台设备上，
+    标题若都是"快递更新通知"，在手机通知栏里根本分不清是哪一件。"""
+    label = config["label"]
+    number = config["tracking_number"]
+    if label:
+        return f"快递更新 · {label}", f"{number} {latest_info}"
+    return f"快递更新 · {number}", latest_info
+
+
+def build_runtime_config(task: dict, system_env: dict) -> dict:
+    # 单号与轮询间隔属于任务，Bark 配置属于账号，两者来源不同不能混。
+    account = task.get("account") or {}
+    tracking_number = str(task.get("tracking_number", "") or "").strip()
+    label = str(task.get("label", "") or "").strip()
+    display_name = (
+        account.get("display_name") or account.get("name") or account.get("username") or "用户"
     )
-
-
-def build_runtime_config(account: dict, system_env: dict) -> dict:
-    tracking_number = str(account.get("tracking_number", "") or "").strip()
     bark_server = _first_non_empty(
         system_env.get("BARK_SERVER_INTERNAL"),
         system_env.get("BARK_SERVER"),
         system_env.get("BARK_SERVER_PUBLIC"),
     ).rstrip("/")
     return {
-        "account_id": account["id"],
+        "task_id": task["id"],
+        "account_id": task.get("account_id") or account.get("id"),
         "username": account.get("username", ""),
-        "display_name": account.get("display_name") or account.get("name") or account.get("username") or "用户",
+        "display_name": display_name,
+        "label": label,
+        "log_prefix": _build_log_prefix(display_name, label, tracking_number),
         "tracking_number": tracking_number,
-        "tracking_url": build_tracking_url(tracking_number),
-        "check_interval": _normalize_int(account.get("check_interval", 300), 300),
+        # storage 已经拼好 URL；这里兜底也复用它的实现，避免单号 URL 格式在两处各写一遍。
+        "tracking_url": str(task.get("tracking_url") or "").strip() or build_tracking_url(tracking_number),
+        "check_interval": _normalize_int(task.get("check_interval", 300), 300),
         "request_timeout": _normalize_int(system_env.get("REQUEST_TIMEOUT", "15"), 15),
         "bark_server": bark_server,
         "bark_keys": parse_bark_keys(account.get("bark_keys") or account.get("bark_key")),
         "bark_query_params": str(account.get("bark_query_params", "") or ""),
         "bark_url_enabled": bool(account.get("bark_url_enabled")),
-        "last_tracking_info": str(account.get("last_tracking_info", "") or ""),
+        "last_tracking_info": str(task.get("last_tracking_info", "") or ""),
     }
 
 
 def validate_config(config: dict) -> list[str]:
+    # 这些文案会写进 last_error 直接显示在网页上，所以用中文而不是字段名。
     missing = []
     if not config["tracking_number"]:
-        missing.append("tracking_number")
+        missing.append("单号")
     if not config["bark_server"]:
-        missing.append("bark_server")
+        missing.append("Bark 服务地址（系统设置）")
     if not config["bark_keys"]:
-        missing.append("bark_keys")
+        missing.append("Bark Keys（账号设置）")
     return missing
 
 
 def send_bark_notification(config: dict, title: str, message: str, retries: int = 1) -> bool:
     if not config["bark_server"] or not config["bark_keys"]:
-        print(f"[{config['display_name']}] 未配置 Bark 地址或 Bark Keys，跳过推送。")
+        print(f"{config['log_prefix']} 未配置 Bark 地址或 Bark Keys，跳过推送。")
         return False
 
     query_params = _parse_query_params(config["bark_query_params"])
@@ -106,6 +140,7 @@ def send_bark_notification(config: dict, title: str, message: str, retries: int 
     keys = config["bark_keys"]
     for attempt in range(retries + 1):
         try:
+            # 单设备走 GET 短链，多设备只能用 /push 批量接口。
             if len(keys) == 1:
                 title_enc = urllib.parse.quote(title, safe="")
                 body_enc = urllib.parse.quote(message, safe="")
@@ -122,17 +157,17 @@ def send_bark_notification(config: dict, title: str, message: str, retries: int 
                 )
 
             if 200 <= resp.status_code < 300:
-                print(f"[{config['display_name']}] Bark 通知已发送到 {len(keys)} 个设备。")
+                print(f"{config['log_prefix']} Bark 通知已发送到 {len(keys)} 个设备。")
                 return True
             last_error = f"HTTP {resp.status_code}"
         except Exception as exc:
             last_error = str(exc)
 
         if attempt < retries:
-            print(f"[{config['display_name']}] Bark 发送失败（{last_error}），30 秒后重试。")
+            print(f"{config['log_prefix']} Bark 发送失败（{last_error}），30 秒后重试。")
             time.sleep(30)
 
-    print(f"[{config['display_name']}] Bark 通知发送失败：{last_error}")
+    print(f"{config['log_prefix']} Bark 通知发送失败：{last_error}")
     return False
 
 
@@ -164,6 +199,7 @@ def get_latest_tracking_info(config: dict):
         if not date_cells:
             return None
 
+        # 履历表按时间正序排列，最后一行才是最新状态。
         latest_date = date_cells[-1].get_text(strip=True)
         latest_row = date_cells[-1].parent
         if latest_row is None:
@@ -172,36 +208,39 @@ def get_latest_tracking_info(config: dict):
         latest_status = status_cell.get_text(strip=True) if status_cell else ""
         return f"{latest_date} {latest_status}".strip()
     except requests.exceptions.RequestException as exc:
-        print(f"[{config['display_name']}] 请求快递信息失败: {exc}")
+        print(f"{config['log_prefix']} 请求快递信息失败: {exc}")
         return None
     except Exception as exc:
-        print(f"[{config['display_name']}] 解析快递信息时出错: {exc}")
+        print(f"{config['log_prefix']} 解析快递信息时出错: {exc}")
         return None
 
 
-def process_account(account: dict, system_env: dict):
-    config = build_runtime_config(account, system_env)
+def process_task(task: dict, system_env: dict):
+    config = build_runtime_config(task, system_env)
+    prefix = config["log_prefix"]
+
     missing = validate_config(config)
     if missing:
         error = f"缺少必要配置: {', '.join(missing)}"
-        print(f"[{config['display_name']}] {error}")
-        update_tracking_state(config["account_id"], error=error)
+        print(f"{prefix} {error}")
+        update_task_state(config["task_id"], error=error)
         return
 
     current_info = get_latest_tracking_info(config)
     if not current_info:
-        update_tracking_state(config["account_id"], error="无法获取最新快递信息。")
+        update_task_state(config["task_id"], error="无法获取最新快递信息。")
         return
 
-    print(f"[{config['display_name']}] 最新物流记录: {current_info}")
+    print(f"{prefix} 最新物流记录: {current_info}")
     pushed = False
     if current_info != config["last_tracking_info"]:
-        pushed = send_bark_notification(config, "快递更新通知", current_info)
+        title, body = build_push_message(config, current_info)
+        pushed = send_bark_notification(config, title, body)
     else:
-        print(f"[{config['display_name']}] 暂无更新。")
+        print(f"{prefix} 暂无更新。")
 
-    update_tracking_state(
-        config["account_id"],
+    update_task_state(
+        config["task_id"],
         latest_info=current_info,
         error="",
         pushed=pushed,
@@ -209,43 +248,46 @@ def process_account(account: dict, system_env: dict):
 
 
 def main():
-    print("多用户快递监控程序启动...")
-    next_runs = {}
+    print("多任务快递监控程序启动...")
+    next_runs: dict[int, float] = {}
     last_empty_log_at = 0.0
 
     try:
         while True:
-            accounts = list_tracked_accounts()
+            tasks = list_due_tasks()
             now = time.time()
 
-            if not accounts:
+            if not tasks:
+                # 空库时也别刷屏，一分钟提示一次就够。
                 if now - last_empty_log_at >= 60:
-                    print("当前没有启用追踪的用户。")
+                    print("当前没有启用的追踪任务。")
                     last_empty_log_at = now
-                time.sleep(5)
+                time.sleep(IDLE_LOOP_SLEEP)
                 continue
 
-            account_ids = {account["id"] for account in accounts}
+            # 任务被停用、归档或删除后就不会再出现在结果里，顺手清掉它的计时。
+            live_ids = {int(task["id"]) for task in tasks}
             for stale_id in list(next_runs.keys()):
-                if stale_id not in account_ids:
+                if stale_id not in live_ids:
                     next_runs.pop(stale_id, None)
 
-            due_accounts = []
-            for account in accounts:
-                next_run = next_runs.get(account["id"], 0)
-                if now >= next_run:
-                    due_accounts.append(account)
+            # 没有记录过的任务默认到期时刻为 0，也就是新任务立刻抓一次。
+            due_tasks = [task for task in tasks if now >= next_runs.get(int(task["id"]), 0.0)]
 
-            if not due_accounts:
-                time.sleep(1)
+            if not due_tasks:
+                # 睡到最近一个任务到期，避免每秒空转查库；上限见 MAX_LOOP_SLEEP。
+                next_due = min(next_runs.get(int(task["id"]), now) for task in tasks)
+                time.sleep(max(0.5, min(MAX_LOOP_SLEEP, next_due - now)))
                 continue
 
             system_env = load_system_env(DOTENV_PATH, SYSTEM_ENV_KEYS)
-            for account in due_accounts:
-                process_account(account, system_env)
-                next_runs[account["id"]] = time.time() + _normalize_int(account.get("check_interval", 300), 300)
-
-            time.sleep(1)
+            for task in due_tasks:
+                process_task(task, system_env)
+                # 每个任务用自己的间隔独立计时，且从本次抓取结束算起，
+                # 免得抓取耗时或 Bark 重试把下一轮挤到马上又触发。
+                next_runs[int(task["id"])] = time.time() + _normalize_int(
+                    task.get("check_interval", 300), 300
+                )
     except KeyboardInterrupt:
         print("程序终止。")
 

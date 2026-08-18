@@ -13,7 +13,7 @@ const app = createApp({
         const barkHelp = ref(window.initialBarkHelp || {});
         const envVars = ref(window.initialEnvVars || {});
         const originalEnvVars = ref({ ...envVars.value });
-        const initialUserState = window.initialUserState || { users: [], tracked_count: 0, login_count: 0 };
+        const initialUserState = window.initialUserState || { users: [], task_count: 0, active_task_count: 0, login_count: 0 };
 
         const envDesc = {
             BARK_SERVER_INTERNAL: '追踪脚本访问的 Bark 地址',
@@ -32,37 +32,69 @@ const app = createApp({
         const pickDefaultUserId = (list = []) =>
             list.find((user) => user.role !== 'admin')?.id || list[0]?.id || null;
 
+        // 账号表单只管身份与 Bark；单号/间隔属于任务，走 taskDrafts
         const buildUserForm = (user = {}) => ({
             id: user.id || null,
             username: user.username || '',
             display_name: user.display_name || user.name || '',
             role: user.role || 'user',
             note: user.note || '',
-            tracking_number: user.tracking_number || '',
-            check_interval: Number(user.check_interval || 300),
             bark_keys: user.bark_keys || user.bark_key || '',
             bark_query_params: user.bark_query_params || '?sound=minuet&level=timeSensitive',
             bark_url_enabled: Boolean(user.bark_url_enabled),
             login_enabled: user.login_enabled !== false,
-            tracking_enabled: user.tracking_enabled !== false,
             new_password: '',
+            task_id: '',
             test_title: '测试推送',
             test_body: '这是 Bark 参数预览消息，用来确认通知样式、声音和链接效果。',
         });
 
-        const users = ref(initialUserState.users || []);
-        const selectedUserId = ref(pickDefaultUserId(initialUserState.users || []));
-        const userForm = ref(
-            buildUserForm((initialUserState.users || []).find((user) => user.id === selectedUserId.value) || {})
-        );
-        const newUserForm = ref({
+        const buildNewUserForm = () => ({
             username: '',
             display_name: '',
             password: '',
             role: 'user',
             login_enabled: true,
-            tracking_enabled: true,
         });
+
+        const buildNewTaskForm = () => ({
+            tracking_number: '',
+            label: '',
+            check_interval: 300,
+            enabled: true,
+        });
+
+        // 每条任务一份可编辑草稿；启用开关不进草稿，避免"改了单号顺手被一起保存"
+        const buildTaskDraft = (task = {}) => ({
+            tracking_number: task.tracking_number || '',
+            label: task.label || '',
+            check_interval: Number(task.check_interval || 300),
+        });
+
+        const users = ref(initialUserState.users || []);
+        const taskTotals = ref({
+            task_count: Number(initialUserState.task_count || 0),
+            active_task_count: Number(initialUserState.active_task_count || 0),
+        });
+        const selectedUserId = ref(pickDefaultUserId(initialUserState.users || []));
+        const userForm = ref(
+            buildUserForm((initialUserState.users || []).find((user) => user.id === selectedUserId.value) || {})
+        );
+        const newUserForm = ref(buildNewUserForm());
+        const newTaskForm = ref(buildNewTaskForm());
+        const taskDrafts = ref({});
+
+        const rebuildTaskDrafts = () => {
+            const drafts = {};
+            users.value.forEach((user) => {
+                (user.tasks || []).concat(user.archived_tasks || []).forEach((task) => {
+                    drafts[task.id] = buildTaskDraft(task);
+                });
+            });
+            taskDrafts.value = drafts;
+        };
+        rebuildTaskDrafts();
+
         const createUserExpanded = ref(false);
         const userMessage = ref({ text: '', type: '' });
         const envMessage = ref({ text: '', type: '' });
@@ -87,11 +119,9 @@ const app = createApp({
                 .map((item) => item.trim())
                 .filter(Boolean).length;
 
-        const trackedUsersCount = computed(() => users.value.filter((user) => user.tracking_enabled).length);
+        const activeTaskCount = computed(() => Number(taskTotals.value.active_task_count || 0));
+        const totalTaskCount = computed(() => Number(taskTotals.value.task_count || 0));
         const loginUsersCount = computed(() => users.value.filter((user) => user.login_enabled).length);
-        const trackedNumbersCount = computed(() =>
-            users.value.reduce((total, user) => total + Number(user.tracking_history_count || 0), 0)
-        );
 
         const script = ref({ running: false, logs: [] });
         const keepalive = ref({
@@ -130,60 +160,87 @@ const app = createApp({
         const remoteBarkLogOutput = ref(null);
 
         const selectedUser = computed(() => users.value.find((user) => user.id === selectedUserId.value) || null);
+        const selectedUserTasks = computed(() => selectedUser.value?.tasks || []);
+        const selectedUserArchivedTasks = computed(() => selectedUser.value?.archived_tasks || []);
+        const selectedUserTaskCount = computed(() => Number(selectedUser.value?.task_count || 0));
+        const selectedUserActiveTaskCount = computed(() => Number(selectedUser.value?.active_task_count || 0));
+        const selectedUserErrorTaskCount = computed(
+            () => selectedUserTasks.value.filter((task) => task.last_error).length
+        );
+        const selectedUserDeviceCount = computed(() => countBarkKeys(selectedUser.value?.bark_keys));
+
         const selectedUserTrackingState = computed(() => {
-            const user = selectedUser.value;
-            if (!user) {
+            if (!selectedUser.value) {
                 return { tone: 'pending', label: '未选择账号' };
             }
-            if (user.role === 'admin' && !user.tracking_enabled && !user.tracking_number) {
-                return { tone: 'pending', label: '管理账号' };
+            if (!selectedUserTaskCount.value) {
+                return { tone: 'pending', label: '待添加任务' };
             }
-            if (!user.tracking_number) {
-                return { tone: 'pending', label: '待填写单号' };
-            }
-            if (!user.tracking_enabled) {
-                return { tone: 'pending', label: '追踪已关闭' };
+            if (!selectedUserActiveTaskCount.value) {
+                return { tone: 'pending', label: '任务全部停用' };
             }
             if (!script.value.running) {
                 return { tone: 'pending', label: '待启动脚本' };
             }
-            if (user.last_error) {
-                return { tone: 'error', label: '最近轮询异常' };
+            if (selectedUserErrorTaskCount.value) {
+                return { tone: 'error', label: `${selectedUserErrorTaskCount.value} 个任务异常` };
             }
-            return { tone: 'ok', label: '追踪中' };
-        });
-        const selectedUserDeviceCount = computed(() => countBarkKeys(selectedUser.value?.bark_keys));
-        const selectedUserHistoryCount = computed(() => Number(selectedUser.value?.tracking_history_count || 0));
-        const selectedUserHistory = computed(() => selectedUser.value?.tracking_history_preview || []);
-        const selectedUserLatestStatus = computed(() => {
-            const user = selectedUser.value;
-            if (!user) {
-                return '请选择一个账号开始编辑追踪信息。';
-            }
-            if (user.last_error) {
-                return user.last_error;
-            }
-            if (user.last_tracking_info) {
-                return user.last_tracking_info;
-            }
-            if (!user.tracking_number) {
-                return '还没有填写日本邮政单号。';
-            }
-            if (!user.tracking_enabled) {
-                return '单号已保存，但当前账号没有启用追踪。';
-            }
-            if (!script.value.running) {
-                return '单号已保存，等你手动启动追踪脚本后就会开始轮询。';
-            }
-            return '单号已保存，等待下一次轮询结果。';
+            return { tone: 'ok', label: `追踪中 ${selectedUserActiveTaskCount.value} 个` };
         });
 
-        const syncUserState = (state) => {
+        const selectedUserTaskSummary = computed(() => {
+            if (!selectedUser.value) {
+                return '请选择一个账号查看它的追踪任务。';
+            }
+            if (!selectedUserTaskCount.value) {
+                return '这个账号还没有追踪任务，用下面的表单添加一个。';
+            }
+            if (!selectedUserActiveTaskCount.value) {
+                return '任务都处于停用状态，启用后才会被轮询。';
+            }
+            if (!script.value.running) {
+                return '任务已就绪，追踪脚本启动后开始轮询。';
+            }
+            if (selectedUserErrorTaskCount.value) {
+                return '有任务最近一次轮询失败，看对应任务里的错误信息。';
+            }
+            return '任务正在正常轮询。';
+        });
+
+        const taskTone = (task) => {
+            if (task.archived || !task.enabled) {
+                return 'pending';
+            }
+            return task.last_error ? 'error' : 'ok';
+        };
+
+        const taskStateLabel = (task) => {
+            if (task.archived) {
+                return '已归档';
+            }
+            if (!task.enabled) {
+                return '已停用';
+            }
+            if (task.last_error) {
+                return '轮询异常';
+            }
+            return script.value.running ? '追踪中' : '待启动脚本';
+        };
+
+        // 任务操作后不重建账号表单，否则会把正在编辑的账号字段冲掉
+        const syncUserState = (state, { keepUserForm = false } = {}) => {
             users.value = state?.users || [];
+            taskTotals.value = {
+                task_count: Number(state?.task_count || 0),
+                active_task_count: Number(state?.active_task_count || 0),
+            };
+            rebuildTaskDrafts();
             if (!selectedUserId.value || !users.value.some((user) => user.id === selectedUserId.value)) {
                 selectedUserId.value = pickDefaultUserId(users.value);
             }
-            userForm.value = buildUserForm(users.value.find((user) => user.id === selectedUserId.value) || {});
+            if (!keepUserForm) {
+                userForm.value = buildUserForm(users.value.find((user) => user.id === selectedUserId.value) || {});
+            }
         };
 
         const redirectToLogin = () => {
@@ -306,14 +363,7 @@ const app = createApp({
                     if (result.user) {
                         selectedUserId.value = result.user.id;
                     }
-                    newUserForm.value = {
-                        username: '',
-                        display_name: '',
-                        password: '',
-                        role: 'user',
-                        login_enabled: true,
-                        tracking_enabled: true,
-                    };
+                    newUserForm.value = buildNewUserForm();
                     createUserExpanded.value = false;
                 }
             } catch (error) {
@@ -362,8 +412,75 @@ const app = createApp({
             }
         };
 
+        // 任务类请求：成功后就地刷新账号列表，保留正在编辑的账号表单
+        const sendTaskRequest = async (url, method, body, errorText) => {
+            try {
+                const response = await fetch(url, {
+                    method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: body === undefined ? undefined : JSON.stringify(body)
+                });
+                const result = await handleApiResponse(response);
+                if (!result) return;
+                flashMessage(userMessage, result.message, result.status === 'success' ? 'success' : 'error');
+                if (result.status === 'success' && result.user_state) {
+                    syncUserState(result.user_state, { keepUserForm: true });
+                }
+                return result;
+            } catch (error) {
+                flashMessage(userMessage, errorText, 'error');
+            }
+        };
+
+        const createTask = async () => {
+            if (!selectedUserId.value || !newTaskForm.value.tracking_number.trim()) return;
+            const result = await sendTaskRequest(
+                `/api/users/${selectedUserId.value}/tasks`,
+                'POST',
+                { ...newTaskForm.value },
+                '添加追踪任务时发生错误。'
+            );
+            if (result?.status === 'success') {
+                newTaskForm.value = buildNewTaskForm();
+            }
+        };
+
+        const saveTask = (task) => {
+            const draft = taskDrafts.value[task.id];
+            if (!draft) return;
+            return sendTaskRequest(`/api/tasks/${task.id}`, 'PUT', { ...draft }, '保存追踪任务时发生错误。');
+        };
+
+        const toggleTask = (task) =>
+            sendTaskRequest(`/api/tasks/${task.id}`, 'PUT', { enabled: !task.enabled }, '切换任务状态时发生错误。');
+
+        const archiveTask = (task) =>
+            sendTaskRequest(`/api/tasks/${task.id}/archive`, 'POST', undefined, '归档追踪任务时发生错误。');
+
+        // 归档任务重新添加同单号 = storage 侧复活，保留首次登记时间与次数
+        const restoreTask = (task) => {
+            if (!selectedUserId.value) return;
+            return sendTaskRequest(
+                `/api/users/${selectedUserId.value}/tasks`,
+                'POST',
+                {
+                    tracking_number: task.tracking_number,
+                    label: task.label || '',
+                    check_interval: Number(task.check_interval || 300),
+                    enabled: true,
+                },
+                '恢复追踪任务时发生错误。'
+            );
+        };
+
+        const deleteTask = (task) => {
+            if (!window.confirm(`确认删除单号 ${task.tracking_number} 的追踪任务？删除后档案也会一起消失。`)) return;
+            return sendTaskRequest(`/api/tasks/${task.id}`, 'DELETE', undefined, '删除追踪任务时发生错误。');
+        };
+
         watch(selectedUserId, (nextUserId) => {
             userForm.value = buildUserForm(users.value.find((user) => user.id === nextUserId) || {});
+            newTaskForm.value = buildNewTaskForm();
         });
 
         watch(remoteRefreshMode, (mode) => {
@@ -455,19 +572,26 @@ const app = createApp({
             users,
             selectedUserId,
             selectedUser,
+            selectedUserTasks,
+            selectedUserArchivedTasks,
+            selectedUserTaskCount,
+            selectedUserActiveTaskCount,
+            selectedUserErrorTaskCount,
             selectedUserTrackingState,
+            selectedUserTaskSummary,
             selectedUserDeviceCount,
-            selectedUserHistoryCount,
-            selectedUserHistory,
-            selectedUserLatestStatus,
+            taskTone,
+            taskStateLabel,
+            taskDrafts,
+            newTaskForm,
             userForm,
             newUserForm,
             createUserExpanded,
             userMessage,
             sendingTestPush,
-            trackedUsersCount,
+            activeTaskCount,
+            totalTaskCount,
             loginUsersCount,
-            trackedNumbersCount,
             script,
             keepalive,
             bark,
@@ -487,6 +611,12 @@ const app = createApp({
             createUser,
             saveUser,
             sendUserTestPush,
+            createTask,
+            saveTask,
+            toggleTask,
+            archiveTask,
+            restoreTask,
+            deleteTask,
             trackerLogOutput,
             barkLogOutput,
             remoteBarkLogOutput,

@@ -9,14 +9,18 @@
 - [src/app.py](src/app.py) — Flask/SocketIO 服务，管理追踪脚本、Bark Server 子进程、保活线程，
   WebSocket 实时推日志，`/update_env` 改 `.env`。
 - [src/tracker.py](src/tracker.py) — 轮询日本邮政官网，解析最新物流记录，变化时推送 Bark。
+- [src/storage.py](src/storage.py) — SQLite 存储层（账号 + 追踪任务），schema 与迁移都在这。
 - [src/templates/](src/templates/)、[src/static/](src/static/) — 控制台前端。
+  样式基础层是 vendored 的设计包，见 [VENDORED.md](src/static/vendor/szyyw-design/VENDORED.md)。
 
-**当前分支现状**：
-- `main` — 单用户版，面向 Render 云端部署，无登录鉴权。
-- `codex/raspi-local-funnel` — 大改分支，改造为树莓派本地部署：SQLite 多用户账号体系
-  （[src/storage.py](src/storage.py)）、登录鉴权、内外网 Bark 地址分离、Tailscale Funnel 部署文档。
+**开工前必读的两份文档**：
+- [docs/data-model.md](docs/data-model.md) — 数据模型（账号 vs 追踪任务的字段归属、
+  enabled/archived 语义、v1→v2 迁移里那个会静默删数据的 SQLite 外键坑）。
+- [docs/app-logic-review.md](docs/app-logic-review.md) — 应用逻辑梳理与重构方向。
 
-如果不确定当前工作对应哪个方向，先确认 `git branch --show-current` 再动手。
+部署形态有三种（Render 云端 / 树莓派 Tailscale Funnel / Vultr 公网 VPS），
+线上跑的是第三种，见 [docs/vultr-vps-deploy.md](docs/vultr-vps-deploy.md)。
+动手前先确认 `git branch --show-current`。
 
 ## 语言规范
 

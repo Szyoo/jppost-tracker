@@ -19,15 +19,21 @@ import requests
 
 from storage import (
     account_to_profile_env,
+    archive_task,
+    build_tracking_url,
     create_account,
+    create_task,
+    delete_task,
     ensure_storage,
     get_account,
     get_account_by_username,
+    get_task,
     list_accounts,
     load_system_env,
     parse_bark_keys,
     register_user,
     update_account,
+    update_task,
     verify_account_password,
 )
 
@@ -181,6 +187,11 @@ def is_admin() -> bool:
     # 角色以数据库为准；session 里缓存的角色在管理员被降级后不会失效，不可信
     account = current_account()
     return bool(account and account.get("role") == "admin" and account.get("login_enabled"))
+
+def current_actor_role() -> str:
+    """传给 storage 做归属校验的角色。走 is_admin() 而不是直接读 role 字段，
+    这样管理员被停用登录后立刻失去越权改他人任务的能力。"""
+    return "admin" if is_admin() else "user"
 
 def is_authenticated() -> bool:
     account = current_account()
@@ -492,9 +503,15 @@ def build_user_state():
     users = list_accounts()
     return {
         "users": users,
-        "tracked_count": len([user for user in users if user.get("tracking_enabled")]),
+        "task_count": sum(int(user.get("task_count") or 0) for user in users),
+        "active_task_count": sum(int(user.get("active_task_count") or 0) for user in users),
         "login_count": len([user for user in users if user.get("login_enabled")]),
     }
+
+def build_account_state():
+    """普通用户视角的刷新载荷：重新查库，因为 g 上缓存的账号还带着旧任务列表。"""
+    account = current_account()
+    return get_account(account["id"]) if account else None
 
 def build_system_env():
     system_env = load_system_env(DOTENV_PATH, SYSTEM_ENV_KEYS)
@@ -562,10 +579,27 @@ def _bool_from_input(value, default: bool = False) -> bool:
         return value
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
+def resolve_test_tracking_url(data, source: dict) -> str:
+    """测试推送里 url 参数的来源。Bark 配置挂在账号上、单号挂在任务上，
+    所以只有请求显式指定了任务或单号才带链接，否则不带。"""
+    task_id = str(data.get("task_id", "") or "").strip()
+    if task_id and source.get("id"):
+        try:
+            task = get_task(int(task_id))
+        except (TypeError, ValueError):
+            raise ValueError("追踪任务 ID 无效。")
+        if not task or int(task["account_id"]) != int(source["id"]):
+            raise ValueError("追踪任务不存在或不属于该账号。")
+        return task["tracking_url"]
+
+    number = "".join(str(data.get("tracking_number", "") or "").split()).upper()
+    return build_tracking_url(number) if number else ""
+
 def build_bark_test_account(source_account: dict | None, data) -> dict:
     source = source_account or {}
     if hasattr(data, "getlist"):
-        bark_url_enabled = 'bark_url_enabled' in data if ('bark_url_enabled' in data or source) else False
+        # 传统表单里未勾选的复选框根本不会提交，只能按键是否存在判断
+        bark_url_enabled = 'bark_url_enabled' in data
         bark_keys = data.get("bark_keys", "")
     else:
         bark_url_enabled = _bool_from_input(
@@ -576,10 +610,10 @@ def build_bark_test_account(source_account: dict | None, data) -> dict:
 
     return {
         "display_name": str(data.get("display_name", source.get("display_name", "")) or "").strip() or source.get("display_name") or "当前用户",
-        "tracking_number": str(data.get("tracking_number", source.get("tracking_number", "")) or "").strip(),
         "bark_keys": bark_keys or source.get("bark_keys") or source.get("bark_key", ""),
         "bark_query_params": str(data.get("bark_query_params", source.get("bark_query_params", "")) or "").strip(),
         "bark_url_enabled": bark_url_enabled,
+        "tracking_url": resolve_test_tracking_url(data, source),
     }
 
 def extract_bark_test_message(data, *, default_title: str, default_body: str) -> tuple[str, str]:
@@ -596,11 +630,9 @@ def send_bark_test_push(account: dict, title: str = "测试推送", body: str = 
         raise ValueError("当前用户还没有配置 Bark Keys。")
 
     params = _parse_bark_query_params(account.get("bark_query_params", ""))
-    if account.get("bark_url_enabled") and account.get("tracking_number"):
-        params["url"] = (
-            "https://trackings.post.japanpost.jp/services/srv/search/direct"
-            f"?reqCodeNo1={account['tracking_number']}&searchKind=S002&locale=ja"
-        )
+    tracking_url = str(account.get("tracking_url", "") or "").strip()
+    if account.get("bark_url_enabled") and tracking_url:
+        params["url"] = tracking_url
 
     timeout = get_bark_health_timeout()
     if len(bark_keys) == 1:
@@ -1032,6 +1064,97 @@ def api_user_test_push(user_id: int):
         return jsonify({"status": "error", "message": str(exc)}), 400
 
 
+TASK_INPUT_KEYS = ("tracking_number", "label", "check_interval", "enabled", "archived")
+
+
+def build_task_payload(data: dict) -> dict:
+    """只挑出任务字段：请求里混进来的账号字段不能顺着这个入口改到账号上。"""
+    return {key: data[key] for key in TASK_INPUT_KEYS if key in data}
+
+
+def build_task_success(message: str, task: dict | None = None):
+    """成功响应带上刷新后的状态，前端不用再多打一次接口。
+    管理员拿全量 user_state，普通用户只拿自己那份。"""
+    payload = {"status": "success", "message": message}
+    if task is not None:
+        payload["task"] = task
+    if is_admin():
+        payload["user_state"] = build_user_state()
+    else:
+        payload["user"] = build_account_state()
+    return jsonify(payload)
+
+
+def guard_task_access(task_id: int, account: dict):
+    """先自己判一次归属，只为返回准确的 404/403；
+    storage 侧的归属校验仍然是最终防线，不能省。"""
+    task = get_task(task_id)
+    if not task:
+        return None, (jsonify({"status": "error", "message": "追踪任务不存在。"}), 404)
+    if not is_admin() and int(task["account_id"]) != int(account["id"]):
+        return None, (jsonify({"status": "error", "message": "无权操作其他用户的追踪任务。"}), 403)
+    return task, None
+
+
+@app.route('/api/users/<int:user_id>/tasks', methods=['POST'])
+@admin_required
+def api_create_task(user_id: int):
+    data = request.get_json() or {}
+    try:
+        task = create_task(user_id, build_task_payload(data))
+        return build_task_success("追踪任务已添加。", task)
+    except Exception as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
+
+
+@app.route('/api/tasks/<int:task_id>', methods=['PUT'])
+@login_required
+def api_update_task(task_id: int):
+    account = current_account()
+    _, error = guard_task_access(task_id, account)
+    if error:
+        return error
+    data = request.get_json() or {}
+    try:
+        task = update_task(
+            task_id,
+            build_task_payload(data),
+            actor_role=current_actor_role(),
+            actor_id=account["id"],
+        )
+        return build_task_success("追踪任务已更新。", task)
+    except Exception as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
+
+
+@app.route('/api/tasks/<int:task_id>/archive', methods=['POST'])
+@login_required
+def api_archive_task(task_id: int):
+    account = current_account()
+    _, error = guard_task_access(task_id, account)
+    if error:
+        return error
+    try:
+        task = archive_task(task_id, actor_role=current_actor_role(), actor_id=account["id"])
+        return build_task_success("追踪任务已归档。", task)
+    except Exception as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
+
+
+@app.route('/api/tasks/<int:task_id>', methods=['DELETE'])
+@login_required
+def api_delete_task(task_id: int):
+    account = current_account()
+    _, error = guard_task_access(task_id, account)
+    if error:
+        return error
+    try:
+        delete_task(task_id, actor_role=current_actor_role(), actor_id=account["id"])
+        return build_task_success("追踪任务已删除。")
+    except Exception as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
+
+
 @app.route('/api/me', methods=['GET'])
 @login_required
 def api_me():
@@ -1065,8 +1188,6 @@ def me_update_form():
             {
                 "display_name": request.form.get("display_name", ""),
                 "note": request.form.get("note", ""),
-                "tracking_number": request.form.get("tracking_number", ""),
-                "check_interval": request.form.get("check_interval", "300"),
                 "bark_keys": request.form.get("bark_keys", ""),
                 "bark_query_params": request.form.get("bark_query_params", ""),
                 "bark_url_enabled": 'bark_url_enabled' in request.form,
@@ -1076,6 +1197,65 @@ def me_update_form():
             actor_id=account["id"],
         )
         return redirect(url_for('index', status='success', message='资料已保存。'))
+    except Exception as exc:
+        return redirect(url_for('index', status='error', message=str(exc)))
+
+
+def task_form_payload() -> dict:
+    """门户页是传统表单：未勾选的复选框不会提交，所以 enabled 按键是否存在判断。"""
+    return {
+        "tracking_number": request.form.get("tracking_number", ""),
+        "label": request.form.get("label", ""),
+        "check_interval": request.form.get("check_interval", "300"),
+        "enabled": 'enabled' in request.form,
+    }
+
+
+@app.route('/me/tasks', methods=['POST'])
+@login_required
+def me_create_task_form():
+    account = current_account()
+    try:
+        create_task(account["id"], task_form_payload())
+        return redirect(url_for('index', status='success', message='追踪任务已添加。'))
+    except Exception as exc:
+        return redirect(url_for('index', status='error', message=str(exc)))
+
+
+@app.route('/me/tasks/<int:task_id>/update', methods=['POST'])
+@login_required
+def me_update_task_form(task_id: int):
+    account = current_account()
+    try:
+        update_task(
+            task_id,
+            task_form_payload(),
+            actor_role=current_actor_role(),
+            actor_id=account["id"],
+        )
+        return redirect(url_for('index', status='success', message='追踪任务已更新。'))
+    except Exception as exc:
+        return redirect(url_for('index', status='error', message=str(exc)))
+
+
+@app.route('/me/tasks/<int:task_id>/archive', methods=['POST'])
+@login_required
+def me_archive_task_form(task_id: int):
+    account = current_account()
+    try:
+        archive_task(task_id, actor_role=current_actor_role(), actor_id=account["id"])
+        return redirect(url_for('index', status='success', message='追踪任务已归档。'))
+    except Exception as exc:
+        return redirect(url_for('index', status='error', message=str(exc)))
+
+
+@app.route('/me/tasks/<int:task_id>/delete', methods=['POST'])
+@login_required
+def me_delete_task_form(task_id: int):
+    account = current_account()
+    try:
+        delete_task(task_id, actor_role=current_actor_role(), actor_id=account["id"])
+        return redirect(url_for('index', status='success', message='追踪任务已删除。'))
     except Exception as exc:
         return redirect(url_for('index', status='error', message=str(exc)))
 
