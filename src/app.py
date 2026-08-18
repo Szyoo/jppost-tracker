@@ -134,6 +134,8 @@ SYSTEM_ENV_GROUPS = [
                 "type": "bool",
                 "default": "0",
                 "apply": "restart",
+                # 上一项关掉时这项完全不起作用，置灰避免"以为设了却没生效"
+                "requires": "LOCAL_BARK_ENABLED",
             },
             {
                 "key": "BARK_BIND_ADDRESS",

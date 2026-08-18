@@ -32,6 +32,22 @@ const app = createApp({
             envVars.value[field.key] = on ? '1' : '0';
         };
 
+        // 按键查字段定义，供跨字段联动用
+        const envFields = computed(() => {
+            const map = {};
+            for (const group of envGroups.value) {
+                for (const field of group.fields || []) map[field.key] = field;
+            }
+            return map;
+        });
+
+        // 依赖项关着时本项无效，置灰比只在说明里写一句更不容易误会
+        const envFieldLocked = (field) => {
+            if (!field.requires) return false;
+            const dep = envFields.value[field.requires];
+            return dep ? !envBoolValue(dep) : false;
+        };
+
         const envChangedEntries = computed(() => {
             const changed = {};
             for (const [key, value] of Object.entries(envVars.value)) {
@@ -299,8 +315,9 @@ const app = createApp({
             [
                 { key: 'all', label: '全部' },
                 { key: 'alert', label: '异常' },
-                // 叫"启用中"而不是"追踪中"：脚本没运行时这批任务是启用状态但还没在跑
-                { key: 'tracking', label: '启用中' },
+                // 叫"正常"而不是"启用中"：异常任务其实也在启用状态、也在轮询，
+                // 若这一项叫"启用中"，全部报错时会显示"启用中 0"，看着像没任务在跑
+                { key: 'tracking', label: '正常' },
                 { key: 'paused', label: '已停用' },
                 { key: 'archived', label: '已归档' },
             ].map((item) => ({
@@ -774,6 +791,7 @@ const app = createApp({
             barkHelp,
             envVars,
             envGroups,
+            envFieldLocked,
             envBoolValue,
             setEnvBool,
             envDirtyCount,

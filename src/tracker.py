@@ -23,6 +23,8 @@ SYSTEM_ENV_KEYS = ["BARK_SERVER_INTERNAL", "BARK_SERVER", "BARK_SERVER_PUBLIC", 
 # 这样后台新建或改过间隔的任务不必等满一个 check_interval 才被感知。
 MAX_LOOP_SLEEP = 30
 IDLE_LOOP_SLEEP = 5
+# 推送失败后的首次退避秒数，之后按 2 倍递增，上限为任务自己的 check_interval
+PUSH_RETRY_BASE = 30
 
 load_dotenv(DOTENV_PATH)
 ensure_storage(DOTENV_PATH)
@@ -127,48 +129,45 @@ def validate_config(config: dict) -> list[str]:
     return missing
 
 
-def send_bark_notification(config: dict, title: str, message: str, retries: int = 1) -> bool:
+def send_bark_notification(config: dict, title: str, message: str) -> tuple[bool, str]:
+    """只尝试一次，失败立即返回。重试交给主循环按退避安排——
+    在这里 sleep 会让一个任务的重试拖住其他所有任务的轮询。
+    返回 (是否成功, 失败原因)。"""
     if not config["bark_server"] or not config["bark_keys"]:
         print(f"{config['log_prefix']} 未配置 Bark 地址或 Bark Keys，跳过推送。")
-        return False
+        return False, "未配置 Bark 地址或 Bark Keys"
 
     query_params = _parse_query_params(config["bark_query_params"])
     if config["bark_url_enabled"]:
         query_params["url"] = config["tracking_url"]
 
-    last_error = ""
     keys = config["bark_keys"]
-    for attempt in range(retries + 1):
-        try:
-            # 单设备走 GET 短链，多设备只能用 /push 批量接口。
-            if len(keys) == 1:
-                title_enc = urllib.parse.quote(title, safe="")
-                body_enc = urllib.parse.quote(message, safe="")
-                extra = urllib.parse.urlencode(query_params, doseq=True)
-                suffix = f"?{extra}" if extra else ""
-                url = f"{config['bark_server']}/{keys[0]}/{title_enc}/{body_enc}{suffix}"
-                resp = requests.get(url, timeout=config["request_timeout"])
-            else:
-                payload = {"title": title, "body": message, "device_keys": keys, **query_params}
-                resp = requests.post(
-                    f"{config['bark_server']}/push",
-                    json=payload,
-                    timeout=config["request_timeout"],
-                )
+    try:
+        # 单设备走 GET 短链，多设备只能用 /push 批量接口。
+        if len(keys) == 1:
+            title_enc = urllib.parse.quote(title, safe="")
+            body_enc = urllib.parse.quote(message, safe="")
+            extra = urllib.parse.urlencode(query_params, doseq=True)
+            suffix = f"?{extra}" if extra else ""
+            url = f"{config['bark_server']}/{keys[0]}/{title_enc}/{body_enc}{suffix}"
+            resp = requests.get(url, timeout=config["request_timeout"])
+        else:
+            payload = {"title": title, "body": message, "device_keys": keys, **query_params}
+            resp = requests.post(
+                f"{config['bark_server']}/push",
+                json=payload,
+                timeout=config["request_timeout"],
+            )
 
-            if 200 <= resp.status_code < 300:
-                print(f"{config['log_prefix']} Bark 通知已发送到 {len(keys)} 个设备。")
-                return True
-            last_error = f"HTTP {resp.status_code}"
-        except Exception as exc:
-            last_error = str(exc)
+        if 200 <= resp.status_code < 300:
+            print(f"{config['log_prefix']} Bark 通知已发送到 {len(keys)} 个设备。")
+            return True, ""
+        reason = f"HTTP {resp.status_code}"
+    except Exception as exc:
+        reason = str(exc)
 
-        if attempt < retries:
-            print(f"{config['log_prefix']} Bark 发送失败（{last_error}），30 秒后重试。")
-            time.sleep(30)
-
-    print(f"{config['log_prefix']} Bark 通知发送失败：{last_error}")
-    return False
+    print(f"{config['log_prefix']} Bark 通知发送失败：{reason}")
+    return False, reason
 
 
 def get_latest_tracking_info(config: dict):
@@ -215,7 +214,9 @@ def get_latest_tracking_info(config: dict):
         return None
 
 
-def process_task(task: dict, system_env: dict):
+def process_task(task: dict, system_env: dict) -> bool:
+    """处理一个任务。返回 True 表示这轮需要尽快重试（推送失败），
+    由主循环按退避安排下一次，本函数绝不阻塞等待。"""
     config = build_runtime_config(task, system_env)
     prefix = config["log_prefix"]
 
@@ -224,32 +225,35 @@ def process_task(task: dict, system_env: dict):
         error = f"缺少必要配置: {', '.join(missing)}"
         print(f"{prefix} {error}")
         update_task_state(config["task_id"], error=error)
-        return
+        return False
 
     current_info = get_latest_tracking_info(config)
     if not current_info:
         update_task_state(config["task_id"], error="无法获取最新快递信息。")
-        return
+        return False
 
     print(f"{prefix} 最新物流记录: {current_info}")
-    pushed = False
-    if current_info != config["last_tracking_info"]:
-        title, body = build_push_message(config, current_info)
-        pushed = send_bark_notification(config, title, body)
-    else:
+    if current_info == config["last_tracking_info"]:
         print(f"{prefix} 暂无更新。")
+        update_task_state(config["task_id"], latest_info=current_info, error="")
+        return False
 
-    update_task_state(
-        config["task_id"],
-        latest_info=current_info,
-        error="",
-        pushed=pushed,
-    )
+    title, body = build_push_message(config, current_info)
+    pushed, reason = send_bark_notification(config, title, body)
+    if pushed:
+        update_task_state(config["task_id"], latest_info=current_info, error="", pushed=True)
+        return False
+
+    # 推送失败时刻意不写入 latest_info：写了下一轮就会判定"无更新"而不再推送，
+    # 这条物流变化的通知就永久丢了。保持旧值，等重试成功再落库。
+    update_task_state(config["task_id"], error=f"推送失败（{reason}），稍后重试。")
+    return True
 
 
 def main():
     print("多任务快递监控程序启动...")
     next_runs: dict[int, float] = {}
+    push_failures: dict[int, int] = {}
     last_empty_log_at = 0.0
 
     try:
@@ -270,6 +274,7 @@ def main():
             for stale_id in list(next_runs.keys()):
                 if stale_id not in live_ids:
                     next_runs.pop(stale_id, None)
+                    push_failures.pop(stale_id, None)
 
             # 没有记录过的任务默认到期时刻为 0，也就是新任务立刻抓一次。
             due_tasks = [task for task in tasks if now >= next_runs.get(int(task["id"]), 0.0)]
@@ -282,12 +287,23 @@ def main():
 
             system_env = load_system_env(DOTENV_PATH, SYSTEM_ENV_KEYS)
             for task in due_tasks:
-                process_task(task, system_env)
-                # 每个任务用自己的间隔独立计时，且从本次抓取结束算起，
-                # 免得抓取耗时或 Bark 重试把下一轮挤到马上又触发。
-                next_runs[int(task["id"])] = time.time() + _normalize_int(
-                    task.get("check_interval", 300), 300
-                )
+                task_id = int(task["id"])
+                interval = _normalize_int(task.get("check_interval", 300), 300)
+                needs_retry = process_task(task, system_env)
+
+                if needs_retry:
+                    # 推送失败：指数退避重试（30s、60s、120s…），上限不超过任务自己的间隔。
+                    # 退避由调度器安排，所以别的任务照常轮询，不会被这个任务拖住。
+                    fails = push_failures.get(task_id, 0) + 1
+                    push_failures[task_id] = fails
+                    delay = min(PUSH_RETRY_BASE * (2 ** (fails - 1)), interval)
+                    print(f"[调度] 任务 {task_id} 推送失败第 {fails} 次，{int(delay)} 秒后重试。")
+                else:
+                    push_failures.pop(task_id, None)
+                    delay = interval
+
+                # 从本次处理结束算起，免得抓取耗时把下一轮挤到马上又触发。
+                next_runs[task_id] = time.time() + delay
     except KeyboardInterrupt:
         print("程序终止。")
 
