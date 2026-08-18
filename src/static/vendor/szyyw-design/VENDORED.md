@@ -1,7 +1,7 @@
 # @szyyw/design（vendored）
 
 - 上游：https://github.com/Szyoo/szyyw-design
-- 当前版本：**v0.5.0**
+- 当前版本：**v0.6.0**
 - 引入方式：Flask 无构建步骤，按上游 README 的"非 React 项目"路径 vendor 七个文件
   （tokens.css / components.css / dotfield.js / scheme.js / corner.js / settings.js /
   version.js），原样拷贝不做修改。

@@ -4,7 +4,7 @@
    检测更新要靠这份。发版时与 package.json 同步改（见 README 升级流程）。
    ============================================================ */
 
-export const VERSION = "0.5.0";
+export const VERSION = "0.6.0";
 
 /** 上游仓库（owner/repo），检测更新与变更对比链接都指向它 */
 export const REPO = "Szyoo/szyyw-design";
