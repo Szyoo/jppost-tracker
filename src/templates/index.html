@@ -222,12 +222,12 @@
                       </span>
                     </div>
 
-                    <label v-if="field.type === 'bool'" class="switch-row">
+                    <label v-if="field.type === 'bool'" :class="['switch-row', { 'is-locked': envFieldLocked(field) }]">
                       <span class="switch">
-                        <input type="checkbox" :id="'env-' + field.key" :checked="envBoolValue(field)" @change="setEnvBool(field, $event.target.checked)" />
+                        <input type="checkbox" :id="'env-' + field.key" :checked="envBoolValue(field)" :disabled="envFieldLocked(field)" @change="setEnvBool(field, $event.target.checked)" />
                         <span class="track"></span><span class="knob"></span>
                       </span>
-                      [[ envBoolValue(field) ? '已开启' : '已关闭' ]]
+                      [[ envFieldLocked(field) ? '需先打开上一项' : (envBoolValue(field) ? '已开启' : '已关闭') ]]
                     </label>
                     <input v-else type="text" class="field" :id="'env-' + field.key" :placeholder="field.placeholder || ''" v-model="envVars[field.key]" />
 

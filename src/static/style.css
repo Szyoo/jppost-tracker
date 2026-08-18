@@ -222,6 +222,16 @@ textarea.field {
   flex-wrap: wrap;
 }
 
+/* 依赖项未打开时的开关：置灰并禁止交互，光标提示不可点 */
+.switch-row.is-locked {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.switch-row.is-locked .switch input {
+  cursor: not-allowed;
+}
+
 /* ---------- 行内反馈 ---------- */
 
 .message {
