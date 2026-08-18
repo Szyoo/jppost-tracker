@@ -24,7 +24,7 @@ code {
   padding: 28px 24px 64px;
 }
 
-/* ---------- 页头（右侧给固定定位的 .scheme-toggle 让位） ---------- */
+/* ---------- 页头（右侧给固定定位的 .corner-tools 工具位让位：明暗 + 齿轮两枚） ---------- */
 
 .site-header {
   display: flex;
@@ -33,7 +33,7 @@ code {
   gap: 18px;
   flex-wrap: wrap;
   margin-bottom: 26px;
-  padding-right: 44px;
+  padding-right: 92px;
 }
 
 .brand {
