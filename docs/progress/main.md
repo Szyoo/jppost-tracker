@@ -1,5 +1,20 @@
 # main 分支进度
 
+## 2026-07-19：全部分支合并回 main，仓库回到单分支
+
+- `refactor/streamline-services`（重构第一刀）与 `feature/szyyw-design-package`
+  （设计包 v0.6.0）已 fast-forward 合并进 `main` 并推送；两者是一条线
+  （设计分支基于重构分支），一次合并带入 6 个提交。
+- 五个已合并分支（含更早的 `codex/raspi-local-funnel`、`feature/vultr-vps-deploy`、
+  `fix/auth-hardening`）本地与远端均已删除。**当前仓库只有 `main`。**
+- VPS 的 checkout 已切回 `main`（`8dde83c`），线上 = main，healthz 正常。
+- 本轮进 main 的能力：追踪脚本自动运行/崩溃自愈、`LOCAL_BARK_ENABLED` 裁剪 UI、
+  @szyyw/design v0.6.0（明暗三态 + 背景参数抽屉 + 版本检测）、
+  `scripts/update-design.sh` 一键同步（以远端 tag 为准）。
+- **剩余重构方向**（见 [../app-logic-review.md](../app-logic-review.md)）：
+  拆"用户 vs 追踪任务"（大手术）、首页改纯仪表盘、admin 自己的门户页、
+  系统设置场景化分组。尚未动工。
+
 ## 2026-07-17：前端界面按 szyyw.xyz 设计语言从头重构
 
 参照 `tailscale2home/vps/portal/DESIGN.md`（深空底色 + DotField 点阵背景 + 毛玻璃 +
