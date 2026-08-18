@@ -154,7 +154,7 @@ a {
   top: calc(10px + env(safe-area-inset-top, 0px));
   right: calc(12px + env(safe-area-inset-right, 0px));
   /* 高于 sticky 顶栏(30) 与背景参数抽屉(44)，低于弹层(50)——
-     弹开的 sheet 不该被它盖住，但抽屉开着时齿轮要还能点 */
+     弹开的 sheet 不该被它盖住，但抽屉开着时调色板要还能点 */
   z-index: 45;
   display: flex;
   /* 排列方向是 token 旋钮：紧凑布局要纵向就在自己的 :root 设 column，
@@ -203,13 +203,13 @@ a {
   background: var(--accent);
 }
 
-/* 面板开着时齿轮点亮，表明这枚按钮就是开关 */
+/* 面板开着时调色板点亮，表明这枚按钮就是开关 */
 .settings-toggle[aria-expanded="true"] {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
-/* 有新版时齿轮加一枚 warn 色小角标（跟 scheme 的 auto 角标同一位置语言） */
+/* 有新版时调色板加一枚 warn 色小角标（跟 scheme 的 auto 角标同一位置语言） */
 .settings-toggle[data-update="1"]::after {
   content: "";
   position: absolute;
@@ -238,10 +238,12 @@ a {
   pointer-events: auto;
 }
 
-/* 顶端让开工具位（34px 按钮 + 间距），齿轮开着时仍露在外面 */
+/* 顶端让开工具位，调色板开着时仍露在外面。高度由 corner.js 实测发布成
+   --corner-rail-h——横排是一枚按钮高，纵排(--corner-tools-dir: column)
+   是整叠的高度，这里不能写死 */
 .settings-panel {
   position: fixed;
-  top: calc(56px + env(safe-area-inset-top, 0px));
+  top: calc(10px + var(--corner-rail-h, 34px) + 12px + env(safe-area-inset-top, 0px));
   right: calc(12px + env(safe-area-inset-right, 0px));
   bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   z-index: 44;
