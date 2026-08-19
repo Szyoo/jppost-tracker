@@ -85,7 +85,7 @@
                 </label>
               </div>
               <label class="switch-row">
-                <span class="switch"><input name="enabled" type="checkbox" {% if task.enabled %}checked{% endif %} /><span class="track"></span><span class="knob"></span></span>
+                <input name="enabled" type="checkbox" class="switch" {% if task.enabled %}checked{% endif %} />
                 启用追踪
               </label>
               <p class="task-meta">最近结果 {{ task.last_error or task.last_tracking_info or '暂无记录' }}</p>
@@ -119,7 +119,7 @@
               </label>
             </div>
             <label class="switch-row" style="margin-top: 12px;">
-              <span class="switch"><input name="enabled" type="checkbox" checked /><span class="track"></span><span class="knob"></span></span>
+              <input name="enabled" type="checkbox" class="switch" checked />
               添加后立即启用
             </label>
             <div class="actions">
@@ -179,7 +179,7 @@
               </div>
               <div class="full">
                 <label class="switch-row">
-                  <span class="switch"><input id="bark_url_enabled" name="bark_url_enabled" type="checkbox" {% if account.bark_url_enabled %}checked{% endif %} /><span class="track"></span><span class="knob"></span></span>
+                  <input id="bark_url_enabled" name="bark_url_enabled" type="checkbox" class="switch" {% if account.bark_url_enabled %}checked{% endif %} />
                   推送附带追踪链接
                 </label>
                 <p class="hint">开启后每条物流通知都会带上对应任务的日本邮政查询链接。</p>
