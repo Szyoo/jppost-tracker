@@ -170,52 +170,6 @@ textarea.field {
   user-select: none;
 }
 
-.switch {
-  position: relative;
-  width: 40px;
-  height: 22px;
-  flex: none;
-  display: inline-block;
-}
-
-.switch input {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  margin: 0;
-  cursor: pointer;
-}
-
-.switch .track {
-  position: absolute;
-  inset: 0;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--text-dim) 30%, transparent);
-  transition: background 0.2s var(--ease);
-  pointer-events: none;
-}
-
-.switch .knob {
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--sheet-bg);
-  box-shadow: 0 1px 3px color-mix(in srgb, var(--text) 25%, transparent);
-  transition: transform 0.2s var(--ease);
-  pointer-events: none;
-}
-
-.switch input:checked ~ .track {
-  background: var(--grad);
-}
-
-.switch input:checked ~ .knob {
-  transform: translateX(18px);
-}
-
 .switch-group {
   display: flex;
   gap: 22px;
@@ -228,7 +182,7 @@ textarea.field {
   cursor: not-allowed;
 }
 
-.switch-row.is-locked .switch input {
+.switch-row.is-locked .switch {
   cursor: not-allowed;
 }
 
