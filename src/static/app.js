@@ -77,6 +77,7 @@ const app = createApp({
             bark_query_params: user.bark_query_params || '?sound=minuet&level=timeSensitive',
             bark_url_enabled: Boolean(user.bark_url_enabled),
             login_enabled: user.login_enabled !== false,
+            portal_user: user.portal_user || '',
             new_password: '',
             task_id: '',
             test_title: '测试推送',
@@ -87,6 +88,7 @@ const app = createApp({
             username: '',
             display_name: '',
             password: '',
+            portal_user: '',
             role: 'user',
             login_enabled: true,
         });
@@ -542,6 +544,28 @@ const app = createApp({
             }
         };
 
+        const savePortalUser = async () => {
+            if (!selectedUserId.value) return;
+            try {
+                const response = await fetch(`/api/admin/accounts/${selectedUserId.value}/portal-user`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ portal_user: userForm.value.portal_user.trim() || null })
+                });
+                const result = await handleApiResponse(response);
+                if (!result) return;
+                flashMessage(userMessage, result.message, result.status === 'success' ? 'success' : 'error');
+                if (result.status === 'success') {
+                    syncUserState(result.user_state);
+                    if (result.user) {
+                        userForm.value = { ...userForm.value, portal_user: result.user.portal_user || '' };
+                    }
+                }
+            } catch (error) {
+                flashMessage(userMessage, '保存 portal 映射时发生错误。', 'error');
+            }
+        };
+
         const sendUserTestPush = async () => {
             if (!selectedUserId.value || sendingTestPush.value) return;
             sendingTestPush.value = true;
@@ -860,6 +884,7 @@ const app = createApp({
             selectUser,
             createUser,
             saveUser,
+            savePortalUser,
             sendUserTestPush,
             createTask,
             saveTask,
