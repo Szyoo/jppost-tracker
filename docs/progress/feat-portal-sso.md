@@ -2,6 +2,18 @@
 
 基于本地 `main`（`159aeeb`，比 origin/main 多一个 v0.6.2 设计包提交）。
 
+## 2026-10-02：匿名访客 + 账户菜单（分支 `feat/anon-account`，未部署、未合并）
+
+- 基于 `main` 7418576。设计包 v0.8.0（新增 account.js，`mountAccountMenu` 在切换器旁挂载，仅 SSO）；
+  szyyw-auth v0.2.0（`is_anonymous`；缺 X-Portal-Sub 即未登录——本项目本来就这么要求，原 38 项测试不改即过）。
+- `SZYYW_SSO=1` 且门卫给 `X-Portal-Anon: 1`：`GET /` 渲染公开落地页（工具介绍 + 登录），无任务/设置/管理；
+  所有数据接口、表单、Socket.IO 照旧 401/跳登录/拒绝。规则见 [../portal-sso.md](../portal-sso.md#匿名访客x-portal-anon-1)。
+- SSO 下去掉页内「退出」按钮（账户菜单负责 portal 登出），`/logout` 路由保留。
+- SSO 未开：登录/注册/用户门户/管理台/未登录跳转与 main 逐页比对一致（只归一化了时间戳）。
+- pytest：50 项通过（新增 `tests/test_anon_account.py` 12 项）。
+- 上线前提：portal 把 jppost 放进公开名单、Caddy 注入 `X-Portal-Anon`（契约已就绪）；不放进名单时行为与现在一样。
+- 未做浏览器走查（本地无法模拟门卫注入头），账户菜单的弹窗/登出依赖 portal CORS，需上线后看一眼。
+
 ## 2026-10-01：SSO 模式完成（未部署、未合并）
 
 - 设计与规则见 [../portal-sso.md](../portal-sso.md)：`SZYYW_SSO=1` 时按 `X-User` 解析账号

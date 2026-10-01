@@ -9,7 +9,10 @@
    同站请求会带上；portal 侧要回 CORS 头（它已经这么做了）。
    ============================================================ */
 
-import { mountCornerTool } from "./corner.js";
+import { mountCornerTool, claimCornerPanel } from "./corner.js";
+
+// 账户菜单与切换器同属一族「工具位面板」，从这里也能拿到
+export { mountAccountMenu, ACCOUNT_ORDER } from "./account.js";
 
 /** 切换器在工具位里的位次：比明暗切换(10)更靠左 */
 export const SWITCHER_ORDER = 5;
@@ -69,6 +72,7 @@ export function mountAppSwitcher({
   let apps = null;
   let loadedAt = 0;
   let inflight = null;
+  let release = null;
 
   function renderMessage(text) {
     panel.innerHTML = `<div class="app-switcher-msg">${esc(text)}</div>`;
@@ -128,6 +132,7 @@ export function mountAppSwitcher({
 
   function open() {
     if (!panel.hidden) return;
+    release = claimCornerPanel(close);
     panel.hidden = false;
     btn.setAttribute("aria-expanded", "true");
     renderList();
@@ -137,6 +142,8 @@ export function mountAppSwitcher({
   }
   function close() {
     if (panel.hidden) return;
+    release?.();
+    release = null;
     panel.hidden = true;
     btn.setAttribute("aria-expanded", "false");
     document.removeEventListener("click", onDocClick, true);

@@ -1,9 +1,10 @@
 # portal SSO 接入（`SZYYW_SSO`）
 
 jppost.szyyw.xyz 接入 szyyw.xyz 门户的统一登录。契约见
-[szyyw-auth](https://github.com/Szyoo/szyyw-auth)（本项目 pin v0.1.0）：Caddy 的 `(sso)` 门卫
-先剥掉客户端自带的 `X-User` / `X-Role` / `X-Portal-Sub`，再由 portal `/api/auth/verify`
-给已登录且有权访问本站的浏览器请求写入真实值。
+[szyyw-auth](https://github.com/Szyoo/szyyw-auth)（本项目 pin v0.2.0）：Caddy 的 `(sso)` 门卫
+先剥掉客户端自带的 `X-User` / `X-Role` / `X-Portal-Sub` / `X-Portal-Anon`，再由 portal `/api/auth/verify`
+给已登录且有权访问本站的浏览器请求写入真实值；本站在 portal 公开名单里时，未登录访客改为只带
+`X-Portal-Anon: 1`（不带任何身份头）放行，见下文「匿名访客」。`/healthz` 什么都不注入。
 
 ## 开关
 
@@ -48,6 +49,30 @@ SSO 下本地 Flask session 里的 `account_id` **不被采信**。
 需要的话管理员手动改。页面右上角的「显示名 · 用户名」在 SSO 下第二段显示本次请求的 `X-User`
 （portal 当前用户名，`viewer_state.portal_user`），没有就退回本地 username。
 
+## 匿名访客（`X-Portal-Anon: 1`）
+
+仅在 `SZYYW_SSO=1` 时生效（`szyyw_auth.flask.is_anonymous()`：头值必须正好是 `1`，且同时带了
+身份头时身份优先）。SSO 未开时客户端自带的 `X-Portal-Anon` 被忽略，行为与以前一致。
+
+| 请求 | 行为 |
+|---|---|
+| `GET`/`HEAD /` | 200，`anon_landing.html`：页面壳（标题、点阵背景、应用切换器、账户菜单「登录」）+ 一段空状态介绍（日本邮政单号追踪 + Bark 推送）和「登录」按钮（→ `/login` → portal 登录）。**不含任何任务、设置、管理入口或账号数据。** |
+| `/api/*`、`/update_env`、`/remote_bark_status` | 401（与无身份相同，不放宽） |
+| `/me/*` 表单 POST、`/login` | 302 到 portal 登录 |
+| Socket.IO connect | 拒绝（`connect` 要求已登录 admin） |
+
+实现：`require_auth` 只对 `ANON_PAGE_ENDPOINTS = {'index'}` 的 GET/HEAD 放行匿名；`index()` 未登录时
+匿名渲染落地页，否则照旧 `unauthorized_response()`。既没有身份头也没有匿名头（绕过门卫或本站不在公开名单）
+→ 仍然跳 portal 登录 / API 401。
+
+## 账户菜单与登出
+
+`boot.js` 在 `data-sso="1"` 时挂 `mountAppSwitcher` + `mountAccountMenu({portal})`（设计包 v0.8.0）。
+账户菜单自己跨源查 portal `/api/me`：未登录显示「登录」（portal 登录小窗，被拦则整页跳转），登录后
+显示首字头像、用户名、角色、账户设置、登出（portal `/api/logout`，随后刷新 → 本站落地页）。
+因此 SSO 下页头里原来的「退出」按钮去掉了（它只清本地 session 再跳 portal，并不登出 portal）；
+`/logout` 路由保留。SSO 未开时「退出」按钮照旧。
+
 ## 角色优先级
 
 SSO 下授权角色 = **本次请求的 `X-Role`**（portal 权限矩阵决定），且账号须 `login_enabled`。
@@ -60,7 +85,7 @@ SSO 下授权角色 = **本次请求的 `X-Role`**（portal 权限矩阵决定�
 |---|---|
 | `/login` | 已有身份 → 跳 `next`；未开通/停用 → 403；否则 302 到 `PORTAL_ORIGIN/login?rd=<X-Forwarded-Proto>://<X-Forwarded-Host><next>` |
 | `/register` | 404（登录页本身不再渲染，注册链接随之消失） |
-| `/logout` | 清本地 session，302 到 `PORTAL_ORIGIN` |
+| `/logout` | 清本地 session，302 到 `PORTAL_ORIGIN`（页面上已无入口，登出走账户菜单） |
 | 改密 | 所有密码输入框隐藏；`/api/me`、`/me/update`、`/api/users/<id>` 里的 `password`/`new_password` 字段被丢弃 |
 | 管理员新建账号 | 不要求密码（服务端给随机密码），可同时填门户 ID（`portal_sub`） |
 

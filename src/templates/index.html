@@ -26,8 +26,8 @@
         <form method="post" action="/logout" class="header-session">
           <!-- 显示名在「我的设置」里可以改，所以这里跟着 viewer 走而不是渲染时的快照 -->
           <span class="current-user">[[ viewer.display_name ]] · [[ viewer.portal_user || viewer.username ]]</span>
-          <span class="role-badge admin">admin</span>
-          <button type="submit" class="btn-ghost btn-small danger">退出</button>
+          <span class="role-badge admin">admin</span>{% if not sso_on %}
+          <button type="submit" class="btn-ghost btn-small danger">退出</button>{% endif %}
         </form>
       </header>
 

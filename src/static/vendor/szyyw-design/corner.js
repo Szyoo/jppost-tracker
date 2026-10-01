@@ -79,3 +79,26 @@ export function mountCornerTool(el, { order = 50 } = {}) {
     }
   };
 }
+
+/* ---------- 工具位弹出面板的「同一时刻只开一个」 ----------
+   切换器、账户菜单等挂在工具位下方的面板共用同一块位置，
+   一个打开时要先关掉另一个。各面板打开时 claim，关闭时 release。 */
+
+let openPanelClose = null;
+
+/**
+ * 声明「我这个面板要打开了」：先关掉当前开着的别的面板。
+ * @param {() => void} close 本面板的关闭函数
+ * @returns {() => void} release——本面板关闭时调用（重复调用无害）
+ */
+export function claimCornerPanel(close) {
+  if (openPanelClose && openPanelClose !== close) {
+    const prev = openPanelClose;
+    openPanelClose = null;
+    prev();
+  }
+  openPanelClose = close;
+  return () => {
+    if (openPanelClose === close) openPanelClose = null;
+  };
+}
