@@ -22,8 +22,8 @@
         </div>
         <form method="post" action="/logout" class="header-session">
           <span class="current-user">{{ viewer_state.display_name }} · {{ viewer_state.portal_user or viewer_state.username }}</span>
-          <span class="role-badge user">{{ viewer_state.role }}</span>
-          <button type="submit" class="btn-ghost btn-small danger">退出</button>
+          <span class="role-badge user">{{ viewer_state.role }}</span>{% if not sso_on %}
+          <button type="submit" class="btn-ghost btn-small danger">退出</button>{% endif %}
         </form>
       </header>
 

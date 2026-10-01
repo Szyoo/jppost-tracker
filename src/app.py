@@ -17,7 +17,7 @@ from flask_socketio import SocketIO, emit, disconnect
 from dotenv import load_dotenv, set_key
 import requests
 from szyyw_auth import login_url, sso_enabled
-from szyyw_auth.flask import current_identity
+from szyyw_auth.flask import current_identity, is_anonymous
 
 from storage import (
     account_to_profile_env,
@@ -389,6 +389,14 @@ def is_authenticated() -> bool:
     account = current_account()
     return bool(account and account.get("login_enabled"))
 
+def is_anonymous_visitor() -> bool:
+    """portal 门卫标记的匿名访客（X-Portal-Anon: 1 且没有身份头）。SSO 未开时恒为 False，
+    客户端自带的 X-Portal-Anon 不起作用。门卫会先剥掉客户端带的该头再按 portal 公开名单写入。"""
+    return is_anonymous()
+
+# 匿名访客只能看的页面：首页公开落地页。所有数据接口、表单、Socket.IO 仍按未登录处理（401/拒绝）
+ANON_PAGE_ENDPOINTS = {'index'}
+
 def _ts() -> str:
     return time.strftime('%Y-%m-%d %H:%M:%S')
 
@@ -616,6 +624,8 @@ def require_auth():
     if request.path.startswith('/socket.io'):
         return None
     if not is_authenticated():
+        if request.endpoint in ANON_PAGE_ENDPOINTS and request.method in ('GET', 'HEAD') and is_anonymous_visitor():
+            return None
         return unauthorized_response()
     return None
 
@@ -915,8 +925,12 @@ def send_bark_test_push(account: dict, title: str = "测试推送", body: str = 
     }
 
 @app.route('/')
-@login_required
 def index():
+    if not is_authenticated():
+        # SSO 匿名访客：只给页面壳 + 公开介绍；其余（含 SSO 未开、没有任何门卫头）照旧跳登录
+        if is_anonymous_visitor():
+            return render_template('anon_landing.html')
+        return unauthorized_response()
     viewer_state = build_viewer_state()
     account = viewer_state["account"]
     bark_help = build_bark_help_state()
