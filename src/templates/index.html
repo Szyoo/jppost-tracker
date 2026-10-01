@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="nebula">
+<html lang="zh-CN" data-theme="nebula"{% if sso_on %} data-sso="1" data-portal="{{ portal_origin }}"{% endif %}>
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -269,10 +269,17 @@
                   <label for="createDisplayName">显示名称</label>
                   <input id="createDisplayName" type="text" class="field" v-model="newUserForm.display_name" />
                 </div>
+                {%- if sso_on %}
+                <div>
+                  <label for="createPortalUser">portal 用户名</label>
+                  <input id="createPortalUser" type="text" class="field" v-model="newUserForm.portal_user" placeholder="留空则暂不映射" />
+                </div>
+                {%- else %}
                 <div>
                   <label for="createPassword">初始密码</label>
                   <input id="createPassword" type="password" class="field" v-model="newUserForm.password" />
                 </div>
+                {%- endif %}
                 <div>
                   <label for="createRole">角色</label>
                   <select id="createRole" v-model="newUserForm.role" class="field">
@@ -288,7 +295,7 @@
                 </div>
               </div>
               <div class="actions">
-                <button type="button" class="btn btn-small" @click="createUser" :disabled="!newUserForm.username.trim() || !newUserForm.password.trim()">新增</button>
+                <button type="button" class="btn btn-small" @click="createUser" :disabled="{% if sso_on %}!newUserForm.username.trim(){% else %}!newUserForm.username.trim() || !newUserForm.password.trim(){% endif %}">新增</button>
               </div>
               <p class="hint">账号建好后在下面的"追踪任务"里添加单号。</p>
             </div>
@@ -308,6 +315,9 @@
                 <div class="user-item-line">用户名 [[ user.username ]]</div>
                 <div class="user-item-line">任务 启用 [[ user.active_task_count || 0 ]] / 全部 [[ user.task_count || 0 ]] · 登录 [[ user.login_enabled ? '开' : '关' ]]</div>
                 <div class="user-item-line">归档 [[ (user.archived_tasks || []).length ]] 个 · Keys [[ user.bark_keys_masked || '未设置' ]]</div>
+                {%- if sso_on %}
+                <div class="user-item-line">portal [[ user.portal_user || '未映射' ]]</div>
+                {%- endif %}
               </button>
             </div>
           </div>
@@ -372,10 +382,21 @@
                   允许登录
                 </label>
               </div>
+              {%- if sso_on %}
+              <div class="full">
+                <label for="userPortalUser">portal 用户名（SSO 映射，留空表示清除）</label>
+                <div class="actions" style="margin-top: 0;">
+                  <input id="userPortalUser" type="text" class="field" v-model="userForm.portal_user" placeholder="未映射" />
+                  <button type="button" class="btn-ghost btn-small" @click="savePortalUser">保存映射</button>
+                </div>
+                <p class="hint">登录由 portal 负责；这里决定哪个 portal 用户进入这个账号（任务归属不变）。</p>
+              </div>
+              {%- else %}
               <div class="full">
                 <label for="userNewPassword">重置密码（留空不修改）</label>
                 <input id="userNewPassword" type="password" class="field" v-model="userForm.new_password" />
               </div>
+              {%- endif %}
               <div class="full">
                 <div class="inner" style="padding: 14px;">
                   <h3 class="section-name" style="margin-bottom: 4px;">Bark 预览</h3>
@@ -677,10 +698,12 @@
                   </div>
                 </div>
               </div>
+              {%- if not sso_on %}
               <div class="full">
                 <label for="meNewPassword">新密码（留空表示不修改）</label>
                 <input id="meNewPassword" type="password" class="field" v-model="meForm.new_password" autocomplete="new-password" />
               </div>
+              {%- endif %}
             </div>
 
             <div class="actions">

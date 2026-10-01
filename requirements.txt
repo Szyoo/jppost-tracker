@@ -4,3 +4,5 @@ python-dotenv
 Flask
 Flask-SocketIO
 gevent
+# portal SSO（SZYYW_SSO=1 时信任 Caddy 注入的 X-User/X-Role）。用归档 URL，python:slim 镜像里没有 git
+szyyw-auth @ https://github.com/Szyoo/szyyw-auth/archive/refs/tags/v0.1.0.tar.gz#subdirectory=python

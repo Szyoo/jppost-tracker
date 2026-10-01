@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="nebula">
+<html lang="zh-CN" data-theme="nebula"{% if sso_on %} data-sso="1" data-portal="{{ portal_origin }}"{% endif %}>
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -219,10 +219,12 @@
                   </div>
                 </div>
               </div>
+              {%- if not sso_on %}
               <div class="full">
                 <label for="new_password">新密码（留空表示不修改）</label>
                 <input id="new_password" name="new_password" type="password" class="field" autocomplete="new-password" />
               </div>
+              {%- endif %}
             </div>
 
             <div class="actions">

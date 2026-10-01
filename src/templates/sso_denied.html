@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="nebula"{% if sso_on %} data-sso="1" data-portal="{{ portal_origin }}"{% endif %}>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>未开通 · JP Post Tracker</title>
+    <script>
+      try { document.documentElement.dataset.scheme = localStorage.getItem('jppost_scheme') || 'auto'; } catch (e) { document.documentElement.dataset.scheme = 'auto'; }
+    </script>
+    <link rel="stylesheet" href="/static/vendor/szyyw-design/tokens.css" />
+    <link rel="stylesheet" href="/static/vendor/szyyw-design/components.css" />
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <div class="bg-layer"></div>
+
+    <!-- portal SSO：门卫已放行，但本站没有对应账号（或已停用） -->
+    <div class="auth-shell">
+      <div class="auth-card glass rise">
+        <div class="auth-eyebrow">JP Post Tracker</div>
+        <h1 class="auth-title">无法进入</h1>
+        <div class="message error">{{ message }}</div>
+        {% if portal_user %}
+        <p class="auth-subtitle">当前 portal 用户：<code>{{ portal_user }}</code></p>
+        {% endif %}
+        <div class="auth-link-row">
+          <a href="{{ portal_origin }}">返回 portal</a>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/static/boot.js"></script>
+  </body>
+</html>
