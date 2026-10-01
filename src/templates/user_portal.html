@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="nebula">
+<html lang="zh-CN" data-theme="nebula"{% if sso_on %} data-sso="1" data-portal="{{ portal_origin }}"{% endif %}>
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -21,7 +21,7 @@
           <h1 class="brand-title">我的快递与 Bark 设置</h1>
         </div>
         <form method="post" action="/logout" class="header-session">
-          <span class="current-user">{{ viewer_state.display_name }} · {{ viewer_state.username }}</span>
+          <span class="current-user">{{ viewer_state.display_name }} · {{ viewer_state.portal_user or viewer_state.username }}</span>
           <span class="role-badge user">{{ viewer_state.role }}</span>
           <button type="submit" class="btn-ghost btn-small danger">退出</button>
         </form>
@@ -219,10 +219,12 @@
                   </div>
                 </div>
               </div>
+              {%- if not sso_on %}
               <div class="full">
                 <label for="new_password">新密码（留空表示不修改）</label>
                 <input id="new_password" name="new_password" type="password" class="field" autocomplete="new-password" />
               </div>
+              {%- endif %}
             </div>
 
             <div class="actions">

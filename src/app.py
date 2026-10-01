@@ -12,10 +12,12 @@ import threading
 from datetime import timedelta
 from functools import wraps
 
-from flask import Flask, g, render_template, request, jsonify, redirect, session, url_for
+from flask import Flask, abort, g, render_template, request, jsonify, redirect, session, url_for
 from flask_socketio import SocketIO, emit, disconnect
 from dotenv import load_dotenv, set_key
 import requests
+from szyyw_auth import login_url, sso_enabled
+from szyyw_auth.flask import current_identity
 
 from storage import (
     account_to_profile_env,
@@ -32,6 +34,8 @@ from storage import (
     load_system_env,
     parse_bark_keys,
     register_user,
+    resolve_portal_account,
+    set_account_portal_sub,
     update_account,
     update_task,
     verify_account_password,
@@ -302,7 +306,58 @@ def get_login_window_seconds() -> int:
     except Exception:
         return 600
 
+# --- portal SSO（SZYYW_SSO=1 时启用，详见 docs/portal-sso.md）---
+# 开启后身份完全来自 Caddy 门卫注入的 X-Portal-Sub / X-User / X-Role，本地密码登录与自助注册关闭；
+# 账号按 X-Portal-Sub（portal 账号固定 ID）映射，X-User 只是当前用户名（用户可改）；
+# 未开启时下面所有 SSO 分支都不走，行为与接入前一致。
+
+def get_portal_origin() -> str:
+    return (os.getenv("PORTAL_ORIGIN", "").strip() or "https://szyyw.xyz").rstrip("/")
+
+def sso_autocreate_enabled() -> bool:
+    # 默认关：未映射的 portal 用户看到"尚未开通"，由管理员手动映射
+    return _env_enabled("SZYYW_SSO_AUTOCREATE", "0")
+
+def external_url(path: str) -> str:
+    """浏览器看到的绝对地址（Caddy 会带 X-Forwarded-Proto/Host），用作 portal 登录的 rd。"""
+    proto = request.headers.get("X-Forwarded-Proto", "").split(",")[0].strip()
+    host = request.headers.get("X-Forwarded-Host", "").split(",")[0].strip()
+    base = f"{proto or request.scheme}://{host}" if host else request.host_url.rstrip("/")
+    return base + (path if path.startswith("/") else "/" + path)
+
+def resolve_sso_account():
+    """按门卫身份解析本地账号，返回 (account, reason)，同一请求内只查一次。
+    reason: None=正常 / "no_identity"=没有身份头或缺 X-Portal-Sub（绕过了门卫）/
+            "not_provisioned"=未映射且未开自动开通 / "disabled"=本地账号被停用登录。"""
+    cached = getattr(g, "_sso_resolution", None)
+    if cached is not None:
+        return cached
+    ident = current_identity()
+    # sub 直接读头：szyyw_auth 在缺 X-Portal-Sub 时会退回 X-User，而这里绝不能只按用户名匹配
+    portal_sub = request.headers.get("X-Portal-Sub", "").strip()
+    if ident is None or not portal_sub:
+        result = (None, "no_identity")
+    else:
+        account, action = resolve_portal_account(
+            portal_sub, ident.user, ident.role, autocreate=sso_autocreate_enabled()
+        )
+        if action == "adopted":
+            log_tracker(_fmt('[SSO]', f"portal 用户 {ident.user}（sub {portal_sub}）认领同名本地账号 id={account['id']}"))
+        elif action == "created":
+            log_tracker(_fmt('[SSO]', f"portal 用户 {ident.user}（sub {portal_sub}）自动开通本地账号 {account['username']} id={account['id']}"))
+        if account is None:
+            result = (None, "not_provisioned")
+        elif not account.get("login_enabled"):
+            # login_enabled 在 SSO 下仍是本站的停用开关
+            result = (None, "disabled")
+        else:
+            result = (account, None)
+    g._sso_resolution = result
+    return result
+
 def current_account():
+    if sso_enabled():
+        return resolve_sso_account()[0]
     account_id = session.get("account_id")
     if not account_id:
         return None
@@ -316,8 +371,13 @@ def current_account():
 
 
 def is_admin() -> bool:
-    # 角色以数据库为准；session 里缓存的角色在管理员被降级后不会失效，不可信
     account = current_account()
+    if sso_enabled():
+        # SSO 下授权角色以每个请求的 X-Role 为准（portal 权限矩阵决定），
+        # 数据库里的 role 字段不参与授权、也不被改写
+        ident = current_identity()
+        return bool(account and ident and ident.is_admin and account.get("login_enabled"))
+    # 角色以数据库为准；session 里缓存的角色在管理员被降级后不会失效，不可信
     return bool(account and account.get("role") == "admin" and account.get("login_enabled"))
 
 def current_actor_role() -> str:
@@ -491,7 +551,30 @@ def wants_json_response() -> bool:
         or "application/json" in accept
     )
 
+def sso_forbidden_response(reason: str):
+    """门卫放行了、但本站没有对应账号（或已停用）：403，不再跳 portal，否则会来回跳。"""
+    message = (
+        "此账号已在 JPPost 停用，请联系管理员。"
+        if reason == "disabled"
+        else "此账号尚未在 JPPost 开通，请联系管理员。"
+    )
+    if wants_json_response():
+        return jsonify({"status": "error", "message": message}), 403
+    ident = current_identity()
+    return render_template(
+        'sso_denied.html',
+        message=message,
+        portal_user=ident.user if ident else "",
+    ), 403
+
 def unauthorized_response():
+    if sso_enabled():
+        _, reason = resolve_sso_account()
+        if reason in ("not_provisioned", "disabled"):
+            return sso_forbidden_response(reason)
+        if wants_json_response():
+            return jsonify({"status": "error", "message": "未登录或会话已过期。"}), 401
+        return redirect(login_url(get_portal_origin(), external_url(current_request_target())))
     if wants_json_response():
         return jsonify({"status": "error", "message": "未登录或会话已过期。"}), 401
     return redirect(url_for('login', next=current_request_target()))
@@ -545,6 +628,11 @@ def add_security_headers(response):
         response.headers["Cache-Control"] = "no-store"
     return response
 
+@app.context_processor
+def inject_sso_flags():
+    # 模板据此隐藏注册/改密入口、挂载应用切换器；关闭时模板输出与以前完全一样
+    return {"sso_on": sso_enabled(), "portal_origin": get_portal_origin()}
+
 @app.route('/healthz', methods=['GET'])
 def healthz():
     return jsonify({"status": "ok"})
@@ -552,6 +640,14 @@ def healthz():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     next_target = build_next_target()
+    if sso_enabled():
+        # 登录归 portal：已带身份就直接进，没开通给 403，否则去 portal 登录后跳回
+        account, reason = resolve_sso_account()
+        if account is not None:
+            return redirect(next_target)
+        if reason in ("not_provisioned", "disabled"):
+            return sso_forbidden_response(reason)
+        return redirect(login_url(get_portal_origin(), external_url(next_target)))
     if is_authenticated():
         return redirect(next_target)
 
@@ -588,6 +684,9 @@ def login():
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
+    if sso_enabled():
+        # 账号由 portal 统一开通，本站自助注册关闭
+        abort(404)
     next_target = build_next_target()
     if is_authenticated():
         return redirect(next_target)
@@ -619,10 +718,26 @@ def register():
 @app.route('/logout', methods=['POST'])
 def logout():
     session.clear()
+    if sso_enabled():
+        # 会话归 portal 管，本地只清 cookie；回 portal 首页
+        return redirect(get_portal_origin())
     return redirect(url_for('login'))
 
 def build_viewer_state():
     account = current_account()
+    if sso_enabled():
+        # 页面展示的角色与授权一致，取 X-Role 而不是库里的 role
+        role = ("admin" if is_admin() else "user") if account else ""
+        ident = current_identity()
+        return {
+            "account": account,
+            "role": role,
+            "is_admin": role == "admin",
+            "username": account["username"] if account else "",
+            "display_name": account["display_name"] if account else "",
+            # portal 当前用户名（X-User，可改）；本地 username 是数据键，不跟着改
+            "portal_user": ident.user if account and ident else "",
+        }
     return {
         "account": account,
         "role": account["role"] if account else "",
@@ -1152,6 +1267,16 @@ def update_env():
         })
     return jsonify({"status": "error", "message": "没有变量被更新或发生错误: " + "; ".join(errors)}), 500
 
+PASSWORD_INPUT_KEYS = ("password", "new_password")
+
+
+def strip_password_fields(data: dict) -> dict:
+    """SSO 下本站不再管理密码：请求里带的密码字段一律丢弃（UI 也已隐藏）。"""
+    if not sso_enabled():
+        return data
+    return {key: value for key, value in data.items() if key not in PASSWORD_INPUT_KEYS}
+
+
 @app.route('/api/users', methods=['GET'])
 @admin_required
 def api_list_users():
@@ -1162,8 +1287,24 @@ def api_list_users():
 @admin_required
 def api_create_user():
     data = request.get_json() or {}
+    portal_sub = None
+    if sso_enabled():
+        data = strip_password_fields(data)
+        # 建号沿用"启用登录必须有密码"的校验，SSO 下给一个没人知道的随机密码
+        data["password"] = secrets.token_urlsafe(32)
+        portal_sub = str(data.get("portal_sub", "") or "").strip() or None
     try:
         user = create_account(data)
+        if portal_sub:
+            try:
+                user = set_account_portal_sub(user["id"], portal_sub)
+            except Exception as exc:
+                return jsonify({
+                    "status": "error",
+                    "message": f"账号已创建，但 portal 映射失败：{exc}",
+                    "user": user,
+                    "user_state": build_user_state(),
+                }), 400
         return jsonify({
             "status": "success",
             "message": "用户已创建。",
@@ -1186,7 +1327,7 @@ def api_get_user(user_id: int):
 @app.route('/api/users/<int:user_id>', methods=['PUT'])
 @admin_required
 def api_update_user(user_id: int):
-    data = request.get_json() or {}
+    data = strip_password_fields(request.get_json() or {})
     try:
         user = update_account(user_id, data, actor_role="admin")
         return jsonify({
@@ -1197,6 +1338,27 @@ def api_update_user(user_id: int):
         })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 400
+
+
+@app.route('/api/admin/accounts/<int:account_id>/portal-user', methods=['POST'])
+@admin_required
+def api_set_account_portal_sub(account_id: int):
+    """设置/清除账号的 portal 映射：{"portal_sub": "<portal 账号 ID>"}；空串或 null 表示清除。"""
+    data = request.get_json(silent=True) or {}
+    if "portal_sub" not in data:
+        return jsonify({"status": "error", "message": "缺少 portal_sub 字段。"}), 400
+    try:
+        user = set_account_portal_sub(account_id, data.get("portal_sub"))
+    except ValueError as exc:
+        status = 404 if str(exc) == "用户不存在。" else 400
+        return jsonify({"status": "error", "message": str(exc)}), status
+    log_tracker(_fmt('[SSO]', f"账号 {user['username']} id={user['id']} 的 portal 映射设为 {user.get('portal_sub') or '（清除）'}"))
+    return jsonify({
+        "status": "success",
+        "message": "portal 映射已更新。" if user.get("portal_sub") else "portal 映射已清除。",
+        "user": user,
+        "user_state": build_user_state(),
+    })
 
 
 @app.route('/api/users/<int:user_id>/test_push', methods=['POST'])
@@ -1323,9 +1485,11 @@ def api_me():
 @login_required
 def api_update_me():
     account = current_account()
-    data = request.get_json() or {}
+    data = strip_password_fields(request.get_json() or {})
+    # SSO 下角色以 X-Role 为准；未开启时保持原来用库里 role 的行为
+    actor_role = current_actor_role() if sso_enabled() else account["role"]
     try:
-        user = update_account(account["id"], data, actor_role=account["role"], actor_id=account["id"])
+        user = update_account(account["id"], data, actor_role=actor_role, actor_id=account["id"])
         return jsonify({
             "status": "success",
             "message": "个人资料已更新。",
@@ -1339,18 +1503,19 @@ def api_update_me():
 @login_required
 def me_update_form():
     account = current_account()
+    actor_role = current_actor_role() if sso_enabled() else account["role"]
     try:
         update_account(
             account["id"],
-            {
+            strip_password_fields({
                 "display_name": request.form.get("display_name", ""),
                 "note": request.form.get("note", ""),
                 "bark_keys": request.form.get("bark_keys", ""),
                 "bark_query_params": request.form.get("bark_query_params", ""),
                 "bark_url_enabled": 'bark_url_enabled' in request.form,
                 "new_password": request.form.get("new_password", ""),
-            },
-            actor_role=account["role"],
+            }),
+            actor_role=actor_role,
             actor_id=account["id"],
         )
         return redirect(url_for('index', status='success', message='资料已保存。'))
