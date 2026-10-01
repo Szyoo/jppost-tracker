@@ -56,8 +56,10 @@ def sso(monkeypatch):
     return monkeypatch
 
 
-def gate(user, role="user", **extra):
-    """模拟 Caddy 门卫注入的身份头。"""
-    headers = {"X-User": user, "X-Role": role, "X-Portal-Sub": user}
+def gate(user, role="user", sub="", **extra):
+    """模拟 Caddy 门卫注入的身份头。portal sub 默认 "sub-<user>"；sub=None 表示不带 X-Portal-Sub。"""
+    headers = {"X-User": user, "X-Role": role}
+    if sub is not None:
+        headers["X-Portal-Sub"] = sub or f"sub-{user}"
     headers.update(extra)
     return headers

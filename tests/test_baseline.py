@@ -10,7 +10,7 @@ def test_seed_matches_prod_shape(db):
     accounts = {a["username"]: a for a in db.list_accounts()}
     assert accounts["legacy-default"]["id"] == 1 and not accounts["legacy-default"]["login_enabled"]
     assert accounts["admin"]["id"] == 2 and accounts["admin"]["role"] == "admin"
-    assert accounts["admin"]["portal_user"] is None
+    assert accounts["admin"]["portal_sub"] is None
 
 
 def test_healthz(client):

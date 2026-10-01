@@ -241,14 +241,15 @@ def _ensure_tasks_schema(conn):
     )
 
 
-def _migrate_portal_user_column(conn):
-    """portal SSO 映射列：accounts.portal_user 记录该账号对应的 portal 用户名（X-User）。
+def _migrate_portal_sub_column(conn):
+    """portal SSO 映射列：accounts.portal_sub 记录该账号对应的 portal 账号固定 ID（X-Portal-Sub）。
+    portal 用户名（X-User）用户自己可以改，所以不按用户名映射。
     可空 + 唯一索引（SQLite 的 UNIQUE 允许多个 NULL）；ADD COLUMN 不能直接带 UNIQUE，
     所以唯一性由单独的索引保证。幂等，只加列不动已有数据，账号 id 保持不变。"""
-    if not _has_column(conn, "accounts", "portal_user"):
-        conn.execute("ALTER TABLE accounts ADD COLUMN portal_user TEXT")
+    if not _has_column(conn, "accounts", "portal_sub"):
+        conn.execute("ALTER TABLE accounts ADD COLUMN portal_sub TEXT")
     conn.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_portal_user ON accounts(portal_user)"
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_portal_sub ON accounts(portal_sub)"
     )
 
 
@@ -478,7 +479,7 @@ def ensure_storage(dotenv_path: str):
                 _ensure_accounts_schema(conn)
                 _migrate_v1_to_v2(conn)
                 _ensure_tasks_schema(conn)
-                _migrate_portal_user_column(conn)
+                _migrate_portal_sub_column(conn)
                 if conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] == 0:
                     _migrate_legacy_profiles(conn, dotenv_path)
                 _sync_admin_account(conn, admin_username, admin_password_hash)
@@ -833,47 +834,47 @@ def update_account(account_id: int, data: dict, *, actor_role: str = "admin", ac
 
 # --- portal SSO 映射 ---
 
-def _normalize_portal_user(value) -> str | None:
-    """portal 用户名原样保存（portal 区分大小写），只去首尾空白；空串视为清除映射。"""
-    portal_user = str(value or "").strip()
-    if not portal_user:
+def _normalize_portal_sub(value) -> str | None:
+    """portal 账号 ID（X-Portal-Sub，uuid 字符串）原样保存，只去首尾空白；空串视为清除映射。"""
+    portal_sub = str(value or "").strip()
+    if not portal_sub:
         return None
-    if len(portal_user) > 64 or any(ch.isspace() for ch in portal_user):
-        raise ValueError("portal 用户名格式不正确。")
-    return portal_user
+    if len(portal_sub) > 64 or any(ch.isspace() for ch in portal_sub):
+        raise ValueError("portal ID 格式不正确。")
+    return portal_sub
 
 
-def get_account_by_portal_user(portal_user: str):
-    portal_user = str(portal_user or "").strip()
-    if not portal_user:
+def get_account_by_portal_sub(portal_sub: str):
+    portal_sub = str(portal_sub or "").strip()
+    if not portal_sub:
         return None
     with closing(_connect()) as conn:
-        row = conn.execute("SELECT * FROM accounts WHERE portal_user = ?", (portal_user,)).fetchone()
+        row = conn.execute("SELECT * FROM accounts WHERE portal_sub = ?", (portal_sub,)).fetchone()
         account = _row_to_account(row)
         if not account:
             return None
         return _attach_tasks(conn, [account])[0]
 
 
-def set_account_portal_user(account_id: int, portal_user):
-    """设置/清除某账号的 portal 映射。portal_user 为空则清除。
-    同一个 portal 用户名已映射到别的账号时拒绝（不偷偷挪映射）。"""
-    portal_user = _normalize_portal_user(portal_user)
+def set_account_portal_sub(account_id: int, portal_sub):
+    """设置/清除某账号的 portal 映射（portal 账号 ID）。portal_sub 为空则清除。
+    同一个 portal ID 已映射到别的账号时拒绝（不偷偷挪映射）。"""
+    portal_sub = _normalize_portal_sub(portal_sub)
     with closing(_connect()) as conn:
         with conn:
             row = conn.execute("SELECT id FROM accounts WHERE id = ?", (int(account_id),)).fetchone()
             if row is None:
                 raise ValueError("用户不存在。")
-            if portal_user is not None:
+            if portal_sub is not None:
                 other = conn.execute(
-                    "SELECT id, username FROM accounts WHERE portal_user = ? AND id != ?",
-                    (portal_user, int(account_id)),
+                    "SELECT id, username FROM accounts WHERE portal_sub = ? AND id != ?",
+                    (portal_sub, int(account_id)),
                 ).fetchone()
                 if other is not None:
-                    raise ValueError(f"portal 用户 {portal_user} 已映射到账号 {other['username']}（id {other['id']}）。")
+                    raise ValueError(f"portal ID {portal_sub} 已映射到账号 {other['username']}（id {other['id']}）。")
             conn.execute(
-                "UPDATE accounts SET portal_user = ?, updated_at = ? WHERE id = ?",
-                (portal_user, _ts(), int(account_id)),
+                "UPDATE accounts SET portal_sub = ?, updated_at = ? WHERE id = ?",
+                (portal_sub, _ts(), int(account_id)),
             )
     return get_account(int(account_id))
 
@@ -881,7 +882,7 @@ def set_account_portal_user(account_id: int, portal_user):
 def _derive_local_username(conn, portal_user: str) -> str:
     """自动建号时的本地用户名：优先就用 portal 用户名；portal 允许的格式
     （大写、2 位长度、开头下划线）不一定满足本地规则，或者同名已被别的账号占着，
-    就规整成小写合法形式并追加数字后缀。portal_user 列始终保存原样 X-User。"""
+    就规整成小写合法形式并追加数字后缀。映射存的是 portal_sub，与这里的用户名无关。"""
     base = re.sub(r"[^a-z0-9_.-]", "-", portal_user.lower()).strip("-_.") or "portal"
     if not re.match(r"[a-z0-9]", base):
         base = "p" + base
@@ -896,30 +897,36 @@ def _derive_local_username(conn, portal_user: str) -> str:
     return _normalize_username(candidate)
 
 
-def resolve_portal_account(portal_user: str, portal_role: str = "user", *, autocreate: bool = False):
-    """按 portal 身份找本地账号，返回 (account, action)。
-    action: "mapped"（portal_user 命中）/ "adopted"（同名且未映射，已写入映射）/
+def resolve_portal_account(portal_sub: str, portal_user: str, portal_role: str = "user", *, autocreate: bool = False):
+    """按 portal 身份找本地账号，返回 (account, action)。portal_sub = X-Portal-Sub（固定 ID），
+    portal_user = X-User（当前用户名，可改）。
+    action: "mapped"（portal_sub 命中）/ "adopted"（同名且未映射，已写入 portal_sub）/
             "created"（自动建号）/ None（未开通，account 也为 None）。
+    没有 sub 一律返回 (None, None)，绝不只按用户名匹配。本地 username 不随 portal 改名。
     规则顺序见 docs/portal-sso.md，整个过程在一个事务里，避免并发请求重复建号。"""
-    portal_user = _normalize_portal_user(portal_user)
-    if portal_user is None:
+    try:
+        portal_sub = _normalize_portal_sub(portal_sub)
+    except ValueError:
+        return None, None
+    portal_user = str(portal_user or "").strip()
+    if portal_sub is None:
         return None, None
     action = None
     account_id = None
     with closing(_connect()) as conn:
         with conn:
-            row = conn.execute("SELECT id FROM accounts WHERE portal_user = ?", (portal_user,)).fetchone()
+            row = conn.execute("SELECT id FROM accounts WHERE portal_sub = ?", (portal_sub,)).fetchone()
             if row is not None:
                 account_id, action = int(row["id"]), "mapped"
-            else:
+            elif portal_user:
                 # 本地用户名一律小写，这里按原样精确比较：portal 里的 "Alice" 不会认领本地 "alice"
                 row = conn.execute(
-                    "SELECT id, portal_user FROM accounts WHERE username = ?", (portal_user,)
+                    "SELECT id, portal_sub FROM accounts WHERE username = ?", (portal_user,)
                 ).fetchone()
-                if row is not None and row["portal_user"] is None:
+                if row is not None and row["portal_sub"] is None:
                     conn.execute(
-                        "UPDATE accounts SET portal_user = ?, updated_at = ? WHERE id = ?",
-                        (portal_user, _ts(), int(row["id"])),
+                        "UPDATE accounts SET portal_sub = ?, updated_at = ? WHERE id = ?",
+                        (portal_sub, _ts(), int(row["id"])),
                     )
                     account_id, action = int(row["id"]), "adopted"
                 elif autocreate:
@@ -941,7 +948,7 @@ def resolve_portal_account(portal_user: str, portal_role: str = "user", *, autoc
                         },
                     )
                     conn.execute(
-                        "UPDATE accounts SET portal_user = ? WHERE id = ?", (portal_user, int(account_id))
+                        "UPDATE accounts SET portal_sub = ? WHERE id = ?", (portal_sub, int(account_id))
                     )
                     action = "created"
     if account_id is None:
