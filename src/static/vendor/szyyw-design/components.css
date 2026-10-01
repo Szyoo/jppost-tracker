@@ -994,3 +994,93 @@ table.tbl {
 }
 .app-switcher-sep { height: 1px; background: var(--line-soft); margin: 6px 4px; }
 .app-switcher-msg { padding: 14px 10px; font-size: 13px; color: var(--text-dim); text-align: center; }
+
+/* ---------- 账户菜单（右上角登录 / 头像，account.js）---------- */
+
+/* 未登录：图标 + 文字，宽度随内容，其余沿用 .corner-tool */
+.corner-tool.account-login {
+  width: auto;
+  padding: 0 11px 0 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* 登录后：圆形首字头像，灌品牌渐变 */
+.corner-tool.account-avatar {
+  border-radius: 50%;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--on-accent);
+  background: var(--grad);
+  border-color: transparent;
+}
+.corner-tool.account-avatar[aria-expanded="true"] {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/* 面板与切换器同位、同层（同一时刻只开一个，见 corner.js claimCornerPanel） */
+.account-menu {
+  position: fixed;
+  top: calc(10px + 34px + 8px + env(safe-area-inset-top, 0px));
+  right: calc(12px + env(safe-area-inset-right, 0px));
+  z-index: 46;
+  width: min(260px, calc(100vw - 24px));
+  padding: 6px;
+  animation: rise 0.3s var(--ease) both;
+}
+.account-menu[hidden] { display: none; }
+
+.account-menu-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  min-width: 0;
+}
+.account-menu-dot {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--on-accent);
+  background: var(--grad);
+}
+.account-menu-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu-item {
+  appearance: none;
+  display: block;
+  width: 100%;
+  padding: 9px 10px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s var(--ease), color 0.15s var(--ease);
+}
+.account-menu-item:hover:not(:disabled) { background: var(--hover-tint); }
+.account-menu-item.danger:hover:not(:disabled) { color: var(--err); }
+.account-menu-item:disabled { opacity: 0.45; cursor: not-allowed; }
+.account-menu-err { padding: 4px 10px 8px; }
+.account-menu-err[hidden] { display: none; }
