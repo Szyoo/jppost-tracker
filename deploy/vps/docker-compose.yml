@@ -17,7 +17,7 @@ services:
         format: raw
     environment:
       # portal SSO。只有在 Caddy 已对 jppost.szyyw.xyz 启用 (sso) 门卫之后才能设 1，
-      # 否则任何人都能伪造 X-User 头（默认 0 = 沿用本站密码登录）。
+      # 否则任何人都能伪造 X-User / X-Portal-Sub 头（默认 0 = 沿用本站密码登录）。
       # 写在 .env 里即可覆盖默认值（compose 从同目录 .env 做插值）。
       SZYYW_SSO: ${SZYYW_SSO:-0}
       # 未映射的 portal 用户是否自动开通本地账号（默认 0 = 显示"尚未开通"）

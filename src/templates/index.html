@@ -25,7 +25,7 @@
         </div>
         <form method="post" action="/logout" class="header-session">
           <!-- 显示名在「我的设置」里可以改，所以这里跟着 viewer 走而不是渲染时的快照 -->
-          <span class="current-user">[[ viewer.display_name ]] · [[ viewer.username ]]</span>
+          <span class="current-user">[[ viewer.display_name ]] · [[ viewer.portal_user || viewer.username ]]</span>
           <span class="role-badge admin">admin</span>
           <button type="submit" class="btn-ghost btn-small danger">退出</button>
         </form>
@@ -271,8 +271,8 @@
                 </div>
                 {%- if sso_on %}
                 <div>
-                  <label for="createPortalUser">portal 用户名</label>
-                  <input id="createPortalUser" type="text" class="field" v-model="newUserForm.portal_user" placeholder="留空则暂不映射" />
+                  <label for="createPortalSub">门户 ID</label>
+                  <input id="createPortalSub" type="text" class="field" v-model="newUserForm.portal_sub" placeholder="留空则暂不映射" />
                 </div>
                 {%- else %}
                 <div>
@@ -316,7 +316,7 @@
                 <div class="user-item-line">任务 启用 [[ user.active_task_count || 0 ]] / 全部 [[ user.task_count || 0 ]] · 登录 [[ user.login_enabled ? '开' : '关' ]]</div>
                 <div class="user-item-line">归档 [[ (user.archived_tasks || []).length ]] 个 · Keys [[ user.bark_keys_masked || '未设置' ]]</div>
                 {%- if sso_on %}
-                <div class="user-item-line">portal [[ user.portal_user || '未映射' ]]</div>
+                <div class="user-item-line">门户 ID [[ user.portal_sub || '未映射' ]]</div>
                 {%- endif %}
               </button>
             </div>
@@ -384,10 +384,10 @@
               </div>
               {%- if sso_on %}
               <div class="full">
-                <label for="userPortalUser">portal 用户名（SSO 映射，留空表示清除）</label>
+                <label for="userPortalSub">门户 ID（portal 账号的固定 ID，即 X-Portal-Sub；改 portal 用户名不影响；留空表示清除）</label>
                 <div class="actions" style="margin-top: 0;">
-                  <input id="userPortalUser" type="text" class="field" v-model="userForm.portal_user" placeholder="未映射" />
-                  <button type="button" class="btn-ghost btn-small" @click="savePortalUser">保存映射</button>
+                  <input id="userPortalSub" type="text" class="field" v-model="userForm.portal_sub" placeholder="未映射" />
+                  <button type="button" class="btn-ghost btn-small" @click="savePortalSub">保存映射</button>
                 </div>
                 <p class="hint">登录由 portal 负责；这里决定哪个 portal 用户进入这个账号（任务归属不变）。</p>
               </div>
@@ -526,7 +526,7 @@
       <section class="section" v-if="page === 'me'">
         <!-- 身份不放进 .section-name：它是 uppercase 的小标签，用户名塞进去会被大写掉 -->
         <h2 class="section-name">我的设置</h2>
-        <p class="hint" style="margin: -4px 0 14px;">[[ viewer.display_name ]] · [[ viewer.username ]] · 这里改的是管理员自己的账号与任务。</p>
+        <p class="hint" style="margin: -4px 0 14px;">[[ viewer.display_name ]] · [[ viewer.portal_user || viewer.username ]] · 这里改的是管理员自己的账号与任务。</p>
         <div class="widget-grid stagger">
           <div class="widget glass lift spot">
             <p class="widget-title">启用中任务</p>

@@ -16,9 +16,21 @@
 - 新增 pytest（`tests/`，临时 SQLite）：36 项通过。SSO 未开时登录/注册/用户门户页面
   与改动前逐字节一致，管理台只多了 JSON 里的 `portal_user: null`。
 
+## 2026-10-02：映射改按 portal 固定 ID（未部署、未合并）
+
+- portal 用户名改为可由用户自己修改，portal 同时发 `X-Portal-Sub`（固定 uuid）。
+  列 `portal_user` → `portal_sub`（索引 `idx_accounts_portal_sub`）；该列只在本分支上存在，
+  直接改了 ADD COLUMN，没有线上库需要迁移。
+- 解析：`portal_sub = X-Portal-Sub` → 同名（`username = X-User`）且未映射则认领并写入 sub →
+  可选自动开通（`portal_sub = X-Portal-Sub`）→ 403；缺 `X-Portal-Sub` = 未登录。
+- 本地 username 不随 portal 改名；页头显示本次请求的 X-User。
+- CLI `map-account <username> <portal_sub>`，HTTP body `{"portal_sub": …}`，UI 标签「门户 ID」。
+- pytest：38 项通过（新增 sub 优先于同名、缺 sub 即未登录；认领/同名不同 sub/改名已在原用例里覆盖）。
+
 ## 上线顺序（待办）
 
 - [ ] 合并 + VPS 重建镜像（需要 pip 能访问 GitHub 归档）。
-- [ ] 用 CLI 按批准的映射表执行 `map-account`（`admin` → portal 管理员用户名等）。
+- [ ] 用 CLI 按批准的映射表执行 `map-account <username> <portal_sub>`（`admin` → portal 管理员的 sub 等；
+      同名且未映射的账号也可以留给首次登录自动认领）。
 - [ ] szyyw-platform Caddyfile 给 jppost.szyyw.xyz 加 `import sso`，部署 Caddy。
 - [ ] 之后才在 `deploy/vps/.env` 设 `SZYYW_SSO=1` 并重建容器。

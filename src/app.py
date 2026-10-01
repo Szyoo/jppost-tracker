@@ -35,7 +35,7 @@ from storage import (
     parse_bark_keys,
     register_user,
     resolve_portal_account,
-    set_account_portal_user,
+    set_account_portal_sub,
     update_account,
     update_task,
     verify_account_password,
@@ -307,7 +307,8 @@ def get_login_window_seconds() -> int:
         return 600
 
 # --- portal SSO（SZYYW_SSO=1 时启用，详见 docs/portal-sso.md）---
-# 开启后身份完全来自 Caddy 门卫注入的 X-User / X-Role，本地密码登录与自助注册关闭；
+# 开启后身份完全来自 Caddy 门卫注入的 X-Portal-Sub / X-User / X-Role，本地密码登录与自助注册关闭；
+# 账号按 X-Portal-Sub（portal 账号固定 ID）映射，X-User 只是当前用户名（用户可改）；
 # 未开启时下面所有 SSO 分支都不走，行为与接入前一致。
 
 def get_portal_origin() -> str:
@@ -326,22 +327,24 @@ def external_url(path: str) -> str:
 
 def resolve_sso_account():
     """按门卫身份解析本地账号，返回 (account, reason)，同一请求内只查一次。
-    reason: None=正常 / "no_identity"=没有身份头（绕过了门卫）/
+    reason: None=正常 / "no_identity"=没有身份头或缺 X-Portal-Sub（绕过了门卫）/
             "not_provisioned"=未映射且未开自动开通 / "disabled"=本地账号被停用登录。"""
     cached = getattr(g, "_sso_resolution", None)
     if cached is not None:
         return cached
     ident = current_identity()
-    if ident is None:
+    # sub 直接读头：szyyw_auth 在缺 X-Portal-Sub 时会退回 X-User，而这里绝不能只按用户名匹配
+    portal_sub = request.headers.get("X-Portal-Sub", "").strip()
+    if ident is None or not portal_sub:
         result = (None, "no_identity")
     else:
         account, action = resolve_portal_account(
-            ident.user, ident.role, autocreate=sso_autocreate_enabled()
+            portal_sub, ident.user, ident.role, autocreate=sso_autocreate_enabled()
         )
         if action == "adopted":
-            log_tracker(_fmt('[SSO]', f"portal 用户 {ident.user} 认领同名本地账号 id={account['id']}"))
+            log_tracker(_fmt('[SSO]', f"portal 用户 {ident.user}（sub {portal_sub}）认领同名本地账号 id={account['id']}"))
         elif action == "created":
-            log_tracker(_fmt('[SSO]', f"portal 用户 {ident.user} 自动开通本地账号 {account['username']} id={account['id']}"))
+            log_tracker(_fmt('[SSO]', f"portal 用户 {ident.user}（sub {portal_sub}）自动开通本地账号 {account['username']} id={account['id']}"))
         if account is None:
             result = (None, "not_provisioned")
         elif not account.get("login_enabled"):
@@ -725,12 +728,15 @@ def build_viewer_state():
     if sso_enabled():
         # 页面展示的角色与授权一致，取 X-Role 而不是库里的 role
         role = ("admin" if is_admin() else "user") if account else ""
+        ident = current_identity()
         return {
             "account": account,
             "role": role,
             "is_admin": role == "admin",
             "username": account["username"] if account else "",
             "display_name": account["display_name"] if account else "",
+            # portal 当前用户名（X-User，可改）；本地 username 是数据键，不跟着改
+            "portal_user": ident.user if account and ident else "",
         }
     return {
         "account": account,
@@ -1281,17 +1287,17 @@ def api_list_users():
 @admin_required
 def api_create_user():
     data = request.get_json() or {}
-    portal_user = None
+    portal_sub = None
     if sso_enabled():
         data = strip_password_fields(data)
         # 建号沿用"启用登录必须有密码"的校验，SSO 下给一个没人知道的随机密码
         data["password"] = secrets.token_urlsafe(32)
-        portal_user = str(data.get("portal_user", "") or "").strip() or None
+        portal_sub = str(data.get("portal_sub", "") or "").strip() or None
     try:
         user = create_account(data)
-        if portal_user:
+        if portal_sub:
             try:
-                user = set_account_portal_user(user["id"], portal_user)
+                user = set_account_portal_sub(user["id"], portal_sub)
             except Exception as exc:
                 return jsonify({
                     "status": "error",
@@ -1336,20 +1342,20 @@ def api_update_user(user_id: int):
 
 @app.route('/api/admin/accounts/<int:account_id>/portal-user', methods=['POST'])
 @admin_required
-def api_set_account_portal_user(account_id: int):
-    """设置/清除账号的 portal 映射：{"portal_user": "name"}；空串或 null 表示清除。"""
+def api_set_account_portal_sub(account_id: int):
+    """设置/清除账号的 portal 映射：{"portal_sub": "<portal 账号 ID>"}；空串或 null 表示清除。"""
     data = request.get_json(silent=True) or {}
-    if "portal_user" not in data:
-        return jsonify({"status": "error", "message": "缺少 portal_user 字段。"}), 400
+    if "portal_sub" not in data:
+        return jsonify({"status": "error", "message": "缺少 portal_sub 字段。"}), 400
     try:
-        user = set_account_portal_user(account_id, data.get("portal_user"))
+        user = set_account_portal_sub(account_id, data.get("portal_sub"))
     except ValueError as exc:
         status = 404 if str(exc) == "用户不存在。" else 400
         return jsonify({"status": "error", "message": str(exc)}), status
-    log_tracker(_fmt('[SSO]', f"账号 {user['username']} id={user['id']} 的 portal 映射设为 {user.get('portal_user') or '（清除）'}"))
+    log_tracker(_fmt('[SSO]', f"账号 {user['username']} id={user['id']} 的 portal 映射设为 {user.get('portal_sub') or '（清除）'}"))
     return jsonify({
         "status": "success",
-        "message": "portal 映射已更新。" if user.get("portal_user") else "portal 映射已清除。",
+        "message": "portal 映射已更新。" if user.get("portal_sub") else "portal 映射已清除。",
         "user": user,
         "user_state": build_user_state(),
     })

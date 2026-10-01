@@ -21,7 +21,7 @@
           <h1 class="brand-title">我的快递与 Bark 设置</h1>
         </div>
         <form method="post" action="/logout" class="header-session">
-          <span class="current-user">{{ viewer_state.display_name }} · {{ viewer_state.username }}</span>
+          <span class="current-user">{{ viewer_state.display_name }} · {{ viewer_state.portal_user or viewer_state.username }}</span>
           <span class="role-badge user">{{ viewer_state.role }}</span>
           <button type="submit" class="btn-ghost btn-small danger">退出</button>
         </form>
