@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="nebula">
+<html lang="zh-CN" data-theme="nebula"{% if sso_on %} data-sso="1" data-portal="{{ portal_origin }}"{% endif %}>
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -25,7 +25,7 @@
         </div>
         <form method="post" action="/logout" class="header-session">
           <!-- 显示名在「我的设置」里可以改，所以这里跟着 viewer 走而不是渲染时的快照 -->
-          <span class="current-user">[[ viewer.display_name ]] · [[ viewer.username ]]</span>
+          <span class="current-user">[[ viewer.display_name ]] · [[ viewer.portal_user || viewer.username ]]</span>
           <span class="role-badge admin">admin</span>
           <button type="submit" class="btn-ghost btn-small danger">退出</button>
         </form>
@@ -269,10 +269,17 @@
                   <label for="createDisplayName">显示名称</label>
                   <input id="createDisplayName" type="text" class="field" v-model="newUserForm.display_name" />
                 </div>
+                {%- if sso_on %}
+                <div>
+                  <label for="createPortalSub">门户 ID</label>
+                  <input id="createPortalSub" type="text" class="field" v-model="newUserForm.portal_sub" placeholder="留空则暂不映射" />
+                </div>
+                {%- else %}
                 <div>
                   <label for="createPassword">初始密码</label>
                   <input id="createPassword" type="password" class="field" v-model="newUserForm.password" />
                 </div>
+                {%- endif %}
                 <div>
                   <label for="createRole">角色</label>
                   <select id="createRole" v-model="newUserForm.role" class="field">
@@ -288,7 +295,7 @@
                 </div>
               </div>
               <div class="actions">
-                <button type="button" class="btn btn-small" @click="createUser" :disabled="!newUserForm.username.trim() || !newUserForm.password.trim()">新增</button>
+                <button type="button" class="btn btn-small" @click="createUser" :disabled="{% if sso_on %}!newUserForm.username.trim(){% else %}!newUserForm.username.trim() || !newUserForm.password.trim(){% endif %}">新增</button>
               </div>
               <p class="hint">账号建好后在下面的"追踪任务"里添加单号。</p>
             </div>
@@ -308,6 +315,9 @@
                 <div class="user-item-line">用户名 [[ user.username ]]</div>
                 <div class="user-item-line">任务 启用 [[ user.active_task_count || 0 ]] / 全部 [[ user.task_count || 0 ]] · 登录 [[ user.login_enabled ? '开' : '关' ]]</div>
                 <div class="user-item-line">归档 [[ (user.archived_tasks || []).length ]] 个 · Keys [[ user.bark_keys_masked || '未设置' ]]</div>
+                {%- if sso_on %}
+                <div class="user-item-line">门户 ID [[ user.portal_sub || '未映射' ]]</div>
+                {%- endif %}
               </button>
             </div>
           </div>
@@ -372,10 +382,21 @@
                   允许登录
                 </label>
               </div>
+              {%- if sso_on %}
+              <div class="full">
+                <label for="userPortalSub">门户 ID（portal 账号的固定 ID，即 X-Portal-Sub；改 portal 用户名不影响；留空表示清除）</label>
+                <div class="actions" style="margin-top: 0;">
+                  <input id="userPortalSub" type="text" class="field" v-model="userForm.portal_sub" placeholder="未映射" />
+                  <button type="button" class="btn-ghost btn-small" @click="savePortalSub">保存映射</button>
+                </div>
+                <p class="hint">登录由 portal 负责；这里决定哪个 portal 用户进入这个账号（任务归属不变）。</p>
+              </div>
+              {%- else %}
               <div class="full">
                 <label for="userNewPassword">重置密码（留空不修改）</label>
                 <input id="userNewPassword" type="password" class="field" v-model="userForm.new_password" />
               </div>
+              {%- endif %}
               <div class="full">
                 <div class="inner" style="padding: 14px;">
                   <h3 class="section-name" style="margin-bottom: 4px;">Bark 预览</h3>
@@ -505,7 +526,7 @@
       <section class="section" v-if="page === 'me'">
         <!-- 身份不放进 .section-name：它是 uppercase 的小标签，用户名塞进去会被大写掉 -->
         <h2 class="section-name">我的设置</h2>
-        <p class="hint" style="margin: -4px 0 14px;">[[ viewer.display_name ]] · [[ viewer.username ]] · 这里改的是管理员自己的账号与任务。</p>
+        <p class="hint" style="margin: -4px 0 14px;">[[ viewer.display_name ]] · [[ viewer.portal_user || viewer.username ]] · 这里改的是管理员自己的账号与任务。</p>
         <div class="widget-grid stagger">
           <div class="widget glass lift spot">
             <p class="widget-title">启用中任务</p>
@@ -677,10 +698,12 @@
                   </div>
                 </div>
               </div>
+              {%- if not sso_on %}
               <div class="full">
                 <label for="meNewPassword">新密码（留空表示不修改）</label>
                 <input id="meNewPassword" type="password" class="field" v-model="meForm.new_password" autocomplete="new-password" />
               </div>
+              {%- endif %}
             </div>
 
             <div class="actions">

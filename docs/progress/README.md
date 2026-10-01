@@ -18,6 +18,8 @@
   （进度记在 [main.md](main.md) 对应日期，改动本身见分支提交）。
 - [feature-szyyw-design-package.md](feature-szyyw-design-package.md) — `feature/szyyw-design-package`
   分支：前端接入 @szyyw/design v0.3.0（vendor + 明暗三态），基于 streamline-services。
+- [feat-portal-sso.md](feat-portal-sso.md) — `feat/portal-sso` 分支：接入 szyyw.xyz portal 统一登录
+  （`SZYYW_SSO`，按 portal_sub / X-Portal-Sub 映射），设计包 v0.7.0。
 
 ## 跨分支事项
 

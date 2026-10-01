@@ -939,3 +939,58 @@ table.tbl {
   /* 抽屉直接到位，不滑；transform 终值仍是 translateX(0)，不困住子孙 fixed */
   .settings-panel, .panel-backdrop { transition: none; }
 }
+
+/* ---------- 应用切换器（右上角九宫格，switcher.js）---------- */
+
+/* 挂在工具位正下方；z-index 高于工具位(45)、低于弹层(50) */
+.app-switcher {
+  position: fixed;
+  top: calc(10px + 34px + 8px + env(safe-area-inset-top, 0px));
+  right: calc(12px + env(safe-area-inset-right, 0px));
+  z-index: 46;
+  width: min(280px, calc(100vw - 24px));
+  max-height: min(70vh, 520px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px;
+  animation: rise 0.3s var(--ease) both;
+}
+.app-switcher[hidden] { display: none; }
+
+.app-switcher-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  text-decoration: none;
+  color: var(--text);
+  transition: background 0.15s var(--ease);
+}
+.app-switcher-item:hover { background: var(--hover-tint); }
+.app-switcher-item.is-current { background: var(--inner-bg); }
+.app-switcher-portal .app-switcher-title { font-weight: 600; }
+
+.app-switcher-dot {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--on-accent);
+  background: var(--grad);
+}
+.app-switcher-text { display: flex; flex-direction: column; min-width: 0; }
+.app-switcher-title { font-size: 14px; line-height: 1.3; }
+.app-switcher-host {
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-switcher-sep { height: 1px; background: var(--line-soft); margin: 6px 4px; }
+.app-switcher-msg { padding: 14px 10px; font-size: 13px; color: var(--text-dim); text-align: center; }
