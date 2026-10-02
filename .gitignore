@@ -165,3 +165,9 @@ logs/
 bark-server_*
 .local/
 data/
+
+# VPS 运行时配置（deploy/vps/app.env）及其备份
+app.env
+app.env.*
+.env.*
+!env.example
