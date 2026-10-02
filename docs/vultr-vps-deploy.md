@@ -43,10 +43,10 @@ ssh vultr-jp
 sudo mkdir -p /opt/jppost-tracker && sudo chown $USER /opt/jppost-tracker
 git clone https://github.com/Szyoo/jppost-tracker.git /opt/jppost-tracker
 cd /opt/jppost-tracker/deploy/vps
-cp env.example .env
+cp env.example app.env   # 注意文件名是 app.env，不是 .env（见 docker-compose.yml 注释）
 ```
 
-编辑 `.env`，填好**安全三件套**（公网开放的前提，缺一不可）：
+编辑 `app.env`，填好**安全三件套**（公网开放的前提，缺一不可）：
 
 ```bash
 # SECRET_KEY
@@ -93,7 +93,7 @@ curl -I https://jppost.szyyw.xyz/login  # 应返回 200
 ## 6. 运维备忘
 
 - **更新部署**：`cd /opt/jppost-tracker && git pull && cd deploy/vps && docker compose up -d --build`
-- **备份**：`tar czf jppost-backup.tgz deploy/vps/.env deploy/vps/data deploy/vps/bark-data`
+- **备份**：`tar czf jppost-backup.tgz deploy/vps/app.env deploy/vps/data deploy/vps/bark-data`
 - **资源**：机器只有 2G 内存（现约 1.0G 可用），本项目两个容器合计占用预计 <200M，
   但再往这台机器加服务时留意。
 - `.env` 设 `LOCAL_BARK_ENABLED=0` 后，控制台不再显示"Bark 服务"启停卡片

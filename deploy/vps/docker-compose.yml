@@ -11,21 +11,20 @@ services:
     container_name: jppost-tracker
     restart: unless-stopped
     env_file:
-      # format: raw 禁用 compose 变量插值 —— werkzeug 密码哈希里带 $，
-      # 否则会被当成变量替换成空串（portal.env 同款处理）
-      - path: ./.env
+      # 运行时配置放在 app.env（而不是 .env）：compose 会把同目录的 .env 当作
+      # 插值源整份解析，werkzeug 密码哈希里的 $ 会触发 "variable is not set" 警告。
+      # format: raw 禁用插值，值原样进容器（portal.env 同款处理）。
+      # SZYYW_SSO / SZYYW_SSO_AUTOCREATE / PORTAL_ORIGIN 也直接写在 app.env 里，
+      # 未设置时代码默认分别为 0 / 0 / https://szyyw.xyz。注意 SZYYW_SSO=1 只能在
+      # Caddy 已对 jppost.szyyw.xyz 启用 (sso) 门卫之后才设，否则任何人都能伪造身份头。
+      - path: ./app.env
         format: raw
-    # 不再用 environment: ${VAR:-默认} 插值：那会让 compose 把同目录 .env 当插值源解析，
-    # 密码哈希里的 $ 触发 "variable is not set" 警告。SZYYW_SSO / SZYYW_SSO_AUTOCREATE /
-    # PORTAL_ORIGIN 直接写在 .env 里经上面的 raw env_file 进容器，未设置时代码默认
-    # 分别为 0 / 0 / https://szyyw.xyz。注意 SZYYW_SSO=1 只能在 Caddy 已对
-    # jppost.szyyw.xyz 启用 (sso) 门卫之后才设，否则任何人都能伪造 X-User / X-Portal-Sub 头。
     volumes:
       # SQLite 账号库与运行日志持久化在宿主机
       - ./data:/app/data
       - ./logs:/app/logs
-      # .env 挂进容器，供网页"在线编辑环境变量"功能读写
-      - ./.env:/app/.env
+      # app.env 挂成容器内的 /app/.env，供网页"在线编辑环境变量"功能读写
+      - ./app.env:/app/.env
     networks:
       - ingress
 
