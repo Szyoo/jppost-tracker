@@ -14,7 +14,7 @@ jobs:
   upgrade:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: main
       - name: 检查并升级
@@ -23,7 +23,7 @@ jobs:
           summary=$(scripts/upgrade-shared.sh)
           echo "summary=$summary" >> "$GITHUB_OUTPUT"
           echo "${summary:-已是最新}"
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         if: steps.up.outputs.summary != ''
         with:
           python-version: '3.13'
