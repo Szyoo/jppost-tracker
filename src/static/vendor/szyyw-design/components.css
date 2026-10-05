@@ -221,42 +221,57 @@ a {
   background: var(--warn);
 }
 
-/* ---------- 背景参数抽屉 ---------- */
+/* ---------- 工具位弹层（.corner-panel）----------
+   工具位按钮点开的所有面板共用这一套：背景参数、应用切换器、账户菜单，
+   以及项目自己挂进工具位的按钮（如 finance-ledger 的通知）。
 
-.panel-backdrop {
+   - 位置读 corner.js 实测发布的锚点：横排贴在工具位下方，纵排贴在工具位左侧、顶端对齐
+   - 不加遮罩、不锁页面滚动——锁滚动会让滚动条消失、整页横向跳一下；
+     弹层是轻量浮层，点外面 / Esc 关闭即可
+   - 高度随内容，超出视口才在内部滚
+   - 底色用不透明度高的 --sheet-bg：叠在点阵与页面内容上也读得清
+   - 入场只有一个 rise，和其余浮层同一种动效
+   - z-index 高于工具位(45)、低于 sheet 弹层(50)；同一时刻只开一个（claimCornerPanel） */
+.corner-panel {
   position: fixed;
-  inset: 0;
-  z-index: 43;
-  background: var(--overlay-bg);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.25s var(--ease);
+  top: var(--corner-panel-top, calc(10px + 34px + 8px + env(safe-area-inset-top, 0px)));
+  right: var(--corner-panel-right, calc(12px + env(safe-area-inset-right, 0px)));
+  z-index: 46;
+  max-width: calc(100vw - var(--corner-panel-right, 12px) - 12px);
+  max-height: calc(100dvh - var(--corner-panel-top, 52px) - 12px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--sheet-bg);
+  animation: rise 0.3s var(--ease) both;
 }
+.corner-panel[hidden] { display: none; }
 
-.panel-backdrop.show {
-  opacity: 1;
-  pointer-events: auto;
-}
+/* ---------- 背景参数（.settings-panel，挂 .corner-panel）---------- */
 
-/* 顶端让开工具位，调色板开着时仍露在外面。高度由 corner.js 实测发布成
-   --corner-rail-h——横排是一枚按钮高，纵排(--corner-tools-dir: column)
-   是整叠的高度，这里不能写死 */
+/* 头尾常驻，只让中间的参数区滚——整块滚会把「保存 / 恢复默认」滚走 */
 .settings-panel {
-  position: fixed;
-  top: calc(10px + var(--corner-rail-h, 34px) + 12px + env(safe-area-inset-top, 0px));
-  right: calc(12px + env(safe-area-inset-right, 0px));
-  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
-  z-index: 44;
-  width: min(340px, calc(100vw - 24px));
+  width: 340px;
   display: flex;
   flex-direction: column;
-  transform: translateX(calc(100% + 24px));
-  transition: transform 0.35s var(--ease);
+  overflow: hidden;
 }
 
-/* 终值是 none 而不是 translateX(0)——后者照样是包含块，
-   会困住面板里弹出的 fixed 子元素；none 与位移之间仍可插值，动画不受影响 */
-.settings-panel.open { transform: none; }
+.settings-panel .panel-body { gap: 14px; scrollbar-width: thin; }
+
+/* 参数有十几项，单列约 900px 高，常见笔记本屏一打开就得在面板里滚。
+   宽屏排成两列，高度减半，整块一眼看全；窄屏（手机）仍单列，超出视口才滚 */
+@media (min-width: 720px) {
+  .settings-panel { width: 600px; }
+  .settings-panel .panel-body {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px 24px;
+    align-content: start;
+  }
+  /* 分隔线与版本行横跨两列 */
+  .settings-panel .panel-body > .divider,
+  .settings-panel .panel-body > .divider ~ * { grid-column: 1 / -1; }
+}
 
 .settings-panel .panel-head {
   margin-bottom: 0;
@@ -264,8 +279,10 @@ a {
   flex-wrap: nowrap;
 }
 
+/* 面板高度随内容（上限是视口）：基准取内容高、允许收缩，超出才在这里滚 */
 .panel-body {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 6px 18px;
@@ -936,26 +953,17 @@ table.tbl {
   .rise, .stagger > *, .sheet { animation: none; }
   .spot::after { display: none; }
   .term-dot[data-live="1"], .term-cursor { animation: none; }
-  /* 抽屉直接到位，不滑；transform 终值仍是 translateX(0)，不困住子孙 fixed */
-  .settings-panel, .panel-backdrop { transition: none; }
+  .corner-panel { animation: none; }
 }
 
 /* ---------- 应用切换器（右上角九宫格，switcher.js）---------- */
 
-/* 挂在工具位正下方；z-index 高于工具位(45)、低于弹层(50) */
+/* 位置、底色、开合见 .corner-panel */
 .app-switcher {
-  position: fixed;
-  top: calc(10px + 34px + 8px + env(safe-area-inset-top, 0px));
-  right: calc(12px + env(safe-area-inset-right, 0px));
-  z-index: 46;
-  width: min(280px, calc(100vw - 24px));
+  width: 280px;
   max-height: min(70vh, 520px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
   padding: 6px;
-  animation: rise 0.3s var(--ease) both;
 }
-.app-switcher[hidden] { display: none; }
 
 .app-switcher-item {
   display: flex;
@@ -1024,16 +1032,11 @@ table.tbl {
 }
 
 /* 面板与切换器同位、同层（同一时刻只开一个，见 corner.js claimCornerPanel） */
+/* 位置、底色、开合见 .corner-panel */
 .account-menu {
-  position: fixed;
-  top: calc(10px + 34px + 8px + env(safe-area-inset-top, 0px));
-  right: calc(12px + env(safe-area-inset-right, 0px));
-  z-index: 46;
-  width: min(260px, calc(100vw - 24px));
+  width: 260px;
   padding: 6px;
-  animation: rise 0.3s var(--ease) both;
 }
-.account-menu[hidden] { display: none; }
 
 .account-menu-head {
   display: flex;

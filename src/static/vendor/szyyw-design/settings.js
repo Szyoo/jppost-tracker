@@ -9,7 +9,7 @@
                不从组件层硬塞进画布。
    ============================================================ */
 
-import { mountCornerTool, CORNER_ORDER, syncCornerRail } from "./corner.js";
+import { mountCornerTool, CORNER_ORDER, claimCornerPanel } from "./corner.js";
 import { DEFAULTS, resolveTokenColor } from "./dotfield.js";
 import { VERSION, REPO } from "./version.js";
 
@@ -239,8 +239,9 @@ export function mountDotFieldSettings({
     '<circle cx="14.2" cy="7.7" r="1.15" fill="currentColor" stroke="none"></circle>' +
     "</svg>";
 
-  const backdrop = el("div", "panel-backdrop");
-  const panel = el("aside", "glass settings-panel");
+  // 和切换器、账户菜单同一种工具位弹层（.corner-panel）：不加遮罩、不锁滚动
+  const panel = el("aside", "glass corner-panel settings-panel");
+  panel.hidden = true;
   panel.setAttribute("role", "dialog");
   panel.setAttribute("aria-label", title);
 
@@ -503,27 +504,28 @@ export function mountDotFieldSettings({
 
   /* ---------- 开合 ---------- */
 
+  // 与切换器 / 账户菜单同一套：点外面或 Esc 关闭，同一时刻只开一个（claimCornerPanel）。
+  // 不锁 body 滚动——锁了滚动条会消失、整页横向跳一下；不抢焦点——这是浮层不是模态框
   let open = false;
-  let scrollLock = "";
+  let release = null;
+
+  function onDocClick(e) {
+    if (!panel.contains(e.target) && !btn.contains(e.target)) setOpen(false);
+  }
 
   function setOpen(next) {
     if (next === open) return;
     open = next;
-    panel.classList.toggle("open", open);
-    backdrop.classList.toggle("show", open);
+    panel.hidden = !open;
     btn.setAttribute("aria-expanded", String(open));
-    // 关着时别让抽屉里的控件还能被 Tab 走到
-    if (open) panel.removeAttribute("inert");
-    else panel.setAttribute("inert", "");
     if (open) {
-      // 抽屉顶端靠 --corner-rail-h 让开工具位，弹出前先把它量准
-      syncCornerRail();
-      scrollLock = document.body.style.overflow;
-      document.body.style.overflow = "hidden";
+      release = claimCornerPanel(() => setOpen(false));
       for (const fn of rerenders) fn();
-      closeBtn.focus();
+      document.addEventListener("click", onDocClick, true);
     } else {
-      document.body.style.overflow = scrollLock;
+      release?.();
+      release = null;
+      document.removeEventListener("click", onDocClick, true);
     }
   }
 
@@ -531,14 +533,14 @@ export function mountDotFieldSettings({
     if (e.key === "Escape" && open) setOpen(false);
   }
 
+  btn.setAttribute("aria-haspopup", "dialog");
+  btn.setAttribute("aria-expanded", "false");
   btn.addEventListener("click", () => setOpen(!open));
   closeBtn.addEventListener("click", () => setOpen(false));
-  backdrop.addEventListener("click", () => setOpen(false));
   document.addEventListener("keydown", onKey);
 
-  panel.setAttribute("inert", "");
   for (const fn of rerenders) fn();
-  document.body.append(backdrop, panel);
+  document.body.append(panel);
   const unmount = mountCornerTool(btn, { order });
 
   return {
@@ -553,10 +555,9 @@ export function mountDotFieldSettings({
       for (const fn of rerenders) fn();
     },
     destroy() {
+      setOpen(false);
       document.removeEventListener("keydown", onKey);
-      if (open) document.body.style.overflow = scrollLock;
       unmount();
-      backdrop.remove();
       panel.remove();
     }
   };
