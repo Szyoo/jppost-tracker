@@ -95,7 +95,7 @@ export function mountAccountMenu({ portal = "https://szyyw.xyz", order = ACCOUNT
 
     const role = String(me.role || "");
     panel = document.createElement("div");
-    panel.className = "glass account-menu";
+    panel.className = "glass corner-panel account-menu";
     panel.hidden = true;
     panel.setAttribute("role", "menu");
     panel.innerHTML =

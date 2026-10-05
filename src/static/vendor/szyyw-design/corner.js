@@ -21,13 +21,37 @@ const RAIL_HEIGHT_VAR = "--corner-rail-h";
 let rail = null;
 let railObserver = null;
 
+const PANEL_TOP_VAR = "--corner-panel-top";
+const PANEL_RIGHT_VAR = "--corner-panel-right";
+/** 弹层与工具位之间的空隙 */
+const PANEL_GAP = 8;
+
+// 只在真变了才写：这些属性写在 <html> 上，DotField 的 observer 盯着 style，
+// 无谓的重复写会让它白白重算一次颜色
+function setVar(name, value) {
+  const style = document.documentElement.style;
+  if (style.getPropertyValue(name) !== value) style.setProperty(name, value);
+}
+
+/**
+ * 发布工具位的实测尺寸与「弹层锚点」：
+ * - --corner-rail-h：工具位高度（老浮层用它让开这条）
+ * - --corner-panel-top / --corner-panel-right：所有工具位弹层（.corner-panel）的位置。
+ *   横排：贴在工具位正下方、右缘对齐；纵排：贴在工具位左侧、顶端对齐——
+ *   纵排时挂在下方会压住下面那几枚按钮。用实测值而不是按方向写死，
+ *   未登录时「登录」按钮比一枚图标宽，写死的偏移会对不上。
+ */
 function publishRailHeight() {
   if (!rail?.isConnected) return;
-  const value = `${rail.offsetHeight}px`;
-  // 只在真变了才写：这个属性写在 <html> 上，DotField 的 observer 盯着 style，
-  // 无谓的重复写会让它白白重算一次颜色
-  if (document.documentElement.style.getPropertyValue(RAIL_HEIGHT_VAR) === value) return;
-  document.documentElement.style.setProperty(RAIL_HEIGHT_VAR, value);
+  setVar(RAIL_HEIGHT_VAR, `${rail.offsetHeight}px`);
+  const rect = rail.getBoundingClientRect();
+  // fixed 元素的 right 从视口内容区右缘量起（不含滚动条），所以用 clientWidth
+  const viewport = document.documentElement.clientWidth;
+  const column = getComputedStyle(rail).flexDirection.startsWith("column");
+  const top = column ? rect.top : rect.bottom + PANEL_GAP;
+  const right = column ? viewport - rect.left + PANEL_GAP : viewport - rect.right;
+  setVar(PANEL_TOP_VAR, `${Math.round(top)}px`);
+  setVar(PANEL_RIGHT_VAR, `${Math.round(right)}px`);
 }
 
 /**
@@ -52,6 +76,8 @@ export function cornerRail() {
     railObserver = new ResizeObserver(publishRailHeight);
     railObserver.observe(rail);
   }
+  // 窗口变宽变窄时工具位自身尺寸不变（观察不到），但 right 的像素值要跟着重算
+  window.addEventListener("resize", publishRailHeight, { passive: true });
   publishRailHeight();
   return rail;
 }
@@ -73,6 +99,9 @@ export function mountCornerTool(el, { order = 50 } = {}) {
       railObserver?.disconnect();
       railObserver = null;
       document.documentElement.style.removeProperty(RAIL_HEIGHT_VAR);
+      document.documentElement.style.removeProperty(PANEL_TOP_VAR);
+      document.documentElement.style.removeProperty(PANEL_RIGHT_VAR);
+      window.removeEventListener("resize", publishRailHeight);
       if (rail === host) rail = null;
     } else {
       publishRailHeight();
@@ -92,6 +121,8 @@ let openPanelClose = null;
  * @returns {() => void} release——本面板关闭时调用（重复调用无害）
  */
 export function claimCornerPanel(close) {
+  // 弹出那一刻把锚点量准（ResizeObserver 只在渲染时投递，页面隐藏期间可能掉通知）
+  publishRailHeight();
   if (openPanelClose && openPanelClose !== close) {
     const prev = openPanelClose;
     openPanelClose = null;

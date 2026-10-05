@@ -65,7 +65,7 @@ export function mountAppSwitcher({
   btn.setAttribute("aria-expanded", "false");
 
   const panel = document.createElement("div");
-  panel.className = "glass app-switcher";
+  panel.className = "glass corner-panel app-switcher";
   panel.hidden = true;
   panel.setAttribute("role", "menu");
 
