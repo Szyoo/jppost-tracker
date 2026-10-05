@@ -25,7 +25,7 @@
 ## 部署
 
 - **推送 `main` = 上线**：VPS（`vultr-jp`，`/opt/jppost-tracker`，git clone）上的 `szyyw-autodeploy.timer`
-  每 2 分钟跑平台仓库的 `/opt/ingress/deploy/deploy-app.sh jppost`：拉 `main` → `docker compose build` →
+  每 10 分钟跑平台仓库的 `/opt/ingress/deploy/deploy-app.sh jppost`：拉 `main` → `docker compose build` →
   `up -d --no-deps` → 健康检查，失败自动回滚。只改 `docs/`、`*.md`、`.github/` 的提交不触发重建。
 - 立即部署：`ssh vultr-jp /opt/ingress/deploy/deploy-app.sh jppost`（先确认在 `main`、工作区干净、已推送）；
   回滚：`... jppost --ref <ref>`；状态：`... jppost --status`。

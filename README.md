@@ -41,7 +41,7 @@
 
 ## 线上部署（vultr-jp）
 
-线上跑在公网 VPS 上：**推送到 `main` 即上线**（VPS 每 2 分钟自动拉取、重建、健康检查，失败自动回滚；
+线上跑在公网 VPS 上：**推送到 `main` 即上线**（VPS 每 10 分钟自动拉取、重建、健康检查，失败自动回滚；
 只改文档的提交不触发重建）。立即部署 `ssh vultr-jp /opt/ingress/deploy/deploy-app.sh jppost`，
 回滚加 `--ref <ref>`。Caddyfile 在平台仓库 szyyw-platform。共享包由
 `.github/workflows/upgrade-shared.yml` 自动升级。详见 [docs/vultr-vps-deploy.md](docs/vultr-vps-deploy.md)。

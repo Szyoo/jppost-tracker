@@ -2,7 +2,7 @@
 
 把 jppost-tracker 部署到 `vultr-jp`（167.179.76.194，东京，Ubuntu 26.04）的说明。
 
-> **日常发布不用看下面的步骤：推送到 `main` 就上线。** VPS 上的 `szyyw-autodeploy.timer` 每 2 分钟
+> **日常发布不用看下面的步骤：推送到 `main` 就上线。** VPS 上的 `szyyw-autodeploy.timer` 每 10 分钟
 > 检查一次，由平台仓库 szyyw-platform 的 `/opt/ingress/deploy/deploy-app.sh` 拉取 `main` →
 > `docker compose build` → `up -d --no-deps` → 健康检查，失败自动回滚；只改 `docs/`、`*.md`、`.github/`
 > 的提交不触发重建。下面的 §1-§4 是**首次搭建**的记录（该机器上已经完成）。
@@ -99,9 +99,9 @@ curl -I https://jppost.szyyw.xyz/login  # 应返回 200
 
 ## 6. 运维备忘
 
-- **更新部署 = 推送 `main`**：VPS 每 2 分钟自动拉取并重建（`deploy-app.sh jppost`，失败自动回滚）。
+- **更新部署 = 推送 `main`**：VPS 每 10 分钟自动拉取并重建（`deploy-app.sh jppost`，失败自动回滚）。
   发布前先确认在 `main`、工作区干净、已推送。
-- **立即部署**（不想等 2 分钟）：`ssh vultr-jp /opt/ingress/deploy/deploy-app.sh jppost`
+- **立即部署**（不想等 10 分钟）：`ssh vultr-jp /opt/ingress/deploy/deploy-app.sh jppost`
 - **回滚**：`ssh vultr-jp /opt/ingress/deploy/deploy-app.sh jppost --ref <提交或tag>`（固定到该版本；
   之后自动部署在不在 `main` 上时会跳过，修好后推 `main` 并再跑一次不带 `--ref` 的部署即恢复）。
   查看状态：`... jppost --status`。
