@@ -22,6 +22,19 @@
 线上跑的是第三种，见 [docs/vultr-vps-deploy.md](docs/vultr-vps-deploy.md)。
 动手前先确认 `git branch --show-current`。
 
+## 部署
+
+- **推送 `main` = 上线**：VPS（`vultr-jp`，`/opt/jppost-tracker`，git clone）上的 `szyyw-autodeploy.timer`
+  每 2 分钟跑平台仓库的 `/opt/ingress/deploy/deploy-app.sh jppost`：拉 `main` → `docker compose build` →
+  `up -d --no-deps` → 健康检查，失败自动回滚。只改 `docs/`、`*.md`、`.github/` 的提交不触发重建。
+- 立即部署：`ssh vultr-jp /opt/ingress/deploy/deploy-app.sh jppost`（先确认在 `main`、工作区干净、已推送）；
+  回滚：`... jppost --ref <ref>`；状态：`... jppost --status`。
+- Caddyfile 在平台仓库 szyyw-platform 的 `caddy/Caddyfile`，提交推送即自动 validate + reload，
+  不要手改 VPS 上的 `/opt/ingress/Caddyfile`。运行时配置只在 VPS 的 `deploy/vps/app.env`，绝不打印或提交。
+- 所有应用 compose 的项目名都是 `vps`：只用 `up -d --no-deps <服务>`，绝不 `compose down`，绝不 `docker … prune`。
+- 共享包（szyyw-auth、szyyw-design vendored 副本）由 `.github/workflows/upgrade-shared.yml` 每 6 小时自动升级：
+  测试通过就直接推 `main`（随后自动部署）。手动：`scripts/upgrade-shared.sh`。不要手改 vendor 目录。
+
 ## 语言规范
 
 - **对话**：与用户交流一律使用中文。

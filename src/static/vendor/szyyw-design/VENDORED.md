@@ -15,6 +15,8 @@ bash scripts/update-design.sh --local  # 例外：同步本机 clone 工作区�
 ```
 
 之后本地起服务走查一遍，确认无回归再提交。
+日常不用手动做：`.github/workflows/upgrade-shared.yml`（每 6 小时，调用 `scripts/upgrade-shared.sh`）
+会自动检测上游最新正式 tag，升级本目录，测试通过就推 `main`。
 线上齿轮面板底部有版本检测——落后于上游最新 tag 时齿轮会亮角标提醒。
 
 ## 约定

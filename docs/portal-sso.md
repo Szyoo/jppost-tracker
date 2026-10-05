@@ -1,7 +1,7 @@
 # portal SSO 接入（`SZYYW_SSO`）
 
 jppost.szyyw.xyz 接入 szyyw.xyz 门户的统一登录。契约见
-[szyyw-auth](https://github.com/Szyoo/szyyw-auth)（本项目 pin v0.2.0）：Caddy 的 `(sso)` 门卫
+[szyyw-auth](https://github.com/Szyoo/szyyw-auth)（本项目固定 tag 见 `requirements.txt`，由自动升级工作流跟进最新正式版）：Caddy 的 `(sso)` 门卫
 先剥掉客户端自带的 `X-User` / `X-Role` / `X-Portal-Sub` / `X-Portal-Anon`，再由 portal `/api/auth/verify`
 给已登录且有权访问本站的浏览器请求写入真实值；本站在 portal 公开名单里时，未登录访客改为只带
 `X-Portal-Anon: 1`（不带任何身份头）放行，见下文「匿名访客」。`/healthz` 什么都不注入。

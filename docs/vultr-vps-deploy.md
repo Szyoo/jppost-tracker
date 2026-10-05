@@ -1,6 +1,11 @@
 # vultr-jp 公网 VPS 部署说明
 
-把 jppost-tracker 部署到 `vultr-jp`（167.179.76.194，东京，Ubuntu 26.04）的完整步骤。
+把 jppost-tracker 部署到 `vultr-jp`（167.179.76.194，东京，Ubuntu 26.04）的说明。
+
+> **日常发布不用看下面的步骤：推送到 `main` 就上线。** VPS 上的 `szyyw-autodeploy.timer` 每 2 分钟
+> 检查一次，由平台仓库 szyyw-platform 的 `/opt/ingress/deploy/deploy-app.sh` 拉取 `main` →
+> `docker compose build` → `up -d --no-deps` → 健康检查，失败自动回滚；只改 `docs/`、`*.md`、`.github/`
+> 的提交不触发重建。下面的 §1-§4 是**首次搭建**的记录（该机器上已经完成）。
 与 [树莓派方案](raspberry-pi-funnel.md) 的区别：这台机器有真实公网 IP 和现成的
 Caddy 反代入口，**不需要 Tailscale Funnel**；管理页和 Bark 都走 Caddy 子域名 + 自动 HTTPS。
 
@@ -36,7 +41,7 @@ Caddy 要用 HTTP-01 验证签证书）：
 | `jppost` | `167.179.76.194` |
 | `bark` | `167.179.76.194` |
 
-## 2. 上传代码并准备配置
+## 2. 拉取代码并准备配置（首次搭建）
 
 ```bash
 ssh vultr-jp
@@ -57,7 +62,7 @@ python3 -c "from werkzeug.security import generate_password_hash; print(generate
 
 确认 `SESSION_COOKIE_SECURE=1`。
 
-## 3. 启动容器
+## 3. 启动容器（首次搭建）
 
 ```bash
 cd /opt/jppost-tracker/deploy/vps
@@ -66,14 +71,16 @@ docker compose ps          # 两个服务都应为 running
 docker compose logs -f jppost-tracker   # 确认 Flask 正常监听 6060
 ```
 
+> 所有应用 compose 的项目名都是 `vps`：在应用目录里手动操作只用 `up -d --no-deps <服务>`，
+> 绝不 `docker compose down`，也不要在共享 VPS 上跑任何 `docker … prune`。日常更新交给 `deploy-app.sh`（见 §6）。
+
 ## 4. 接入 Caddy
 
-把 [deploy/vps/Caddyfile.snippet](../deploy/vps/Caddyfile.snippet) 的两个站点块
-追加到 `/opt/ingress/Caddyfile`，然后重载：
-
-```bash
-docker exec caddy caddy reload --config /etc/caddy/Caddyfile
-```
+Caddyfile **不在本仓库、也不要再手改 VPS 上的 `/opt/ingress/Caddyfile`**：它在平台仓库
+[szyyw-platform](https://github.com/Szyoo/szyyw-platform) 的 `caddy/Caddyfile`，提交并推送到该仓库
+即自动 validate + reload 生效。`jppost.szyyw.xyz` 已在那里接好（带 `import sso` 门卫，别名由
+`sync-caddy-aliases.sh` 自动补）；新增站点/改路由请去平台仓库改。
+[deploy/vps/Caddyfile.snippet](../deploy/vps/Caddyfile.snippet) 只是历史参考，不再追加到 VPS。
 
 验证：
 
@@ -92,7 +99,16 @@ curl -I https://jppost.szyyw.xyz/login  # 应返回 200
 
 ## 6. 运维备忘
 
-- **更新部署**：`cd /opt/jppost-tracker && git pull && cd deploy/vps && docker compose up -d --build`
+- **更新部署 = 推送 `main`**：VPS 每 2 分钟自动拉取并重建（`deploy-app.sh jppost`，失败自动回滚）。
+  发布前先确认在 `main`、工作区干净、已推送。
+- **立即部署**（不想等 2 分钟）：`ssh vultr-jp /opt/ingress/deploy/deploy-app.sh jppost`
+- **回滚**：`ssh vultr-jp /opt/ingress/deploy/deploy-app.sh jppost --ref <提交或tag>`（固定到该版本；
+  之后自动部署在不在 `main` 上时会跳过，修好后推 `main` 并再跑一次不带 `--ref` 的部署即恢复）。
+  查看状态：`... jppost --status`。
+- **共享包自动升级**：`.github/workflows/upgrade-shared.yml` 每 6 小时检查 szyyw-auth / szyyw-design
+  的最新正式 tag，有新版就升级、跑测试，通过后以 github-actions[bot] 直接推 `main`（随后自动部署）。
+  手动触发：`gh workflow run upgrade-shared.yml --repo Szyoo/jppost-tracker --ref main`；
+  本地也可直接跑 `scripts/upgrade-shared.sh`。
 - **备份**：`tar czf jppost-backup.tgz deploy/vps/app.env deploy/vps/data deploy/vps/bark-data`
 - **资源**：机器只有 2G 内存（现约 1.0G 可用），本项目两个容器合计占用预计 <200M，
   但再往这台机器加服务时留意。

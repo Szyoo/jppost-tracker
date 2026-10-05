@@ -39,6 +39,13 @@
 - 在树莓派这类环境里，如果官方预编译 `bark-server` 二进制不可用，`install_bark.sh` 会自动退回到 Docker 包装器模式。
 - 如果系统刚装好、只有 `git`，通常还需要先安装 `python3-venv`；若要使用 Docker 包装器，还需要有可用的 `docker`。
 
+## 线上部署（vultr-jp）
+
+线上跑在公网 VPS 上：**推送到 `main` 即上线**（VPS 每 2 分钟自动拉取、重建、健康检查，失败自动回滚；
+只改文档的提交不触发重建）。立即部署 `ssh vultr-jp /opt/ingress/deploy/deploy-app.sh jppost`，
+回滚加 `--ref <ref>`。Caddyfile 在平台仓库 szyyw-platform。共享包由
+`.github/workflows/upgrade-shared.yml` 自动升级。详见 [docs/vultr-vps-deploy.md](docs/vultr-vps-deploy.md)。
+
 ## 树莓派本地部署
 
 如果你要在树莓派 Ubuntu 25 上本地运行，并通过 Tailscale Funnel 给手机提供 Bark HTTPS 地址，直接看这份说明：
