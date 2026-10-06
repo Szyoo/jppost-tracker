@@ -12,7 +12,7 @@ import threading
 from datetime import timedelta
 from functools import wraps
 
-from flask import Flask, abort, g, render_template, request, jsonify, redirect, session, url_for
+from flask import Flask, abort, g, send_from_directory, render_template, request, jsonify, redirect, session, url_for
 from flask_socketio import SocketIO, emit, disconnect
 from dotenv import load_dotenv, set_key
 import requests
@@ -619,7 +619,7 @@ def socket_admin_required(handler):
 
 @app.before_request
 def require_auth():
-    if request.endpoint in {'login', 'register', 'logout', 'healthz', 'static'}:
+    if request.endpoint in {'login', 'register', 'logout', 'healthz', 'static', 'favicon_svg', 'favicon_ico', 'apple_touch_icon'}:
         return None
     if request.path.startswith('/socket.io'):
         return None
@@ -642,6 +642,25 @@ def add_security_headers(response):
 def inject_sso_flags():
     # 模板据此隐藏注册/改密入口、挂载应用切换器；关闭时模板输出与以前完全一样
     return {"sso_on": sso_enabled(), "portal_origin": get_portal_origin()}
+
+ICON_DIR = os.path.join(os.path.dirname(__file__), 'static', 'icons')
+
+def _serve_icon(filename, mimetype):
+    resp = send_from_directory(ICON_DIR, filename, mimetype=mimetype)
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
+
+@app.route('/favicon.svg', methods=['GET'])
+def favicon_svg():
+    return _serve_icon('favicon.svg', 'image/svg+xml')
+
+@app.route('/favicon.ico', methods=['GET'])
+def favicon_ico():
+    return _serve_icon('favicon.ico', 'image/x-icon')
+
+@app.route('/apple-touch-icon.png', methods=['GET'])
+def apple_touch_icon():
+    return _serve_icon('apple-touch-icon.png', 'image/png')
 
 @app.route('/healthz', methods=['GET'])
 def healthz():
