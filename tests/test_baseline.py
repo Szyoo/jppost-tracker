@@ -66,3 +66,12 @@ def test_user_can_change_password(client, db):
     client.post("/logout")
     assert login(client, "bob", "old-pass").status_code == 200  # 失败回到表单
     assert login(client, "bob", "new-pass").status_code == 302
+
+
+def test_favicons_public(client):
+    for path, ctype in (("/favicon.svg", "image/svg+xml"),
+                        ("/favicon.ico", "image/x-icon"),
+                        ("/apple-touch-icon.png", "image/png")):
+        resp = client.get(path)
+        assert resp.status_code == 200, path
+        assert resp.mimetype == ctype, path
