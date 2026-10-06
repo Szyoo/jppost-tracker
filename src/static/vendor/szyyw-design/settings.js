@@ -1,6 +1,8 @@
 /* ============================================================
    @szyyw/design · settings.js
-   背景参数面板 —— 右上角调色板按钮 + 右侧抽屉，实时调点阵背景。
+   背景参数面板 —— 右上角调色板按钮 + 工具位弹层（.corner-panel），实时调点阵背景。
+   面板的积木（控件 / 版本行 / 按钮 / 骨架 / 开合）拆成 @internal 导出，
+   appearance.js 的「外观」弹层复用同一套，mountDotFieldSettings 的行为不变。
 
    参数分两路，面板里看不出区别，但底下各归各家：
      行为参数（点大小/间距/指针模型/波浪…）→ field.setOptions()
@@ -173,93 +175,24 @@ export function restoreDotFieldSettings({ storageKey = "szyyw:dotfield" } = {}) 
   return patch;
 }
 
+/* ---------- 内部积木（mountDotFieldSettings 与 appearance.js 的 mountAppearancePanel 共用）----------
+   导出只为让 appearance.js 复用，.d.ts 不声明，不属于公开 API，随时可能改签名。 */
+
 /**
- * 挂载背景参数面板。调色板按钮进右上角工具位，排在明暗切换右边。
- *
- * @param field      mountDotField() 的返回值（必需）
- * @param onSave     传了才显示「保存」按钮（存服务端用）；异步，抛错即算失败
- * @param note       没有 onSave 时显示在页脚的说明，如「访客模式 · 仅本地预览」
- * @param persist    "localStorage"（缺省，改完即存）| "none"
- * @param update     版本检测。false 关闭；{ onUpdate } 接了服务端更新端点才是真·一键更新，
- *                   没接则退化为「复制升级命令」（浏览器改不了服务器上的依赖）
+ * 背景参数面板里的全部控件：开关 / 滑杆 / 颜色 → 追加到 body；「恢复默认」+「保存」或说明 → 追加到 foot。
+ * 「只存动过的键」的 touched / snapshot / save 语义都在这里。
+ * @internal
+ * @returns {{ rerender(): void, sync(): void, snapshot(): object }}
  */
-export function mountDotFieldSettings({
-  field,
-  title = "背景参数",
-  persist = "localStorage",
-  storageKey = "szyyw:dotfield",
-  order = CORNER_ORDER.settings,
-  onSave = null,
-  note = "",
-  update = {},
-  labels = {}
-} = {}) {
-  if (!field?.setOptions) throw new Error("mountDotFieldSettings 需要 mountDotField() 返回的实例");
-
-  const text = {
-    open: "背景参数",
-    close: "关闭",
-    reset: "恢复默认",
-    save: "保存",
-    saving: "保存中…",
-    saved: "已保存 ✓",
-    error: "失败，重试",
-    version: "版本",
-    check: "检查更新",
-    checking: "检查中…",
-    upToDate: "已是最新 ✓",
-    updateAvailable: "有新版",
-    viewChanges: "查看变更",
-    copyCommand: "复制升级命令",
-    copied: "已复制 ✓",
-    updateNow: "更新到",
-    updating: "更新中…",
-    updated: "已更新 ✓",
-    updateFailed: "更新失败，重试",
-    checkFailed: "检查失败（网络或限流）",
-    ...labels
-  };
-
+export function renderDotFieldControls({ field, body, foot, persist, storageKey, onSave, note, text }) {
   // 面板状态 = 画布当前参数 + 当前解析出来的颜色
   const values = { ...field.getOptions() };
   for (const c of COLORS) values[c.key] = resolveTokenColor(c.varName) ?? "#000000";
 
-  /* ---------- 骨架 ---------- */
-
-  const btn = el("button", "corner-tool settings-toggle");
-  btn.type = "button";
-  btn.title = text.open;
-  btn.setAttribute("aria-label", text.open);
-  // 调色板而不是调色板：这里调的是外观/主题，调色板会被读成系统设置
-  btn.innerHTML =
-    '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-    '<path d="M12 2.6c-5.2 0-9.4 4.2-9.4 9.4s4.2 9.4 9.4 9.4a2.3 2.3 0 0 0 2.3-2.3c0-.6-.2-1.1-.6-1.5a2.2 2.2 0 0 1 1.6-3.8h1.8a4 4 0 0 0 4-4c0-4-4-7.2-9.1-7.2z"></path>' +
-    '<circle cx="7.2" cy="12.6" r="1.15" fill="currentColor" stroke="none"></circle>' +
-    '<circle cx="9.4" cy="8.2" r="1.15" fill="currentColor" stroke="none"></circle>' +
-    '<circle cx="14.2" cy="7.7" r="1.15" fill="currentColor" stroke="none"></circle>' +
-    "</svg>";
-
-  // 和切换器、账户菜单同一种工具位弹层（.corner-panel）：不加遮罩、不锁滚动
-  const panel = el("aside", "glass corner-panel settings-panel");
-  panel.hidden = true;
-  panel.setAttribute("role", "dialog");
-  panel.setAttribute("aria-label", title);
-
-  const head = el("div", "panel-head");
-  head.append(el("h2", "panel-title", title));
-  const closeBtn = el("button", "close-x", "✕");
-  closeBtn.type = "button";
-  closeBtn.title = text.close;
-  closeBtn.setAttribute("aria-label", text.close);
-  head.append(closeBtn);
-
-  const body = el("div", "panel-body");
-  const foot = el("div", "panel-foot");
-  panel.append(head, body, foot);
-
-  /* ---------- 控件 ---------- */
-
   const rerenders = [];
+  const rerender = () => {
+    for (const fn of rerenders) fn();
+  };
   /* 只有被真正动过的参数才落盘。面板一开就把当前解析色填进 values（色块要显示
      当前颜色），但那是「主题算出来的值」不是「用户的选择」——整包存下去会把
      没碰过的颜色钉死成当时那套明暗，sparkle/波浪也会脱离主题旋钮。
@@ -272,7 +205,7 @@ export function mountDotFieldSettings({
     if (COLOR_KEYS.includes(key)) applyColors(values, touched);
     else field.setOptions({ [key]: value });
     save();
-    for (const fn of rerenders) fn();
+    rerender();
   }
 
   for (const t of TOGGLES) {
@@ -347,106 +280,7 @@ export function mountDotFieldSettings({
     });
   }
 
-  /* ---------- 版本与更新 ---------- */
-
-  let runCheck = null;
-
-  if (update !== false) {
-    const cfg = {
-      repo: REPO,
-      cacheHours: 6,
-      /** 复制给用户的升级命令；vendored 项目传自己的 cp 流程 */
-      command: (v) => `npm i github:${cfg.repo}#v${v}`,
-      /** 接了才显示真按钮：由消费方的服务端完成更新（如 portal 的 admin 端点） */
-      onUpdate: null,
-      ...update
-    };
-
-    body.append(el("hr", "divider"));
-    const section = el("div", "ctl");
-    const line = el("div", "ctl-row");
-    const label = el("span", "ctl-label");
-    label.append(text.version + " ", el("span", "num", "v" + VERSION));
-    const checkBtn = el("button", "btn btn-ghost btn-small", text.check);
-    checkBtn.type = "button";
-    line.append(label, checkBtn);
-    const status = el("span", "ctl-hint");
-    const actions = el("div", "update-actions");
-    actions.hidden = true;
-    section.append(line, status, actions);
-    body.append(section);
-
-    const renderResult = (r) => {
-      btn.dataset.update = r.hasUpdate ? "1" : "";
-      actions.hidden = !r.hasUpdate;
-      actions.textContent = "";
-      status.textContent = "";
-      if (!r.hasUpdate) {
-        status.textContent = text.upToDate;
-        return;
-      }
-      status.append(`${text.updateAvailable} v${r.latest} · `);
-      const link = el("a", "update-link", text.viewChanges);
-      link.href = r.compareUrl;
-      link.target = "_blank";
-      link.rel = "noreferrer";
-      status.append(link);
-
-      if (cfg.onUpdate) {
-        const upBtn = el("button", "btn btn-small", `${text.updateNow} v${r.latest}`);
-        upBtn.type = "button";
-        upBtn.addEventListener("click", async () => {
-          upBtn.disabled = true;
-          upBtn.textContent = text.updating;
-          try {
-            await cfg.onUpdate(r);
-            // 成功后不复位——更新是部署动作，等消费方刷新页面收尾
-            upBtn.textContent = text.updated;
-          } catch {
-            upBtn.disabled = false;
-            upBtn.textContent = text.updateFailed;
-          }
-        });
-        actions.append(upBtn);
-      } else {
-        const copyBtn = el("button", "btn btn-small", text.copyCommand);
-        copyBtn.type = "button";
-        copyBtn.addEventListener("click", async () => {
-          const cmd = cfg.command(r.latest);
-          try {
-            await navigator.clipboard.writeText(cmd);
-            copyBtn.textContent = text.copied;
-          } catch {
-            // 剪贴板被拒（非安全上下文/无手势）——退化成弹窗手动复制
-            window.prompt(text.copyCommand, cmd);
-            copyBtn.textContent = text.copyCommand;
-            return;
-          }
-          setTimeout(() => {
-            copyBtn.textContent = text.copyCommand;
-          }, 1600);
-        });
-        actions.append(copyBtn);
-      }
-    };
-
-    runCheck = async (force) => {
-      checkBtn.disabled = true;
-      status.textContent = text.checking;
-      try {
-        renderResult(await checkDesignUpdate({ repo: cfg.repo, cacheHours: cfg.cacheHours, force }));
-      } catch {
-        status.textContent = text.checkFailed;
-      }
-      checkBtn.disabled = false;
-    };
-
-    checkBtn.addEventListener("click", () => runCheck(true));
-    // 挂载后静默查一次（走缓存，至多 6h 一次网络请求），有新版就点亮调色板角标
-    setTimeout(() => runCheck(false), 800);
-  }
-
-  /* ---------- 页脚 ---------- */
+  /* ---------- 恢复默认 / 保存 ---------- */
 
   const resetBtn = el("button", "btn btn-ghost", text.reset);
   resetBtn.type = "button";
@@ -457,7 +291,7 @@ export function mountDotFieldSettings({
     Object.assign(values, restored);
     for (const c of COLORS) values[c.key] = resolveTokenColor(c.varName) ?? "#000000";
     save();
-    for (const fn of rerenders) fn();
+    rerender();
   });
   foot.append(resetBtn);
 
@@ -502,10 +336,196 @@ export function mountDotFieldSettings({
     }
   }
 
-  /* ---------- 开合 ---------- */
+  return {
+    rerender,
+    snapshot,
+    /** 外部改了参数 / 换了配色明暗后让控件跟上：重读画布参数与解析色 */
+    sync() {
+      Object.assign(values, field.getOptions());
+      for (const c of COLORS) values[c.key] = resolveTokenColor(c.varName) ?? "#000000";
+      rerender();
+    }
+  };
+}
 
-  // 与切换器 / 账户菜单同一套：点外面或 Esc 关闭，同一时刻只开一个（claimCornerPanel）。
-  // 不锁 body 滚动——锁了滚动条会消失、整页横向跳一下；不抢焦点——这是浮层不是模态框
+/**
+ * 版本行：当前版本 + 「检查更新」+ 结果与动作按钮，追加到 body；有新版时给 btn 点角标。
+ * 挂载后 800ms 静默查一次（走缓存）。
+ * @internal
+ * @returns {(force: boolean) => Promise<void>} runCheck
+ */
+export function renderUpdateSection({ body, btn, text, update }) {
+  const cfg = {
+    repo: REPO,
+    cacheHours: 6,
+    /** 复制给用户的升级命令；vendored 项目传自己的 cp 流程 */
+    command: (v) => `npm i github:${cfg.repo}#v${v}`,
+    /** 接了才显示真按钮：由消费方的服务端完成更新（如 portal 的 admin 端点） */
+    onUpdate: null,
+    ...update
+  };
+
+  body.append(el("hr", "divider"));
+  const section = el("div", "ctl");
+  const line = el("div", "ctl-row");
+  const label = el("span", "ctl-label");
+  label.append(text.version + " ", el("span", "num", "v" + VERSION));
+  const checkBtn = el("button", "btn btn-ghost btn-small", text.check);
+  checkBtn.type = "button";
+  line.append(label, checkBtn);
+  const status = el("span", "ctl-hint");
+  const actions = el("div", "update-actions");
+  actions.hidden = true;
+  section.append(line, status, actions);
+  body.append(section);
+
+  const renderResult = (r) => {
+    btn.dataset.update = r.hasUpdate ? "1" : "";
+    actions.hidden = !r.hasUpdate;
+    actions.textContent = "";
+    status.textContent = "";
+    if (!r.hasUpdate) {
+      status.textContent = text.upToDate;
+      return;
+    }
+    status.append(`${text.updateAvailable} v${r.latest} · `);
+    const link = el("a", "update-link", text.viewChanges);
+    link.href = r.compareUrl;
+    link.target = "_blank";
+    link.rel = "noreferrer";
+    status.append(link);
+
+    if (cfg.onUpdate) {
+      const upBtn = el("button", "btn btn-small", `${text.updateNow} v${r.latest}`);
+      upBtn.type = "button";
+      upBtn.addEventListener("click", async () => {
+        upBtn.disabled = true;
+        upBtn.textContent = text.updating;
+        try {
+          await cfg.onUpdate(r);
+          // 成功后不复位——更新是部署动作，等消费方刷新页面收尾
+          upBtn.textContent = text.updated;
+        } catch {
+          upBtn.disabled = false;
+          upBtn.textContent = text.updateFailed;
+        }
+      });
+      actions.append(upBtn);
+    } else {
+      const copyBtn = el("button", "btn btn-small", text.copyCommand);
+      copyBtn.type = "button";
+      copyBtn.addEventListener("click", async () => {
+        const cmd = cfg.command(r.latest);
+        try {
+          await navigator.clipboard.writeText(cmd);
+          copyBtn.textContent = text.copied;
+        } catch {
+          // 剪贴板被拒（非安全上下文/无手势）——退化成弹窗手动复制
+          window.prompt(text.copyCommand, cmd);
+          copyBtn.textContent = text.copyCommand;
+          return;
+        }
+        setTimeout(() => {
+          copyBtn.textContent = text.copyCommand;
+        }, 1600);
+      });
+      actions.append(copyBtn);
+    }
+  };
+
+  const runCheck = async (force) => {
+    checkBtn.disabled = true;
+    status.textContent = text.checking;
+    try {
+      renderResult(await checkDesignUpdate({ repo: cfg.repo, cacheHours: cfg.cacheHours, force }));
+    } catch {
+      status.textContent = text.checkFailed;
+    }
+    checkBtn.disabled = false;
+  };
+
+  checkBtn.addEventListener("click", () => runCheck(true));
+  // 挂载后静默查一次（走缓存，至多 6h 一次网络请求），有新版就点亮调色板角标
+  setTimeout(() => runCheck(false), 800);
+  return runCheck;
+}
+
+/** 面板文案缺省值（控件与版本行共用） @internal */
+export const PANEL_TEXT = {
+  close: "关闭",
+  reset: "恢复默认",
+  save: "保存",
+  saving: "保存中…",
+  saved: "已保存 ✓",
+  error: "失败，重试",
+  version: "版本",
+  check: "检查更新",
+  checking: "检查中…",
+  upToDate: "已是最新 ✓",
+  updateAvailable: "有新版",
+  viewChanges: "查看变更",
+  copyCommand: "复制升级命令",
+  copied: "已复制 ✓",
+  updateNow: "更新到",
+  updating: "更新中…",
+  updated: "已更新 ✓",
+  updateFailed: "更新失败，重试",
+  checkFailed: "检查失败（网络或限流）"
+};
+
+/**
+ * 工具位按钮（调色板图标，.corner-tool.settings-toggle）。
+ * @internal
+ */
+export function createPaletteToggle(label) {
+  const btn = el("button", "corner-tool settings-toggle");
+  btn.type = "button";
+  btn.title = label;
+  btn.setAttribute("aria-label", label);
+  // 调色板而不是齿轮：这里调的是外观/主题，齿轮会被读成系统设置
+  btn.innerHTML =
+    '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M12 2.6c-5.2 0-9.4 4.2-9.4 9.4s4.2 9.4 9.4 9.4a2.3 2.3 0 0 0 2.3-2.3c0-.6-.2-1.1-.6-1.5a2.2 2.2 0 0 1 1.6-3.8h1.8a4 4 0 0 0 4-4c0-4-4-7.2-9.1-7.2z"></path>' +
+    '<circle cx="7.2" cy="12.6" r="1.15" fill="currentColor" stroke="none"></circle>' +
+    '<circle cx="9.4" cy="8.2" r="1.15" fill="currentColor" stroke="none"></circle>' +
+    '<circle cx="14.2" cy="7.7" r="1.15" fill="currentColor" stroke="none"></circle>' +
+    "</svg>";
+  return btn;
+}
+
+/**
+ * 弹层骨架：aside.glass.corner-panel.<extraClass> > .panel-head(标题 + ✕) + .panel-body (+ .panel-foot)。
+ * @internal
+ */
+export function createCornerPanel({ className, title, closeLabel, withFoot = true }) {
+  // 和切换器、账户菜单同一种工具位弹层（.corner-panel）：不加遮罩、不锁滚动
+  const panel = el("aside", "glass corner-panel " + className);
+  panel.hidden = true;
+  panel.setAttribute("role", "dialog");
+  panel.setAttribute("aria-label", title);
+
+  const head = el("div", "panel-head");
+  head.append(el("h2", "panel-title", title));
+  const closeBtn = el("button", "close-x", "✕");
+  closeBtn.type = "button";
+  closeBtn.title = closeLabel;
+  closeBtn.setAttribute("aria-label", closeLabel);
+  head.append(closeBtn);
+
+  const body = el("div", "panel-body");
+  const foot = withFoot ? el("div", "panel-foot") : null;
+  if (foot) panel.append(head, body, foot);
+  else panel.append(head, body);
+  return { panel, closeBtn, body, foot };
+}
+
+/**
+ * 弹层开合：点按钮切换、✕ / Esc / 点外面关闭，同一时刻只开一个（claimCornerPanel）。
+ * 不锁 body 滚动——锁了滚动条会消失、整页横向跳一下；不抢焦点——这是浮层不是模态框。
+ * 只绑监听，不挂 DOM。onOpen 在每次打开时调用（让控件跟上当前值）。
+ * @internal
+ */
+export function bindCornerPanel({ btn, panel, closeBtn, onOpen }) {
   let open = false;
   let release = null;
 
@@ -520,7 +540,7 @@ export function mountDotFieldSettings({
     btn.setAttribute("aria-expanded", String(open));
     if (open) {
       release = claimCornerPanel(() => setOpen(false));
-      for (const fn of rerenders) fn();
+      onOpen?.();
       document.addEventListener("click", onDocClick, true);
     } else {
       release?.();
@@ -539,24 +559,67 @@ export function mountDotFieldSettings({
   closeBtn.addEventListener("click", () => setOpen(false));
   document.addEventListener("keydown", onKey);
 
-  for (const fn of rerenders) fn();
+  return {
+    setOpen,
+    isOpen: () => open,
+    unbind() {
+      setOpen(false);
+      document.removeEventListener("keydown", onKey);
+    }
+  };
+}
+
+/**
+ * 挂载背景参数面板。调色板按钮进右上角工具位，排在明暗切换右边。
+ *
+ * @param field      mountDotField() 的返回值（必需）
+ * @param onSave     传了才显示「保存」按钮（存服务端用）；异步，抛错即算失败
+ * @param note       没有 onSave 时显示在页脚的说明，如「访客模式 · 仅本地预览」
+ * @param persist    "localStorage"（缺省，改完即存）| "none"
+ * @param update     版本检测。false 关闭；{ onUpdate } 接了服务端更新端点才是真·一键更新，
+ *                   没接则退化为「复制升级命令」（浏览器改不了服务器上的依赖）
+ *
+ * 与 appearance.js 的 mountAppearancePanel 二选一（同一枚按钮、同一个 order、同一份存储）。
+ */
+export function mountDotFieldSettings({
+  field,
+  title = "背景参数",
+  persist = "localStorage",
+  storageKey = "szyyw:dotfield",
+  order = CORNER_ORDER.settings,
+  onSave = null,
+  note = "",
+  update = {},
+  labels = {}
+} = {}) {
+  if (!field?.setOptions) throw new Error("mountDotFieldSettings 需要 mountDotField() 返回的实例");
+
+  const text = { open: "背景参数", ...PANEL_TEXT, ...labels };
+
+  const btn = createPaletteToggle(text.open);
+  const { panel, closeBtn, body, foot } = createCornerPanel({
+    className: "settings-panel",
+    title,
+    closeLabel: text.close
+  });
+
+  const controls = renderDotFieldControls({ field, body, foot, persist, storageKey, onSave, note, text });
+  const runCheck = update !== false ? renderUpdateSection({ body, btn, text, update }) : null;
+  const ctl = bindCornerPanel({ btn, panel, closeBtn, onOpen: controls.rerender });
+
+  controls.rerender();
   document.body.append(panel);
   const unmount = mountCornerTool(btn, { order });
 
   return {
-    open: () => setOpen(true),
-    close: () => setOpen(false),
+    open: () => ctl.setOpen(true),
+    close: () => ctl.setOpen(false),
     /** 手动触发一次强制检查（绕过缓存） */
     checkUpdate: () => runCheck?.(true),
     /** 外部改了参数后让面板跟上（比如从服务端拉到设置） */
-    sync() {
-      Object.assign(values, field.getOptions());
-      for (const c of COLORS) values[c.key] = resolveTokenColor(c.varName) ?? "#000000";
-      for (const fn of rerenders) fn();
-    },
+    sync: controls.sync,
     destroy() {
-      setOpen(false);
-      document.removeEventListener("keydown", onKey);
+      ctl.unbind();
       unmount();
       panel.remove();
     }

@@ -307,6 +307,22 @@ a {
   color: var(--text-dim);
 }
 
+/* ---------- 外观（.appearance-panel，在 .settings-panel 上扩展，appearance.js）----------
+   宽度、≥720px 两列网格都沿用 .settings-panel；配色 / 明暗行与折叠的背景参数段横跨两列，
+   背景参数段内部再按同样的两列排。chip 行复用 .chip / .chip-row，不另造样子 */
+.appearance-panel .panel-body > .appearance-row,
+.appearance-panel .panel-body > .appearance-advanced { grid-column: 1 / -1; }
+
+.appearance-advanced > summary { cursor: pointer; padding: 2px 0; }
+.appearance-advanced[open] > summary { margin-bottom: 14px; }
+.appearance-advanced-body { display: flex; flex-direction: column; gap: 14px; }
+.appearance-advanced-foot { display: flex; gap: 10px; margin-top: 16px; }
+.appearance-advanced-foot .btn { flex: 1; }
+
+@media (min-width: 720px) {
+  .appearance-advanced-body { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 24px; }
+}
+
 /* ---------- 参数控件 ---------- */
 
 .ctl {

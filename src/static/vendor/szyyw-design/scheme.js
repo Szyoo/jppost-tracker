@@ -69,6 +69,15 @@ function syncThemeColor() {
   meta.setAttribute("content", bg);
 }
 
+/**
+ * 立刻按当前底色重算 <meta name="theme-color">。
+ * 明暗切换时 setScheme 已经会调；换配色（data-palette）等其它会改 --bg 的操作之后
+ * 要手动调一次——appearance.js 的 setAppearance 就是这么用的。configureScheme({ themeColor: false }) 时不动。
+ */
+export function refreshThemeColor() {
+  syncThemeColor();
+}
+
 export function getScheme() {
   const v = document.documentElement.dataset.scheme;
   return SCHEMES.includes(v) ? v : "dark";
