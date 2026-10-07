@@ -493,7 +493,14 @@ input[type="color"]::-moz-color-swatch { border: none; border-radius: 4px; }
   box-shadow: 0 6px 24px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
-.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+/* 禁用态：实底「熄灭」而不是半透明渐变——0.45 透明度的紫色糊在输入框旁边，
+   边界看不清，像和输入框粘在一起（cosme 报过）。描边用 inset 阴影，不改尺寸、切换不跳。 */
+.btn:disabled {
+  cursor: not-allowed;
+  background: var(--inner-bg);
+  color: var(--text-dim);
+  box-shadow: inset 0 0 0 1px var(--glass-border);
+}
 
 .btn-ghost {
   appearance: none;
@@ -593,6 +600,30 @@ input[type="datetime-local"].field {
 }
 
 .form-row { margin-bottom: 14px; }
+
+/* .form-row 是「一个字段」的块：label + 控件 + 提示，块底留 14px。它**不排版**子元素——
+   要「输入框 + 按钮」同一行，用下面的 .field-row（可以与 .form-row 叠加）。
+   兜底：块里控件后面直接跟按钮 / 另一个控件时，100% 宽的控件把后者挤到下一行，
+   以前上下贴死；这里补 8px。叠了 .field-row 的不生效（那是 flex，有 gap）。
+   全部包在 :where() 里，特异性为 0，项目自己的规则随便盖。 */
+:where(.form-row:not(.field-row)) > :where(.field, input:not([type="checkbox"], [type="radio"], [type="hidden"]), select, textarea)
+  + :where(.btn, .btn-ghost, button, .field, input:not([type="checkbox"], [type="radio"], [type="hidden"]), select, textarea) {
+  margin-top: 8px;
+}
+
+/* 输入框 + 按钮一行（v0.11.0）：输入框吃掉剩余宽度，按钮保持本身宽度，窄屏放不下时按钮换到下一行。
+   <div class="field-row"><input class="field"><button class="btn btn-small">新增</button></div> */
+.field-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.field-row > .field { flex: 1 1 12rem; width: auto; }
+.field-row > :where(.btn, .btn-ghost, button, .pill, .chip) { flex: none; }
+/* 行内标签：去掉全局 label 的块级 + 下边距，和控件居中对齐 */
+.field-row > label { margin: 0; }
 
 .err-text { color: var(--err); font-size: 13px; }
 .ok-text { color: var(--ok); font-size: 13px; }
