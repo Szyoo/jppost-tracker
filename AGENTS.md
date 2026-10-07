@@ -18,16 +18,16 @@
   enabled/archived 语义、v1→v2 迁移里那个会静默删数据的 SQLite 外键坑）。
 - [docs/app-logic-review.md](docs/app-logic-review.md) — 应用逻辑梳理与重构方向。
 
-部署形态有三种（Render 云端 / 树莓派 Tailscale Funnel / Vultr 公网 VPS），
+部署形态有三种（Render 云端 / 树莓派 Tailscale Funnel / 公网 VPS，现为腾讯云轻量 东京），
 线上跑的是第三种，见 [docs/vultr-vps-deploy.md](docs/vultr-vps-deploy.md)。
 动手前先确认 `git branch --show-current`。
 
 ## 部署
 
-- **推送 `main` = 上线**：VPS（`vultr-jp`，`/opt/jppost-tracker`，git clone）上的 `szyyw-autodeploy.timer`
+- **推送 `main` = 上线**：VPS（`szyyw-lighthouse`，`/opt/jppost-tracker`，git clone）上的 `szyyw-autodeploy.timer`
   每 10 分钟跑平台仓库的 `/opt/ingress/deploy/deploy-app.sh jppost`：拉 `main` → `docker compose build` →
   `up -d --no-deps` → 健康检查，失败自动回滚。只改 `docs/`、`*.md`、`.github/` 的提交不触发重建。
-- 立即部署：`ssh vultr-jp /opt/ingress/deploy/deploy-app.sh jppost`（先确认在 `main`、工作区干净、已推送）；
+- 立即部署：`ssh szyyw-lighthouse /opt/ingress/deploy/deploy-app.sh jppost`（先确认在 `main`、工作区干净、已推送）；
   回滚：`... jppost --ref <ref>`；状态：`... jppost --status`。
 - Caddyfile 在平台仓库 szyyw-platform 的 `caddy/Caddyfile`，提交推送即自动 validate + reload，
   不要手改 VPS 上的 `/opt/ingress/Caddyfile`。运行时配置只在 VPS 的 `deploy/vps/app.env`，绝不打印或提交。

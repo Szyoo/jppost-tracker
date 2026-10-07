@@ -1,4 +1,4 @@
-# vultr-jp 部署编排（配合 docs/vultr-vps-deploy.md 使用）
+# szyyw-lighthouse 部署编排（配合 docs/vultr-vps-deploy.md 使用）
 #
 # 关键安全约定：两个服务都【不 publish 端口】。这台机器上 Docker 的
 # iptables 规则会绕过 ufw，任何 publish 到 0.0.0.0 的端口都会直接暴露

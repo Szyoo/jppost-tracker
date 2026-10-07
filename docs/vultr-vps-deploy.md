@@ -1,6 +1,9 @@
-# vultr-jp 公网 VPS 部署说明
+# 公网 VPS 部署说明（szyyw-lighthouse）
 
-把 jppost-tracker 部署到 `vultr-jp`（167.179.76.194，东京，Ubuntu 26.04）的说明。
+> **2026-10-07 起 VPS 已从 Vultr 东京（`vultr-jp`，167.179.76.194）迁到腾讯云轻量 东京（`szyyw-lighthouse`，43.167.220.135）**，
+> `/opt/*` 布局不变；本文件名保留 `vultr-vps-deploy.md` 只为不断链。迁移记录见平台仓库 szyyw-platform 的 `docs/migration-tencent.md`。
+
+把 jppost-tracker 部署到 `szyyw-lighthouse`（43.167.220.135，腾讯云轻量 东京，Ubuntu 26.04）的说明。
 
 > **日常发布不用看下面的步骤：推送到 `main` 就上线。** VPS 上的 `szyyw-autodeploy.timer` 每 10 分钟
 > 检查一次，由平台仓库 szyyw-platform 的 `/opt/ingress/deploy/deploy-app.sh` 拉取 `main` →
@@ -38,13 +41,13 @@ Caddy 要用 HTTP-01 验证签证书）：
 
 | 名称 | 值 |
 |---|---|
-| `jppost` | `167.179.76.194` |
-| `bark` | `167.179.76.194` |
+| `jppost` | `43.167.220.135` |
+| `bark` | `43.167.220.135` |
 
 ## 2. 拉取代码并准备配置（首次搭建）
 
 ```bash
-ssh vultr-jp
+ssh szyyw-lighthouse
 sudo mkdir -p /opt/jppost-tracker && sudo chown $USER /opt/jppost-tracker
 git clone https://github.com/Szyoo/jppost-tracker.git /opt/jppost-tracker
 cd /opt/jppost-tracker/deploy/vps
@@ -101,8 +104,8 @@ curl -I https://jppost.szyyw.xyz/login  # 应返回 200
 
 - **更新部署 = 推送 `main`**：VPS 每 10 分钟自动拉取并重建（`deploy-app.sh jppost`，失败自动回滚）。
   发布前先确认在 `main`、工作区干净、已推送。
-- **立即部署**（不想等 10 分钟）：`ssh vultr-jp /opt/ingress/deploy/deploy-app.sh jppost`
-- **回滚**：`ssh vultr-jp /opt/ingress/deploy/deploy-app.sh jppost --ref <提交或tag>`（固定到该版本；
+- **立即部署**（不想等 10 分钟）：`ssh szyyw-lighthouse /opt/ingress/deploy/deploy-app.sh jppost`
+- **回滚**：`ssh szyyw-lighthouse /opt/ingress/deploy/deploy-app.sh jppost --ref <提交或tag>`（固定到该版本；
   之后自动部署在不在 `main` 上时会跳过，修好后推 `main` 并再跑一次不带 `--ref` 的部署即恢复）。
   查看状态：`... jppost --status`。
 - **共享包自动升级**：`.github/workflows/upgrade-shared.yml` 每 6 小时检查 szyyw-auth / szyyw-design
