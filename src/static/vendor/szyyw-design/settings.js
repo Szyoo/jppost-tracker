@@ -320,7 +320,9 @@ export function renderDotFieldControls({ field, body, foot, persist, storageKey,
     });
     foot.append(saveBtn);
   } else if (note) {
-    foot.append(el("span", "guest-note", note));
+    // v0.14.0：note === true 用内置文案（locale 决定语言）；字符串照旧原样显示
+    const noteText = note === true ? text.localOnly ?? appearanceText("zh").localOnly : note;
+    foot.append(el("span", "guest-note", noteText));
   }
 
   /** 只含被改动过的键——没碰过的继续跟主题走 */
@@ -578,7 +580,8 @@ export function bindCornerPanel({ btn, panel, closeBtn, onOpen }) {
  *
  * @param field      mountDotField() 的返回值（必需）
  * @param onSave     传了才显示「保存」按钮（存服务端用）；异步，抛错即算失败
- * @param note       没有 onSave 时显示在页脚的说明，如「访客模式 · 仅本地预览」
+ * @param note       没有 onSave 时显示在页脚的说明，如「访客模式 · 仅本地预览」；
+ *                   v0.14.0 起传 true 用内置文案（「仅保存在本浏览器」，随 locale）
  * @param persist    "localStorage"（缺省，改完即存）| "none"
  * @param update     版本检测。false 关闭；{ onUpdate } 接了服务端更新端点才是真·一键更新，
  *                   没接则退化为「复制升级命令」（浏览器改不了服务器上的依赖）

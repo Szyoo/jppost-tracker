@@ -75,6 +75,14 @@
   --tint-cyan-bg: light-dark(rgba(3, 105, 161, 0.11), rgba(56, 189, 248, 0.14));
   --tint-violet-bg: light-dark(rgba(126, 34, 206, 0.11), rgba(168, 85, 247, 0.16));
 
+  /* 补充状态色（v0.14.0：.pill.slate / .pill.pink）。
+     slate = 中性灰蓝，表示「未知 / 未定」——比默认 .pill 多一层底色与带色描边，和 cyan 比饱和度低得多；
+     pink = 与 red（错误）/ violet（accent2）都拉开色相的第六种状态色 */
+  --slate: light-dark(#475569, #a3b5cc);
+  --pink: light-dark(#be185d, #f472b6);
+  --tint-slate-bg: light-dark(rgba(71, 85, 105, 0.12), rgba(148, 163, 184, 0.16));
+  --tint-pink-bg: light-dark(rgba(190, 24, 93, 0.1), rgba(244, 114, 182, 0.15));
+
   /* 图表分类色（v0.13.0）：系列按 1→6 取，随配色与明暗变；超过 6 个系列请合并成「其他」 */
   --chart-1: light-dark(#0284c7, #38bdf8);
   --chart-2: light-dark(#7e22ce, #a855f7);
@@ -123,6 +131,10 @@
 
   --tint-cyan-bg: light-dark(rgba(3, 105, 161, 0.11), rgba(56, 189, 248, 0.14));
   --tint-violet-bg: light-dark(rgba(4, 120, 87, 0.12), rgba(52, 211, 153, 0.15));
+  /* 补充状态色（v0.14.0）：灰蓝略偏青以贴合翠青底色，粉色不变（与翠绿 / 青蓝互补，最好认） */
+  --slate: light-dark(#44606a, #a0b8c0);
+  --tint-slate-bg: light-dark(rgba(68, 96, 106, 0.12), rgba(148, 178, 186, 0.16));
+  --tint-pink-bg: light-dark(rgba(190, 24, 93, 0.1), rgba(244, 114, 182, 0.15));
 
   --chart-1: light-dark(#047857, #34d399);
   --chart-2: light-dark(#0369a1, #38bdf8);

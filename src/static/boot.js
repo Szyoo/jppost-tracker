@@ -20,7 +20,7 @@ mountChrome({
   appearance: {
     // 背景参数只存本浏览器；版本检测的升级命令走本项目的同步脚本
     dotField: {
-      note: '参数仅保存在本浏览器',
+      note: true,
       update: { command: () => 'bash scripts/update-design.sh' },
     },
   },

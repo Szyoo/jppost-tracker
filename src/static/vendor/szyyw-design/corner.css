@@ -516,6 +516,14 @@ a.corner-tool { text-decoration: none; }
  color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); background: var(--tint-amber-bg);
 }
 
+:where(.corner-tools, .corner-panel) .pill.slate {
+ color: var(--slate); border-color: color-mix(in srgb, var(--slate) 50%, transparent); background: var(--tint-slate-bg);
+}
+
+:where(.corner-tools, .corner-panel) .pill.pink {
+ color: var(--pink); border-color: color-mix(in srgb, var(--pink) 50%, transparent); background: var(--tint-pink-bg);
+}
+
 :where(.corner-tools, .corner-panel) .chip {
   appearance: none;
   font: inherit;
