@@ -15,6 +15,9 @@
   display: none !important;
 }
 
+/* 毛玻璃一律先写 -webkit- 再写标准属性：反过来写时 Next.js（lightningcss）会把标准属性吞掉、
+   只留带前缀的，Chrome / Android 上所有模糊失效（v0.14.2 修正） */
+
 html,
 body {
   margin: 0;
@@ -105,8 +108,8 @@ a {
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
   border-radius: 16px;
-  backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
 }
 
 .panel {
@@ -194,8 +197,8 @@ a {
   color: var(--text);
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
-  backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
   transition: transform 0.15s var(--ease), border-color 0.15s var(--ease), background 0.15s var(--ease);
 }
 
@@ -847,8 +850,8 @@ table.tbl {
   inset: 0;
   z-index: 50;
   background: var(--overlay-bg);
-  backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
   display: flex;
   align-items: flex-end;
   justify-content: center;
@@ -863,8 +866,8 @@ table.tbl {
   background: var(--sheet-bg);
   border: 1px solid var(--glass-border);
   border-bottom: none;
-  backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
   animation: sheet-up 0.35s var(--ease) both;
 }
 
@@ -1205,8 +1208,8 @@ table.tbl {
   border-radius: 12px;
   border: 1px solid var(--glass-border);
   background: var(--sheet-bg);
-  backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
   box-shadow: var(--pop-shadow);
   color: var(--text);
   font-size: 14px;
@@ -1338,8 +1341,8 @@ select.field.small { padding-right: 30px; }
   border-radius: 12px;
   border: 1px solid var(--glass-border);
   background: var(--sheet-bg);
-  backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
   box-shadow: var(--pop-shadow);
   animation: rise 0.2s var(--ease) both;
 }
@@ -1408,8 +1411,8 @@ select.field.small { padding-right: 30px; }
   border-radius: 16px;
   border: 1px solid var(--glass-border);
   background: var(--sheet-bg);
-  backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
   box-shadow: var(--pop-shadow);
   animation: drawer-in 0.35s var(--ease) both;
 }
