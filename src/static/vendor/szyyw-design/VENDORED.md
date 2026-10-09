@@ -1,7 +1,7 @@
 # @szyyw/design（vendored）
 
 - 上游：https://github.com/Szyoo/szyyw-design
-- 当前版本：**v0.14.1**
+- 当前版本：**v0.14.2**
 - 引入方式：Flask 无构建步骤，由上游 `sync.sh` 按 tag 同步（文件清单见文末，只在上游维护），
   原样拷贝不做修改。`scripts/update-design.sh` 也从同一个 tag 取 sync.sh，清单与版本一致。
 
