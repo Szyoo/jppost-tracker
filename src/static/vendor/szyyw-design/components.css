@@ -9,6 +9,12 @@
   box-sizing: border-box;
 }
 
+/* hidden 属性永远赢：组件类（.overlay / .stack / .callout / .row …）自带 display，
+   不加这条时 hidden 会被它们盖掉，应用只能逐个补兜底（v0.14.1） */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   margin: 0;
@@ -720,6 +726,9 @@ input[type="datetime-local"].field {
 .pill.green { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); background: var(--tint-green-bg); }
 .pill.red { color: var(--err); border-color: color-mix(in srgb, var(--err) 50%, transparent); background: var(--tint-red-bg); }
 .pill.amber { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); background: var(--tint-amber-bg); }
+/* v0.14.0：slate = 中性「未知 / 未定」，pink = 补充色 */
+.pill.slate { color: var(--slate); border-color: color-mix(in srgb, var(--slate) 50%, transparent); background: var(--tint-slate-bg); }
+.pill.pink { color: var(--pink); border-color: color-mix(in srgb, var(--pink) 50%, transparent); background: var(--tint-pink-bg); }
 
 /* 选择胶囊 */
 .chip {
@@ -870,6 +879,13 @@ table.tbl {
 
 .sheet-title { margin: 0; font-size: 16px; font-weight: 600; }
 
+/* 无标题头（v0.14.0）：.sheet-head 里只有一枚 .close-x 时，关闭键靠右、头部收成按钮那么高。
+   特异性停在 (0,1,0)（:where 包住 :has），项目自己的 .sheet-head 规则照样能盖 */
+.sheet-head:where(:has(> .close-x:only-child)) {
+  justify-content: flex-end;
+  padding: 10px 18px 0;
+}
+
 .sheet-body {
   flex: 1;
   overflow-y: auto;
@@ -1004,6 +1020,13 @@ table.tbl {
 .term-lvl.active {
   color: var(--term-accent);
   border-color: color-mix(in srgb, var(--term-accent) 45%, transparent);
+}
+
+.term-lvl:disabled,
+.term-copy:disabled {
+  color: color-mix(in srgb, var(--term-dim) 60%, transparent);
+  border-color: transparent;
+  cursor: not-allowed;
 }
 
 .term-copy { min-width: 30px; text-align: center; }
@@ -1519,6 +1542,9 @@ select.field.small { padding-right: 30px; }
   .sheet-foot { padding-bottom: 14px; justify-content: flex-end; }
   .sheet-foot .btn, .sheet-foot .btn-ghost { flex: none; }
   .sheet-foot .danger { margin-right: auto; }
+
+  /* 宽版弹层（v0.14.0）：大图 + 键值表的详情。手机端仍是底部全宽抽屉，不受影响 */
+  .sheet.wide { max-width: 760px; }
 
   .stat-value { font-size: 26px; }
 }
