@@ -1,5 +1,15 @@
 # main 分支进度
 
+## 2026-10-10：设计包改为直接引用 CDN（design.szyyw.xyz），v0.14.2 → v0.15.0
+
+- 删除 vendored 的 `src/static/vendor/szyyw-design/`（`.gitignore` 挡住防止加回），镜像里也不再有副本。
+- 版本只在 `src/app.py` 的 `DESIGN_VERSION = "v0.15.0"`；`DESIGN_BASE` 缺省 `https://design.szyyw.xyz/<版本>`，同名环境变量可覆盖。
+- 新模板片段 `_design_head.html`：preconnect + import map（`"@szyyw/design/": DESIGN_BASE/`）+ tokens.css / components.css，
+  六个页面都 include；`boot.js`、`app.js`（动态 import toast）、用户门户的内联 toast 改用裸说明符 `@szyyw/design/…`。
+- `scripts/update-design.sh` 改为「改 DESIGN_VERSION + `curl -fsI` 验证 CDN 上该版本存在」，不再调 sync.sh；
+  `upgrade-shared.sh` / bot workflow 跟着改（只 add `src/app.py`）。外观面板升级命令改为 `bash scripts/update-design.sh vX.Y.Z`。
+- v0.15.0 只是新增 TechText，本应用不启用。
+
 ## 2026-10-09：@szyyw/design v0.13.1 → v0.14.2
 
 - vendor 升到 v0.14.2（全局 `[hidden]` 永远隐藏；本应用没有补过 `[hidden]` 兜底，无需删）。

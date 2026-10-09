@@ -109,7 +109,7 @@ curl -I https://jppost.szyyw.xyz/login  # 应返回 200
   之后自动部署在不在 `main` 上时会跳过，修好后推 `main` 并再跑一次不带 `--ref` 的部署即恢复）。
   查看状态：`... jppost --status`。
 - **共享包自动升级**：`.github/workflows/upgrade-shared.yml` 每 6 小时检查 szyyw-auth / szyyw-design
-  的最新正式 tag，有新版就升级、跑测试，通过后以 github-actions[bot] 直接推 `main`（随后自动部署）。
+  的最新正式 tag，有新版就升级（设计包只改 `src/app.py` 的 `DESIGN_VERSION`，CDN 上还没有该版本则本轮失败、下轮重试）、跑测试，通过后以 github-actions[bot] 直接推 `main`（随后自动部署）。
   手动触发：`gh workflow run upgrade-shared.yml --repo Szyoo/jppost-tracker --ref main`；
   本地也可直接跑 `scripts/upgrade-shared.sh`。
 - **备份**：`tar czf jppost-backup.tgz deploy/vps/app.env deploy/vps/data deploy/vps/bark-data`

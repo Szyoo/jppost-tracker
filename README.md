@@ -39,6 +39,17 @@
 - 在树莓派这类环境里，如果官方预编译 `bark-server` 二进制不可用，`install_bark.sh` 会自动退回到 Docker 包装器模式。
 - 如果系统刚装好、只有 `git`，通常还需要先安装 `python3-venv`；若要使用 Docker 包装器，还需要有可用的 `docker`。
 
+### 设计包 @szyyw/design（CDN 引用）
+
+页面直接引用自托管 CDN `https://design.szyyw.xyz/<版本>/`，仓库里没有副本。版本只在 `src/app.py` 的 `DESIGN_VERSION`，
+模板公共片段 `src/templates/_design_head.html` 输出 CSS 链接和 import map（`@szyyw/design/` → CDN 前缀），
+`boot.js` / `app.js` 里写 `import … from '@szyyw/design/xxx.js'`，不写死版本。
+
+- 升级：`bash scripts/update-design.sh vX.Y.Z`（缺省最新 tag）——改 `DESIGN_VERSION`，并先确认 CDN 上已有该版本；
+  日常由 `.github/workflows/upgrade-shared.yml` 每 6 小时自动做。不得引用 `/latest/`。
+- 本地离线开发指向本机设计包：在 szyyw-design 目录起一个带 CORS 的静态服务，例如
+  `npx http-server ~/Documents/GitHub/szyyw-design -p 8137 --cors -c-1`，再以 `DESIGN_BASE=http://127.0.0.1:8137 python src/app.py` 启动。
+
 ## 线上部署（szyyw-lighthouse）
 
 线上跑在公网 VPS 上：**推送到 `main` 即上线**（VPS 每 10 分钟自动拉取、重建、健康检查，失败自动回滚；
@@ -182,7 +193,7 @@ PY
 - `src/app.py`：Flask 应用及 WebSocket 服务
 - `src/tracker.py`：查询日本邮政物流并推送 Bark 的脚本
 - `src/templates/`：前端页面模板
-- `src/static/`：前端静态资源
+- `src/static/`：前端静态资源（设计包不在这里，走 CDN，见上文「设计包」）
 - `install_bark.sh`：自动下载并安装 Bark Server 的脚本
 
 ## 许可

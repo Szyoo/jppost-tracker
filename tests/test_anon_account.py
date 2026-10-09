@@ -34,8 +34,23 @@ def test_boot_mounts_account_menu(client, db):
     boot = client.get("/static/boot.js").data.decode()
     # mountChrome 在 portal 非空时挂切换器 + 账户菜单；SSO 关时传 null 不挂
     assert "mountChrome(" in boot and "root.dataset.sso === '1'" in boot and ": null" in boot
-    chrome = client.get("/static/vendor/szyyw-design/chrome.js").data
-    assert b"export function mountChrome" in chrome and b"mountAccountMenu" in chrome
+    # 设计包走 CDN：boot.js 用 import map 的裸说明符，不写死版本，也不再有本地副本
+    assert "from '@szyyw/design/chrome.js'" in boot and "/static/vendor/" not in boot
+    assert client.get("/static/vendor/szyyw-design/chrome.js").status_code == 404
+
+
+def test_design_package_from_cdn(client, db, monkeypatch):
+    # 页面里设计包 CSS 与 import map 都指向 CDN 的同一钉死版本（不得用 /latest/、不得留本地副本路径）
+    base = f"https://design.szyyw.xyz/{app_module.DESIGN_VERSION}"
+    html = client.get("/login").data.decode()
+    assert f'href="{base}/tokens.css"' in html and f'href="{base}/components.css"' in html
+    assert '<script type="importmap">{"imports": {"@szyyw/design/": "' + base + '/"}}</script>' in html
+    assert html.index('type="importmap"') < html.index('type="module"')
+    assert "/latest/" not in html and "/static/vendor/" not in html
+    # DESIGN_BASE 环境变量可覆盖（本地离线开发）
+    monkeypatch.setenv("DESIGN_BASE", "http://127.0.0.1:8137/")
+    html = client.get("/login").data.decode()
+    assert 'href="http://127.0.0.1:8137/tokens.css"' in html and '"@szyyw/design/": "http://127.0.0.1:8137/"' in html
 
 
 def test_anon_data_endpoints_stay_401(client, db, sso):

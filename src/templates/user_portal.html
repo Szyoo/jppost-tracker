@@ -8,8 +8,7 @@
     <link rel="icon" href="/favicon.ico" sizes="any" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     {% include '_appearance_head.html' %}
-    <link rel="stylesheet" href="/static/vendor/szyyw-design/tokens.css" />
-    <link rel="stylesheet" href="/static/vendor/szyyw-design/components.css" />
+    {% include '_design_head.html' %}
     <link rel="stylesheet" href="/static/style.css" />
   </head>
   <body>
@@ -281,7 +280,7 @@
     {%- if message %}
     <!-- 表单提交后的操作反馈（重定向带回的 message / status）：用包的 toast()，与控制台一致 -->
     <script type="module">
-      import { toast } from '/static/vendor/szyyw-design/toast.js';
+      import { toast } from '@szyyw/design/toast.js';
       const err = {{ (status == 'error') | tojson }};
       toast({{ message | tojson }}, { tone: err ? 'err' : 'ok', timeout: err ? 5000 : 3000 });
     </script>

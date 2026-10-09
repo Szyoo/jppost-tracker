@@ -11,7 +11,9 @@
 - [src/tracker.py](src/tracker.py) — 轮询日本邮政官网，解析最新物流记录，变化时推送 Bark。
 - [src/storage.py](src/storage.py) — SQLite 存储层（账号 + 追踪任务），schema 与迁移都在这。
 - [src/templates/](src/templates/)、[src/static/](src/static/) — 控制台前端。
-  样式基础层是 vendored 的设计包，见 [VENDORED.md](src/static/vendor/szyyw-design/VENDORED.md)。
+  样式基础层是设计包 @szyyw/design，**直接引用 CDN** `https://design.szyyw.xyz/<版本>/`，版本只在
+  [src/app.py](src/app.py) 的 `DESIGN_VERSION`（`DESIGN_BASE` 环境变量可覆盖，本地离线开发用，见 README「设计包」）；
+  模板公共片段 [_design_head.html](src/templates/_design_head.html) 输出 CSS 与 import map，JS 里写 `@szyyw/design/xxx.js`。
 
 **开工前必读的两份文档**：
 - [docs/data-model.md](docs/data-model.md) — 数据模型（账号 vs 追踪任务的字段归属、
@@ -32,8 +34,9 @@
 - Caddyfile 在平台仓库 szyyw-platform 的 `caddy/Caddyfile`，提交推送即自动 validate + reload，
   不要手改 VPS 上的 `/opt/ingress/Caddyfile`。运行时配置只在 VPS 的 `deploy/vps/app.env`，绝不打印或提交。
 - 所有应用 compose 的项目名都是 `vps`：只用 `up -d --no-deps <服务>`，绝不 `compose down`，绝不 `docker … prune`。
-- 共享包（szyyw-auth、szyyw-design vendored 副本）由 `.github/workflows/upgrade-shared.yml` 每 6 小时自动升级：
-  测试通过就直接推 `main`（随后自动部署）。手动：`scripts/upgrade-shared.sh`。不要手改 vendor 目录。
+- 共享包（szyyw-auth、szyyw-design 的 `DESIGN_VERSION`）由 `.github/workflows/upgrade-shared.yml` 每 6 小时自动升级：
+  测试通过就直接推 `main`（随后自动部署）。手动：`scripts/upgrade-shared.sh`；只升设计包：`bash scripts/update-design.sh vX.Y.Z`
+  （CDN 上还没有该版本会失败退出）。不要再 vendoring 设计包（`.gitignore` 已挡住 `src/static/vendor/szyyw-design/`）。
 
 ## 语言规范
 
