@@ -114,14 +114,10 @@ textarea.field {
   cursor: not-allowed;
 }
 
-/* ---------- 行内反馈（颜色用包的 .ok-text / .err-text，这里只管位置） ---------- */
+/* ---------- 表单旁常驻的错误提示（颜色用包的 .err-text，这里只管位置）；瞬时反馈走 toast() ---------- */
 
 .message {
   margin-top: 12px;
-}
-
-.message.flash {
-  margin: 0 0 16px;
 }
 
 /* ---------- 状态点 ---------- */

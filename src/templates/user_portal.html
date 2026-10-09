@@ -31,10 +31,6 @@
         {%- endif %}
       </header>
 
-      {% if message %}
-      <div class="message flash {{ 'ok-text' if status == 'success' else 'err-text' }}" id="flash-message">{{ message }}</div>
-      {% endif %}
-
       <h2 class="section-name">我的概览</h2>
       <div class="stat-grid stagger">
         <div class="stat-card glass lift spot">
@@ -282,17 +278,13 @@
     </div>
 
     <script type="module" src="/static/boot.js"></script>
-    <script>
-      // 行内反馈 3 秒后自动消失（DESIGN.md §9）
-      (function () {
-        var flash = document.getElementById('flash-message');
-        if (flash) {
-          setTimeout(function () {
-            flash.style.transition = 'opacity 0.4s';
-            flash.style.opacity = '0';
-          }, 3000);
-        }
-      })();
+    {%- if message %}
+    <!-- 表单提交后的操作反馈（重定向带回的 message / status）：用包的 toast()，与控制台一致 -->
+    <script type="module">
+      import { toast } from '/static/vendor/szyyw-design/toast.js';
+      const err = {{ (status == 'error') | tojson }};
+      toast({{ message | tojson }}, { tone: err ? 'err' : 'ok', timeout: err ? 5000 : 3000 });
     </script>
+    {%- endif %}
   </body>
 </html>

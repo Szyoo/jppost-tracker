@@ -244,8 +244,7 @@
               <button type="button" class="btn-ghost" @click="resetEnv" :disabled="!envDirtyCount">撤销改动</button>
             </div>
           </form>
-          <div v-if="envMessage.text" :class="['message', envMessage.type === 'success' ? 'ok-text' : 'err-text']">[[ envMessage.text ]]</div>
-          <!-- 生效说明比那条 3 秒后自动消失的反馈更需要留着看，所以单独一行、不跟着消失 -->
+          <!-- 生效说明比 3 秒后自动消失的 toast 更需要留着看，所以单独一行、不跟着消失 -->
           <p v-if="envApplyNote" class="callout info env-apply-note">[[ envApplyNote ]]</p>
         </div>
       </section>
@@ -520,9 +519,6 @@
             <div class="empty">从左边的列表选一个账号，这里会出现它的完整配置与追踪任务。管理员自己的配置在「我的设置」里改。</div>
           </div>
         </div>
-
-        <!-- 反馈放在页面级：未选中账号时新增账号的报错也要看得见 -->
-        <div v-if="userMessage.text" :class="['message', userMessage.type === 'success' ? 'ok-text' : 'err-text']">[[ userMessage.text ]]</div>
       </section>
 
       <!-- ============ 我的设置：管理员自己的账号与任务 ============ -->
@@ -715,8 +711,6 @@
             </div>
           </div>
         </div>
-
-        <div v-if="meMessage.text" :class="['message', meMessage.type === 'success' ? 'ok-text' : 'err-text']">[[ meMessage.text ]]</div>
       </section>
 
       <!-- ============ 日志 ============ -->

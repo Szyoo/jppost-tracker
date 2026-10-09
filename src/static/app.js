@@ -2,6 +2,9 @@ const { createApp, ref, onMounted, nextTick, computed, watch } = Vue;
 
 const MAX_LOG_LINES = 500;
 
+// 包的 toast 是 ES module，本文件是普通脚本，用动态 import 取
+const toastReady = import('/static/vendor/szyyw-design/toast.js');
+
 // 日志行用 v-html 渲染（要保留换行），内容来自子进程输出与公网 Bark 日志，可能含任意文本：
 // 必须先整行 HTML 转义，再把换行换成 <br>，否则日志里的标签会被当成 HTML 执行（XSS）
 const escapeHtml = (text) => String(text ?? '').replace(/[&<>"']/g, (ch) => ({
@@ -69,7 +72,6 @@ const app = createApp({
 
         const resetEnv = () => {
             envVars.value = { ...originalEnvVars.value };
-            envMessage.value = { text: '', type: '' };
             envApplyNote.value = '';
         };
 
@@ -150,28 +152,16 @@ const app = createApp({
         rebuildTaskDrafts();
 
         const createUserExpanded = ref(false);
-        const userMessage = ref({ text: '', type: '' });
-        const meMessage = ref({ text: '', type: '' });
-        const envMessage = ref({ text: '', type: '' });
         const sendingTestPush = ref(false);
         const sendingMeTestPush = ref(false);
 
-        // 行内反馈：成功 3 秒、错误 5 秒后自动消失（DESIGN.md §9）
-        const messageTimers = new WeakMap();
-        const flashMessage = (target, text, type) => {
-            target.value = { text, type };
-            clearTimeout(messageTimers.get(target));
-            messageTimers.set(
-                target,
-                setTimeout(() => {
-                    target.value = { text: '', type: '' };
-                }, type === 'error' ? 5000 : 3000)
-            );
+        // 操作的瞬时反馈走包的 toast()（底部居中、成功 3 秒 / 错误 5 秒自动消失），不再各页自写一条淡出行
+        const notify = (text, type) => {
+            if (!text) return;
+            toastReady
+                .then(({ toast }) => toast(text, { tone: type === 'error' ? 'err' : 'ok', timeout: type === 'error' ? 5000 : 3000 }))
+                .catch(() => {});
         };
-
-        // 用户管理页与「我的设置」页各有一条反馈行，任务操作的提示要落回发起它的那一页
-        const messageScopes = { user: userMessage, me: meMessage };
-        const scopedMessage = (scope) => messageScopes[scope] || userMessage;
 
         const countBarkKeys = (value) =>
             String(value || '')
@@ -397,7 +387,6 @@ const app = createApp({
                 page.value = 'me';
             } else {
                 selectedUserId.value = task.account_id;
-                userMessage.value = { text: '', type: '' };
                 page.value = 'users';
             }
             window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -487,7 +476,7 @@ const app = createApp({
                 });
                 const result = await handleApiResponse(response);
                 if (!result) return;
-                flashMessage(envMessage, result.message, result.status === 'success' ? 'success' : 'error');
+                notify(result.message, result.status === 'success' ? 'success' : 'error');
                 envApplyNote.value = result.apply_note || '';
                 if (result.status === 'success' && result.env_vars) {
                     envVars.value = { ...result.env_vars };
@@ -497,13 +486,12 @@ const app = createApp({
                     barkHelp.value = { ...result.bark_help };
                 }
             } catch (error) {
-                flashMessage(envMessage, '保存系统设置时发生错误。', 'error');
+                notify('保存系统设置时发生错误。', 'error');
             }
         };
 
         const selectUser = (userId) => {
             selectedUserId.value = userId;
-            userMessage.value = { text: '', type: '' };
         };
 
         const createUser = async () => {
@@ -515,7 +503,7 @@ const app = createApp({
                 });
                 const result = await handleApiResponse(response);
                 if (!result) return;
-                flashMessage(userMessage, result.message, result.status === 'success' ? 'success' : 'error');
+                notify(result.message, result.status === 'success' ? 'success' : 'error');
                 if (result.status === 'success') {
                     syncUserState(result.user_state);
                     if (result.user) {
@@ -525,7 +513,7 @@ const app = createApp({
                     createUserExpanded.value = false;
                 }
             } catch (error) {
-                flashMessage(userMessage, '创建账号时发生错误。', 'error');
+                notify('创建账号时发生错误。', 'error');
             }
         };
 
@@ -539,7 +527,7 @@ const app = createApp({
                 });
                 const result = await handleApiResponse(response);
                 if (!result) return;
-                flashMessage(userMessage, result.message, result.status === 'success' ? 'success' : 'error');
+                notify(result.message, result.status === 'success' ? 'success' : 'error');
                 if (result.status === 'success') {
                     syncUserState(result.user_state);
                     if (result.user) {
@@ -547,7 +535,7 @@ const app = createApp({
                     }
                 }
             } catch (error) {
-                flashMessage(userMessage, '保存账号时发生错误。', 'error');
+                notify('保存账号时发生错误。', 'error');
             }
         };
 
@@ -561,7 +549,7 @@ const app = createApp({
                 });
                 const result = await handleApiResponse(response);
                 if (!result) return;
-                flashMessage(userMessage, result.message, result.status === 'success' ? 'success' : 'error');
+                notify(result.message, result.status === 'success' ? 'success' : 'error');
                 if (result.status === 'success') {
                     syncUserState(result.user_state);
                     if (result.user) {
@@ -569,7 +557,7 @@ const app = createApp({
                     }
                 }
             } catch (error) {
-                flashMessage(userMessage, '保存 portal 映射时发生错误。', 'error');
+                notify('保存 portal 映射时发生错误。', 'error');
             }
         };
 
@@ -584,9 +572,9 @@ const app = createApp({
                 });
                 const result = await handleApiResponse(response);
                 if (!result) return;
-                flashMessage(userMessage, result.message, result.status === 'success' ? 'success' : 'error');
+                notify(result.message, result.status === 'success' ? 'success' : 'error');
             } catch (error) {
-                flashMessage(userMessage, '发送测试推送失败。', 'error');
+                notify('发送测试推送失败。', 'error');
             } finally {
                 sendingTestPush.value = false;
             }
@@ -623,7 +611,7 @@ const app = createApp({
                 });
                 const result = await handleApiResponse(response);
                 if (!result) return;
-                flashMessage(meMessage, result.message, result.status === 'success' ? 'success' : 'error');
+                notify(result.message, result.status === 'success' ? 'success' : 'error');
                 if (result.status === 'success' && result.user) {
                     meForm.value = buildUserForm(result.user);
                     viewer.value = {
@@ -635,7 +623,7 @@ const app = createApp({
                     await refreshUserState();
                 }
             } catch (error) {
-                flashMessage(meMessage, '保存个人设置时发生错误。', 'error');
+                notify('保存个人设置时发生错误。', 'error');
             }
         };
 
@@ -650,9 +638,9 @@ const app = createApp({
                 });
                 const result = await handleApiResponse(response);
                 if (!result) return;
-                flashMessage(meMessage, result.message, result.status === 'success' ? 'success' : 'error');
+                notify(result.message, result.status === 'success' ? 'success' : 'error');
             } catch (error) {
-                flashMessage(meMessage, '发送测试推送失败。', 'error');
+                notify('发送测试推送失败。', 'error');
             } finally {
                 sendingMeTestPush.value = false;
             }
@@ -668,13 +656,13 @@ const app = createApp({
                 });
                 const result = await handleApiResponse(response);
                 if (!result) return;
-                flashMessage(scopedMessage(scope), result.message, result.status === 'success' ? 'success' : 'error');
+                notify(result.message, result.status === 'success' ? 'success' : 'error');
                 if (result.status === 'success' && result.user_state) {
                     syncUserState(result.user_state, { keepUserForm: true });
                 }
                 return result;
             } catch (error) {
-                flashMessage(scopedMessage(scope), errorText, 'error');
+                notify(errorText, 'error');
             }
         };
 
@@ -828,7 +816,6 @@ const app = createApp({
             envDirtyCount,
             envApplyNote,
             resetEnv,
-            envMessage,
             users,
             selectedUserId,
             selectedUser,
@@ -846,7 +833,6 @@ const app = createApp({
             userForm,
             newUserForm,
             createUserExpanded,
-            userMessage,
             sendingTestPush,
             activeTaskCount,
             totalTaskCount,
@@ -869,7 +855,6 @@ const app = createApp({
             meTrackingState,
             meForm,
             myTaskForm,
-            meMessage,
             sendingMeTestPush,
             saveMe,
             sendMeTestPush,

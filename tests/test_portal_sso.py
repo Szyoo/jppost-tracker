@@ -339,3 +339,12 @@ def test_cli_map_and_unmap(db, capsys, monkeypatch):
     assert sub in capsys.readouterr().out
     assert manage.main(["unmap-account", "admin"]) == 0
     assert db.get_account(2)["portal_sub"] is None
+
+
+def test_user_portal_flash_is_toast_and_escaped(client, db, sso):
+    """门户表单的重定向反馈改由 toast() 显示；message 来自查询串，必须以 JSON 字面量安全嵌进脚本。"""
+    sso.setenv("SZYYW_SSO_AUTOCREATE", "1")
+    payload = "</script><img src=x onerror=alert(1)>"
+    html = client.get("/", query_string={"status": "error", "message": payload}, headers=gate("erin")).data.decode()
+    assert "toast.js" in html and 'id="flash-message"' not in html
+    assert payload not in html and "\\u003c/script\\u003e" in html
