@@ -1,0 +1,6 @@
+<link rel="preconnect" href="https://design.szyyw.xyz" crossorigin />
+    <!-- 设计包 @szyyw/design 直接引用 CDN，版本只在 app.py 的 DESIGN_VERSION（DESIGN_BASE 由它派生，可被同名环境变量覆盖）。
+         import map 必须出现在所有 module script 之前；boot.js / app.js 里写 "@szyyw/design/xxx.js"，静态 JS 不写死版本 -->
+    <script type="importmap">{"imports": {"@szyyw/design/": {{ (DESIGN_BASE ~ "/") | tojson }}}}</script>
+    <link rel="stylesheet" href="{{ DESIGN_BASE }}/tokens.css" />
+    <link rel="stylesheet" href="{{ DESIGN_BASE }}/components.css" />

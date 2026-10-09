@@ -2,8 +2,8 @@ const { createApp, ref, onMounted, nextTick, computed, watch } = Vue;
 
 const MAX_LOG_LINES = 500;
 
-// 包的 toast 是 ES module，本文件是普通脚本，用动态 import 取
-const toastReady = import('/static/vendor/szyyw-design/toast.js');
+// 包的 toast 是 ES module，本文件是普通脚本，用动态 import 取（裸说明符由模板里的 import map 解析到 CDN）
+const toastReady = import('@szyyw/design/toast.js');
 
 // 日志行用 v-html 渲染（要保留换行），内容来自子进程输出与公网 Bark 日志，可能含任意文本：
 // 必须先整行 HTML 转义，再把换行换成 <br>，否则日志里的标签会被当成 HTML 执行（XSS）

@@ -1,20 +1,23 @@
 #!/usr/bin/env bash
-# 同步 @szyyw/design 运行时文件到 vendor —— 直接委托给上游的 sync.sh。
-# 以前本脚本自带文件清单与 VENDORED.md 格式，正是各项目版本漂移的来源（旧清单缺 switcher.js）；
-# 现在清单与格式只在 szyyw-design 仓库里维护。
-# 用法: bash scripts/update-design.sh [tag|--local]   （默认 latest；--local 用本机 clone，见上游 sync.sh）
+# 升级设计包 @szyyw/design：页面直接引用自托管 CDN https://design.szyyw.xyz/<tag>/，仓库里不放副本。
+# 升级 = 把 src/app.py 的 DESIGN_VERSION 改成目标 tag，并先验证 CDN 上该版本已存在（tag 推上 GitHub 后 ≤10 分钟出现）。
+# 用法: bash scripts/update-design.sh [vX.Y.Z]   （缺省取 GitHub 上最新正式 tag）
 set -euo pipefail
-DEST="$(cd "$(dirname "$0")/.." && pwd)/src/static/vendor/szyyw-design"
+cd "$(dirname "$0")/.."
+FILE=src/app.py
 REF="${1:-latest}"
 if [ "$REF" = "latest" ]; then
-  # 先解析出最新正式 tag，再从这个 tag 取 sync.sh——main 上的 sync.sh 可能领先于已发版的文件清单
   REF=$(git ls-remote --tags --refs https://github.com/Szyoo/szyyw-design.git 'v*' | sed 's#.*refs/tags/##' \
     | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1)
   [ -n "$REF" ] || { echo "取不到 szyyw-design 的最新 tag" >&2; exit 1; }
 fi
-if [ "$REF" = "--local" ]; then
-  sh "${DESIGN_UPSTREAM:-$HOME/Documents/GitHub/szyyw-design}/sync.sh" "$DEST" --local
-else
-  curl -fsSL "https://raw.githubusercontent.com/Szyoo/szyyw-design/$REF/sync.sh" | sh -s -- "$DEST" "$REF"
+echo "$REF" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$' || { echo "版本号须为 vX.Y.Z（不得用 latest 目录）：$REF" >&2; exit 1; }
+# CDN 上还没有这个版本就失败退出（bot 下一轮会重试）
+if ! curl -fsI --max-time 20 "https://design.szyyw.xyz/$REF/version.js" >/dev/null; then
+  echo "CDN 上还没有 $REF（https://design.szyyw.xyz/$REF/version.js 不可用），稍后再试" >&2
+  exit 1
 fi
-git -C "$DEST" status --short -- . || true
+cur=$(sed -n 's/^DESIGN_VERSION = "\(v[0-9]*\.[0-9]*\.[0-9]*\)"$/\1/p' "$FILE" | head -n1)
+[ -n "$cur" ] || { echo "$FILE 里找不到 DESIGN_VERSION" >&2; exit 1; }
+sed -i.bak "s/^DESIGN_VERSION = \"$cur\"$/DESIGN_VERSION = \"$REF\"/" "$FILE" && rm -f "$FILE.bak"
+echo "szyyw-design $cur → $REF（$FILE 的 DESIGN_VERSION）" >&2

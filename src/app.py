@@ -314,6 +314,16 @@ def get_login_window_seconds() -> int:
 def get_portal_origin() -> str:
     return (os.getenv("PORTAL_ORIGIN", "").strip() or "https://szyyw.xyz").rstrip("/")
 
+# --- 设计包 @szyyw/design：直接引用自托管 CDN（design.szyyw.xyz），仓库里不再放副本 ---
+# 版本只在这一处声明；升级 = 改这行（scripts/update-design.sh / upgrade-shared.sh 会改它并验证 CDN 上存在）。
+# 每个 tag 发布后不可变，一页里所有设计包文件必须同一版本（模块间相对 import）。禁止用 /latest/。
+DESIGN_VERSION = "v0.15.0"
+DESIGN_CDN_ORIGIN = "https://design.szyyw.xyz"
+
+def get_design_base() -> str:
+    # 环境变量 DESIGN_BASE 可覆盖（本地离线开发指向本机设计包的静态服务，见 README）
+    return (os.getenv("DESIGN_BASE", "").strip() or f"{DESIGN_CDN_ORIGIN}/{DESIGN_VERSION}").rstrip("/")
+
 def sso_autocreate_enabled() -> bool:
     # 默认关：未映射的 portal 用户看到"尚未开通"，由管理员手动映射
     return _env_enabled("SZYYW_SSO_AUTOCREATE", "0")
@@ -641,7 +651,8 @@ def add_security_headers(response):
 @app.context_processor
 def inject_sso_flags():
     # 模板据此隐藏注册/改密入口、挂载应用切换器；关闭时模板输出与以前完全一样
-    return {"sso_on": sso_enabled(), "portal_origin": get_portal_origin()}
+    # DESIGN_BASE：模板里设计包 CSS 与 import map 的前缀（见 _design_head.html）
+    return {"sso_on": sso_enabled(), "portal_origin": get_portal_origin(), "DESIGN_BASE": get_design_base()}
 
 ICON_DIR = os.path.join(os.path.dirname(__file__), 'static', 'icons')
 

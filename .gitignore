@@ -171,3 +171,6 @@ app.env
 app.env.*
 .env.*
 !env.example
+
+# 设计包 @szyyw/design 直接引用 CDN（design.szyyw.xyz，版本见 src/app.py 的 DESIGN_VERSION），不再 vendoring
+src/static/vendor/szyyw-design/

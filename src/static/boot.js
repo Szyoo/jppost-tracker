@@ -1,6 +1,6 @@
 // 设计包初始化入口：mountChrome 一次挂齐右上角工具位（切换器 · 账户 · 🌗 · 外观）+ 点阵背景 + hover 光斑。
-// 依赖 vendor 的 @szyyw/design（版本见 vendor/szyyw-design/VENDORED.md）；工具位文案由包按 locale 内置，这里不再抄。
-import { mountChrome } from '/static/vendor/szyyw-design/chrome.js';
+// 依赖 @szyyw/design（CDN，版本见 app.py 的 DESIGN_VERSION，由模板 _design_head.html 的 import map 解析）；工具位文案由包按 locale 内置，这里不再抄。
+import { mountChrome } from '@szyyw/design/chrome.js';
 
 const root = document.documentElement;
 
@@ -18,10 +18,10 @@ mountChrome({
   locale: 'zh',
   portal,
   appearance: {
-    // 背景参数只存本浏览器；版本检测的升级命令走本项目的同步脚本
+    // 背景参数只存本浏览器；版本检测的升级命令：改 DESIGN_VERSION 并验证 CDN
     dotField: {
       note: true,
-      update: { command: () => 'bash scripts/update-design.sh' },
+      update: { command: (v) => `bash scripts/update-design.sh v${v}` },
     },
   },
 });
