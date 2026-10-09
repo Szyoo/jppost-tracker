@@ -14,6 +14,7 @@
 import { mountCornerTool, CORNER_ORDER, claimCornerPanel } from "./corner.js";
 import { DEFAULTS, resolveTokenColor } from "./dotfield.js";
 import { VERSION, REPO } from "./version.js";
+import { appearanceText } from "./appearance-text.js";
 
 const SLIDERS = [
   { key: "dotRadius", label: "点大小", min: 0.5, max: 4, step: 0.1 },
@@ -185,6 +186,8 @@ export function restoreDotFieldSettings({ storageKey = "szyyw:dotfield" } = {}) 
  * @returns {{ rerender(): void, sync(): void, snapshot(): object }}
  */
 export function renderDotFieldControls({ field, body, foot, persist, storageKey, onSave, note, text }) {
+  // 控件名：text.controls（v0.12.0 起按语言给）优先，缺的用内置中文
+  const name = (key, fallback) => text.controls?.[key] ?? fallback;
   // 面板状态 = 画布当前参数 + 当前解析出来的颜色
   const values = { ...field.getOptions() };
   for (const c of COLORS) values[c.key] = resolveTokenColor(c.varName) ?? "#000000";
@@ -211,8 +214,8 @@ export function renderDotFieldControls({ field, body, foot, persist, storageKey,
   for (const t of TOGGLES) {
     const row = el("label", "ctl ctl-toggle");
     const textCol = el("div");
-    textCol.append(el("span", "ctl-label", t.label));
-    if (t.hint) textCol.append(el("span", "ctl-hint", t.hint));
+    textCol.append(el("span", "ctl-label", name(t.key, t.label)));
+    if (t.hint) textCol.append(el("span", "ctl-hint", name(`${t.key}Hint`, t.hint)));
     const input = el("input", "switch");
     input.type = "checkbox";
     input.checked = !!values[t.key];
@@ -228,7 +231,7 @@ export function renderDotFieldControls({ field, body, foot, persist, storageKey,
     const row = el("label", "ctl");
     const line = el("div", "ctl-row");
     const value = el("span", "ctl-value num");
-    line.append(el("span", "ctl-label", s.label), value);
+    line.append(el("span", "ctl-label", name(s.key, s.label)), value);
     const input = el("input");
     input.type = "range";
     input.min = s.min;
@@ -252,7 +255,7 @@ export function renderDotFieldControls({ field, body, foot, persist, storageKey,
     const line = el("div", "ctl-row");
     const swatch = el("input");
     swatch.type = "color";
-    line.append(el("span", "ctl-label", c.label), swatch);
+    line.append(el("span", "ctl-label", name(c.key, c.label)), swatch);
     row.append(line);
 
     let alphaInput = null;
@@ -358,8 +361,9 @@ export function renderUpdateSection({ body, btn, text, update }) {
   const cfg = {
     repo: REPO,
     cacheHours: 6,
-    /** 复制给用户的升级命令；vendored 项目传自己的 cp 流程 */
-    command: (v) => `npm i github:${cfg.repo}#v${v}`,
+    /** 复制给用户的升级命令；vendored 项目传自己的 cp 流程。
+        用 tarball 形式：node:alpine 构建镜像不带 git，`npm i github:…` 装不上 */
+    command: (v) => `npm i "https://codeload.github.com/${cfg.repo}/tar.gz/refs/tags/v${v}"`,
     /** 接了才显示真按钮：由消费方的服务端完成更新（如 portal 的 admin 端点） */
     onUpdate: null,
     ...update
@@ -578,6 +582,7 @@ export function bindCornerPanel({ btn, panel, closeBtn, onOpen }) {
  * @param persist    "localStorage"（缺省，改完即存）| "none"
  * @param update     版本检测。false 关闭；{ onUpdate } 接了服务端更新端点才是真·一键更新，
  *                   没接则退化为「复制升级命令」（浏览器改不了服务器上的依赖）
+ * @param locale     "zh" | "ja" | "en"（v0.12.0）：用内置文案；不传保持旧的中文缺省
  *
  * 与 appearance.js 的 mountAppearancePanel 二选一（同一枚按钮、同一个 order、同一份存储）。
  */
@@ -590,11 +595,16 @@ export function mountDotFieldSettings({
   onSave = null,
   note = "",
   update = {},
-  labels = {}
+  labels = {},
+  locale = null
 } = {}) {
   if (!field?.setOptions) throw new Error("mountDotFieldSettings 需要 mountDotField() 返回的实例");
 
-  const text = { open: "背景参数", ...PANEL_TEXT, ...labels };
+  const t = locale ? appearanceText(locale) : null;
+  const text = t
+    ? { ...t, open: t.background, ...labels, controls: { ...t.controls, ...(labels.controls || {}) } }
+    : { open: "背景参数", ...PANEL_TEXT, ...labels };
+  if (t && title === "背景参数") title = t.background;
 
   const btn = createPaletteToggle(text.open);
   const { panel, closeBtn, body, foot } = createCornerPanel({

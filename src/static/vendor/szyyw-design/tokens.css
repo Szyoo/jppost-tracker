@@ -51,7 +51,13 @@
   /* 细线与悬浮着色 */
   --line-soft: light-dark(rgba(90, 108, 133, 0.18), rgba(148, 163, 184, 0.1));
   --hover-tint: light-dark(rgba(3, 105, 161, 0.07), rgba(56, 189, 248, 0.06));
-  --lift-shadow: light-dark(0 10px 32px rgba(30, 41, 59, 0.12), 0 10px 32px rgba(0, 0, 0, 0.35));
+  /* light-dark() 只接受颜色：整条阴影写进去会算成 none（v0.13.0 及之前 .lift:hover 的阴影因此从未生效） */
+  --lift-shadow-color: light-dark(rgba(30, 41, 59, 0.12), rgba(0, 0, 0, 0.35));
+  --lift-shadow: 0 10px 32px var(--lift-shadow-color);
+  /* 浮层阴影（v0.13.0：.menu / .drawer / .toast）。light-dark() 只接受颜色，
+     所以拆成「阴影颜色 token + 固定几何」，整条阴影不能直接塞进 light-dark() */
+  --pop-shadow-color: light-dark(rgba(30, 41, 59, 0.16), rgba(0, 0, 0, 0.45));
+  --pop-shadow: 0 12px 36px var(--pop-shadow-color), 0 2px 8px color-mix(in srgb, var(--pop-shadow-color) 50%, transparent);
 
   /* 语义色 */
   --err: light-dark(#dc2626, #ef4444);
@@ -59,6 +65,8 @@
   --warn: light-dark(#b45309, #fbbf24);
   --exp: light-dark(#dc2626, #f87171);
   --inc: light-dark(#059669, #34d399);
+  /* 红底上的字色（v0.13.0：.corner-badge 计数角标） */
+  --on-err: light-dark(#ffffff, #1c0606);
 
   /* 语义色的淡底（pill/badge 用） */
   --tint-red-bg: light-dark(rgba(220, 38, 38, 0.12), rgba(239, 68, 68, 0.16));
@@ -66,6 +74,14 @@
   --tint-green-bg: light-dark(rgba(5, 150, 105, 0.12), rgba(52, 211, 153, 0.14));
   --tint-cyan-bg: light-dark(rgba(3, 105, 161, 0.11), rgba(56, 189, 248, 0.14));
   --tint-violet-bg: light-dark(rgba(126, 34, 206, 0.11), rgba(168, 85, 247, 0.16));
+
+  /* 图表分类色（v0.13.0）：系列按 1→6 取，随配色与明暗变；超过 6 个系列请合并成「其他」 */
+  --chart-1: light-dark(#0284c7, #38bdf8);
+  --chart-2: light-dark(#7e22ce, #a855f7);
+  --chart-3: light-dark(#059669, #34d399);
+  --chart-4: light-dark(#b45309, #fbbf24);
+  --chart-5: light-dark(#be123c, #fb7185);
+  --chart-6: light-dark(#4338ca, #818cf8);
 
   /* 点阵背景（DotField 从这里取色与取参——主题级效果旋钮） */
   --df-sparkle: 1;
@@ -78,6 +94,8 @@
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   --nav-h: 62px;
   --sidebar-w: 224px;
+  /* 顶栏给右上角工具位让位时，工具位左缘再留的空隙（.corner-clear / .app-header，v0.13.0） */
+  --corner-gap: 12px;
 
   /* 终端窗（刻意保持深色——真实终端的样子，两种模式共用固定色板） */
   --term-bg: rgba(2, 6, 23, 0.72);
@@ -105,6 +123,13 @@
 
   --tint-cyan-bg: light-dark(rgba(3, 105, 161, 0.11), rgba(56, 189, 248, 0.14));
   --tint-violet-bg: light-dark(rgba(4, 120, 87, 0.12), rgba(52, 211, 153, 0.15));
+
+  --chart-1: light-dark(#047857, #34d399);
+  --chart-2: light-dark(#0369a1, #38bdf8);
+  --chart-3: light-dark(#b45309, #fbbf24);
+  --chart-4: light-dark(#7e22ce, #c084fc);
+  --chart-5: light-dark(#be123c, #fb7185);
+  --chart-6: light-dark(#4338ca, #818cf8);
 
   --df-from: light-dark(rgba(4, 120, 87, 0.38), rgba(52, 211, 153, 0.45));
   --df-to: light-dark(rgba(3, 105, 161, 0.3), rgba(56, 189, 248, 0.38));

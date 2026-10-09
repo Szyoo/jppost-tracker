@@ -105,3 +105,15 @@ export function appearanceAttrs(a) {
   attrs["data-scheme"] = n.scheme;
   return attrs;
 }
+
+/**
+ * 按前缀生成三项存储键：appearanceCookieNames("fl_") → { theme: "fl_theme", palette: "fl_palette", scheme: "fl_scheme" }。
+ * 服务端 readAppearanceFromCookies 与客户端 mountAppearance({ cookiePrefix }) 用同一个前缀就不会对不上。
+ */
+export function appearanceCookieNames(prefix = "") {
+  return {
+    theme: `${prefix}${APPEARANCE_COOKIES.theme}`,
+    palette: `${prefix}${APPEARANCE_COOKIES.palette}`,
+    scheme: `${prefix}${APPEARANCE_COOKIES.scheme}`
+  };
+}

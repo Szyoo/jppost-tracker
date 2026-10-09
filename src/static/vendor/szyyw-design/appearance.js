@@ -14,7 +14,14 @@
    模块顶层不碰 DOM：SSR 时被求值也不会炸。
    ============================================================ */
 
-import { getScheme, setScheme, onSchemeChange, refreshThemeColor } from "./scheme.js";
+import {
+  getScheme,
+  setScheme,
+  onSchemeChange,
+  refreshThemeColor,
+  configureScheme,
+  mountSchemeToggle
+} from "./scheme.js";
 import { mountCornerTool, CORNER_ORDER } from "./corner.js";
 import {
   renderDotFieldControls,
@@ -22,9 +29,18 @@ import {
   createPaletteToggle,
   createCornerPanel,
   bindCornerPanel,
-  PANEL_TEXT
+  restoreDotFieldSettings
 } from "./settings.js";
-import { THEMES, PALETTES, SCHEMES, APPEARANCE_COOKIES, normalizeAppearance } from "./appearance-data.js";
+import { mountDotField, attachSpot } from "./dotfield.js";
+import {
+  THEMES,
+  PALETTES,
+  SCHEMES,
+  APPEARANCE_COOKIES,
+  normalizeAppearance,
+  appearanceCookieNames
+} from "./appearance-data.js";
+import { appearanceText } from "./appearance-text.js";
 
 const EVENT = "szyyw:appearancechange";
 
@@ -228,11 +244,12 @@ function chipRow(key, label, options, onPick) {
  */
 export function mountAppearancePanel({
   field = null,
-  title = "外观",
+  title = null,
   order = CORNER_ORDER.settings,
   onChange = null,
   dotField = {},
-  labels = {}
+  labels = {},
+  locale = "zh"
 } = {}) {
   if (field && !field.setOptions) throw new Error("mountAppearancePanel 的 field 需要 mountDotField() 返回的实例");
   ensureBridge();
@@ -245,18 +262,10 @@ export function mountAppearancePanel({
     update = {}
   } = dotField || {};
 
-  const text = {
-    open: title,
-    ...PANEL_TEXT,
-    theme: "主题",
-    palette: "配色",
-    scheme: "明暗",
-    background: "背景参数",
-    ...labels,
-    themes: { ...(labels.themes || {}) },
-    palettes: { ...(labels.palettes || {}) },
-    schemes: { auto: "跟随系统", dark: "深色", light: "浅色", ...(labels.schemes || {}) }
-  };
+  // 内置文案（locale）打底，labels 逐键覆盖；open 跟着标题走，除非单独给了
+  const text = appearanceText(locale, labels);
+  title = title ?? labels.title ?? text.title;
+  if (!labels.open) text.open = title;
 
   const btn = createPaletteToggle(text.open);
   const { panel, closeBtn, body } = createCornerPanel({
@@ -377,4 +386,57 @@ export function mountAppearancePanel({
   };
   current = handle;
   return handle;
+}
+
+/* ---------- 一次挂齐 ---------- */
+
+/**
+ * 应用接外观的一站式入口（v0.12.0）：明暗持久化 + 🌗 按钮 + 主题 / 配色持久化 +
+ * （给了 background）点阵背景与光斑 + 外观弹层，全部按同一个 locale、同一组存储键。
+ * 等价于依次调 configureScheme / configureAppearance / mountDotField / attachSpot /
+ * mountSchemeToggle / mountAppearancePanel；需要细调时仍可分开调。
+ *
+ * 切语言用 handle.setLocale——只重挂按钮与弹层，背景画布不重建。
+ */
+export function mountAppearance({
+  background = null,
+  spot = true,
+  persist = "cookie",
+  cookiePrefix = "",
+  locale = "zh",
+  labels = {},
+  onChange = null,
+  dotField = {}
+} = {}) {
+  const keys = appearanceCookieNames(cookiePrefix);
+  configureScheme({ persist, storageKey: keys.scheme });
+  configureAppearance({ persist, storageKeys: { theme: keys.theme, palette: keys.palette } });
+
+  // restore 把存过的颜色写回 token，并把行为参数交给画布
+  const field = background ? mountDotField(background, restoreDotFieldSettings()) : null;
+  const detachSpot = background && spot ? attachSpot() : null;
+
+  let toggle = null;
+  let panel = null;
+  const mountUi = (loc) => {
+    toggle?.destroy();
+    panel?.destroy();
+    toggle = mountSchemeToggle({ locale: loc, labels: labels.schemes });
+    panel = mountAppearancePanel({ field, locale: loc, labels, onChange, dotField });
+  };
+  mountUi(locale);
+
+  return {
+    field,
+    setLocale: mountUi,
+    open: () => panel.open(),
+    close: () => panel.close(),
+    sync: () => panel.sync(),
+    destroy() {
+      toggle.destroy();
+      panel.destroy();
+      detachSpot?.();
+      field?.destroy();
+    }
+  };
 }

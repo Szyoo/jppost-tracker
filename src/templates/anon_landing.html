@@ -7,9 +7,7 @@
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="/favicon.ico" sizes="any" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <script>
-      try { document.documentElement.dataset.scheme = localStorage.getItem('jppost_scheme') || 'auto'; } catch (e) { document.documentElement.dataset.scheme = 'auto'; }
-    </script>
+    {% include '_appearance_head.html' %}
     <link rel="stylesheet" href="/static/vendor/szyyw-design/tokens.css" />
     <link rel="stylesheet" href="/static/vendor/szyyw-design/components.css" />
     <link rel="stylesheet" href="/static/style.css" />
@@ -20,10 +18,10 @@
     <!-- portal SSO 匿名访客（X-Portal-Anon: 1）：只有公开介绍，不含任何任务/设置/管理入口。
          右上角账户菜单（boot.js 挂载）显示「登录」。 -->
     <div class="page">
-      <header class="site-header rise">
-        <div class="brand">
-          <span class="brand-sub">JP Post Tracker</span>
-          <h1 class="brand-title">日本邮政快递追踪</h1>
+      <header class="app-header page-header rise">
+        <div class="app-brand">
+          <span class="app-sub">JP Post Tracker</span>
+          <h1 class="app-title">日本邮政快递追踪</h1>
         </div>
       </header>
 
@@ -33,7 +31,7 @@
             <div class="empty-icon" aria-hidden="true">📦</div>
             <p>填入日本邮政单号，后台定时查询官网物流记录，状态一有变化就通过 Bark 推送到你的 iPhone。</p>
             <p>登录后即可管理自己的追踪任务与 Bark 设备。</p>
-            <form method="get" action="/login" style="margin-top: 18px;">
+            <form method="get" action="/login" class="section">
               <button type="submit" class="btn">登录</button>
             </form>
           </div>

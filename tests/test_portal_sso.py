@@ -5,7 +5,7 @@ import pytest
 
 import app as app_module
 import manage
-from conftest import gate
+from conftest import ADMIN_PASSWORD, gate
 
 
 def make_user(db, username, **extra):
@@ -96,8 +96,15 @@ def test_sub_match_wins_over_username_match(client, db, sso):
     me = client.get("/api/me", headers=gate("bob", sub="sub-alice")).get_json()["user"]
     assert me["id"] == alice["id"]
     assert db.get_account(bob["id"])["portal_sub"] is None  # 没被认领
-    # 页面右上角显示 portal 当前用户名
-    assert "· bob".encode() in resp.data
+    # SSO 下页头不再自写用户名 / 角色徽章（右上角账户菜单从 portal 取当前用户名），也没有本地「退出」
+    assert b'class="current-user"' not in resp.data and b'action="/logout"' not in resp.data
+
+
+def test_local_login_header_shows_user(client, db):
+    """非 SSO：页头仍显示当前用户与退出按钮（没有账户菜单可替代）。"""
+    client.post("/login", data={"username": "admin", "password": ADMIN_PASSWORD})
+    html = client.get("/").data
+    assert b'class="current-user"' in html and b'action="/logout"' in html
 
 
 def test_missing_sub_is_logged_out(client, db, sso):

@@ -10,6 +10,7 @@
    ============================================================ */
 
 import { mountCornerTool, claimCornerPanel } from "./corner.js";
+import { chromeText, roleLabel } from "./chrome-text.js";
 
 /** 账户菜单在工具位里的位次：切换器(5) 右边、明暗切换(10) 左边 */
 export const ACCOUNT_ORDER = 6;
@@ -22,7 +23,6 @@ const USER_ICON =
   ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
   '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>';
 
-const ROLE_LABEL = { admin: "管理员", user: "用户", guest: "访客" };
 const ROLE_PILL = { admin: "cyan", user: "green", guest: "violet" };
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -40,11 +40,16 @@ function initial(name) {
  * @param {string}   options.portal    门户地址，缺省 https://szyyw.xyz
  * @param {number}   options.order     工具位位次，缺省 6
  * @param {(data: object) => void} options.onChange  登录小窗回报成功时调用（随后整页 reload）
- * @returns {{ refresh(): Promise<void>, close(): void, destroy(): void, readonly me: object | null }}
+ * @param {string}   options.locale    "zh" | "ja" | "en"（v0.13.0），缺省 "zh"——与旧版文案逐字相同
+ * @param {object}   options.labels    逐键覆盖内置文案：{ login, settings, logout, logoutFailed, statusFmt, roles: { admin, user, … } }
+ * @returns {{ refresh(): Promise<void>, close(): void, setLocale(locale: string): void, destroy(): void, readonly me: object | null }}
  */
-export function mountAccountMenu({ portal = "https://szyyw.xyz", order = ACCOUNT_ORDER, onChange } = {}) {
+export function mountAccountMenu({ portal = "https://szyyw.xyz", order = ACCOUNT_ORDER, onChange, locale = "zh", labels = {} } = {}) {
   const base = portal.replace(/\/$/, "");
   const portalOrigin = new URL(base).origin;
+  // 内置文案（chrome-text.js）打底，labels 逐键覆盖（roles 逐个合并）；setLocale 换底不丢覆盖
+  const textFor = (loc) => chromeText(loc, { account: labels || {} }).account;
+  let T = textFor(locale);
 
   let me = null;
   let btn = null;
@@ -76,8 +81,8 @@ export function mountAccountMenu({ portal = "https://szyyw.xyz", order = ACCOUNT
   function renderAnonymous() {
     clearButton();
     btn = makeButton("account-login");
-    btn.innerHTML = `${USER_ICON}<span>登录</span>`;
-    btn.title = "登录";
+    btn.innerHTML = `${USER_ICON}<span>${esc(T.login)}</span>`;
+    btn.title = T.login;
     btn.addEventListener("click", login);
     window.addEventListener("message", onMessage);
     unmount = mountCornerTool(btn, { order });
@@ -102,11 +107,11 @@ export function mountAccountMenu({ portal = "https://szyyw.xyz", order = ACCOUNT
       `<div class="account-menu-head">` +
       `<span class="account-menu-dot" aria-hidden="true">${esc(initial(me.user))}</span>` +
       `<span class="account-menu-name">${esc(me.user)}</span>` +
-      (role ? `<span class="pill ${ROLE_PILL[role] || ""}">${esc(ROLE_LABEL[role] || role)}</span>` : "") +
+      (role ? `<span class="pill ${ROLE_PILL[role] || ""}">${esc(roleLabel(role, T.roles))}</span>` : "") +
       `</div>` +
       `<div class="app-switcher-sep"></div>` +
-      `<button type="button" class="account-menu-item" role="menuitem" data-act="settings">账户设置</button>` +
-      `<button type="button" class="account-menu-item danger" role="menuitem" data-act="logout">登出</button>` +
+      `<button type="button" class="account-menu-item" role="menuitem" data-act="settings">${esc(T.settings)}</button>` +
+      `<button type="button" class="account-menu-item danger" role="menuitem" data-act="logout">${esc(T.logout)}</button>` +
       `<div class="account-menu-err err-text" hidden></div>`;
     panel.querySelector('[data-act="settings"]').addEventListener("click", () => {
       location.assign(base + "/?account=1");
@@ -185,7 +190,8 @@ export function mountAccountMenu({ portal = "https://szyyw.xyz", order = ACCOUNT
       location.reload();
     } catch (e) {
       btnOut.disabled = false;
-      err.textContent = `登出失败${e?.message && /^\d+$/.test(e.message) ? `（${e.message}）` : ""}，请重试`;
+      const code = e?.message && /^\d+$/.test(e.message) ? e.message : "";
+      err.textContent = T.logoutFailed.replace("{status}", code ? T.statusFmt.replace("{code}", code) : "");
       err.hidden = false;
     }
   }
@@ -223,6 +229,13 @@ export function mountAccountMenu({ portal = "https://szyyw.xyz", order = ACCOUNT
   return {
     refresh: () => load(true),
     close,
+    /** v0.13.0：换语言。已渲染的按钮 / 面板按当前身份就地重画（开着的面板会关上），不重新请求 /api/me */
+    setLocale(next) {
+      T = textFor(next);
+      if (destroyed || !btn) return;
+      if (me) renderUser();
+      else renderAnonymous();
+    },
     destroy() {
       destroyed = true;
       clearTimeout(retryTimer);

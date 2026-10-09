@@ -2,6 +2,13 @@ const { createApp, ref, onMounted, nextTick, computed, watch } = Vue;
 
 const MAX_LOG_LINES = 500;
 
+// 日志行用 v-html 渲染（要保留换行），内容来自子进程输出与公网 Bark 日志，可能含任意文本：
+// 必须先整行 HTML 转义，再把换行换成 <br>，否则日志里的标签会被当成 HTML 执行（XSS）
+const escapeHtml = (text) => String(text ?? '').replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+}[ch]));
+const logHtml = (text) => escapeHtml(text).replace(/\n/g, '<br>');
+
 const app = createApp({
     setup() {
         const title = ref('快递追踪控制台');
@@ -226,44 +233,44 @@ const app = createApp({
 
         const selectedUserTrackingState = computed(() => {
             if (!selectedUser.value) {
-                return { tone: 'pending', label: '未选择账号' };
+                return { tone: '', label: '未选择账号' };
             }
             if (!selectedUserTaskCount.value) {
-                return { tone: 'pending', label: '待添加任务' };
+                return { tone: '', label: '待添加任务' };
             }
             // 判定顺序与 taskState 保持一致：异常最优先，脚本没跑只是"还没开始"
             if (selectedUserErrorTaskCount.value) {
-                return { tone: 'error', label: `${selectedUserErrorTaskCount.value} 个任务异常` };
+                return { tone: 'red', label: `${selectedUserErrorTaskCount.value} 个任务异常` };
             }
             if (!selectedUserActiveTaskCount.value) {
-                return { tone: 'pending', label: '任务全部停用' };
+                return { tone: '', label: '任务全部停用' };
             }
             if (!script.value.running) {
-                return { tone: 'warn', label: '追踪脚本未运行' };
+                return { tone: 'amber', label: '追踪脚本未运行' };
             }
-            return { tone: 'ok', label: `追踪中 ${selectedUserActiveTaskCount.value} 个` };
+            return { tone: 'green', label: `追踪中 ${selectedUserActiveTaskCount.value} 个` };
         });
 
         // 任务状态的唯一判据：weight 兼作首页排序权重，越小越该被先看到
         const taskState = (task) => {
             if (task.archived) {
-                return { key: 'archived', tone: 'pending', label: '已归档', weight: 5 };
+                return { key: 'archived', tone: '', label: '已归档', weight: 5 };
             }
             // 停用优先于异常：用户主动停掉的任务不该被当成"出问题了"催着处理，
             // 它留着的 last_error 只是停用前最后一次轮询的残留
             if (!task.enabled) {
-                return { key: 'paused', tone: 'pending', label: '已停用', weight: 4 };
+                return { key: 'paused', tone: '', label: '已停用', weight: 4 };
             }
             if (task.last_error) {
-                return { key: 'error', tone: 'error', label: '轮询异常', weight: 0 };
+                return { key: 'error', tone: 'red', label: '轮询异常', weight: 0 };
             }
             if (!script.value.running) {
-                return { key: 'idle', tone: 'warn', label: '待启动脚本', weight: 1 };
+                return { key: 'idle', tone: 'amber', label: '待启动脚本', weight: 1 };
             }
             if (!task.last_checked_at) {
-                return { key: 'fresh', tone: 'warn', label: '尚未检查', weight: 2 };
+                return { key: 'fresh', tone: 'amber', label: '尚未检查', weight: 2 };
             }
-            return { key: 'ok', tone: 'ok', label: '追踪中', weight: 3 };
+            return { key: 'ok', tone: 'green', label: '追踪中', weight: 3 };
         };
 
         const taskTone = (task) => taskState(task).tone;
@@ -288,18 +295,18 @@ const app = createApp({
 
         const globalTrackingState = computed(() => {
             if (!totalTaskCount.value) {
-                return { tone: 'pending', label: '还没有任务' };
+                return { tone: '', label: '还没有任务' };
             }
             if (globalErrorTaskCount.value) {
-                return { tone: 'error', label: `${globalErrorTaskCount.value} 个任务异常` };
+                return { tone: 'red', label: `${globalErrorTaskCount.value} 个任务异常` };
             }
             if (!activeTaskCount.value) {
-                return { tone: 'pending', label: '任务全部停用' };
+                return { tone: '', label: '任务全部停用' };
             }
             if (!script.value.running) {
-                return { tone: 'warn', label: '追踪脚本未运行' };
+                return { tone: 'amber', label: '追踪脚本未运行' };
             }
-            return { tone: 'ok', label: `正常追踪 ${activeTaskCount.value} 个` };
+            return { tone: 'green', label: `正常追踪 ${activeTaskCount.value} 个` };
         });
 
         const overviewFilter = ref('all');
@@ -354,18 +361,18 @@ const app = createApp({
 
         const meTrackingState = computed(() => {
             if (!meTaskCount.value) {
-                return { tone: 'pending', label: '待添加任务' };
+                return { tone: '', label: '待添加任务' };
             }
             if (meErrorTaskCount.value) {
-                return { tone: 'error', label: `${meErrorTaskCount.value} 个任务异常` };
+                return { tone: 'red', label: `${meErrorTaskCount.value} 个任务异常` };
             }
             if (!meActiveTaskCount.value) {
-                return { tone: 'pending', label: '任务全部停用' };
+                return { tone: '', label: '任务全部停用' };
             }
             if (!script.value.running) {
-                return { tone: 'warn', label: '追踪脚本未运行' };
+                return { tone: 'amber', label: '追踪脚本未运行' };
             }
-            return { tone: 'ok', label: `追踪中 ${meActiveTaskCount.value} 个` };
+            return { tone: 'green', label: `追踪中 ${meActiveTaskCount.value} 个` };
         });
 
         // 任务操作后不重建账号表单，否则会把正在编辑的账号字段冲掉
@@ -762,7 +769,7 @@ const app = createApp({
                 bark.value.running = data.running;
             });
             socket.value.on('tracker_log', async (data) => {
-                script.value.logs.push(data.data.replace(/\n/g, '<br>'));
+                script.value.logs.push(logHtml(data.data));
                 if (script.value.logs.length > MAX_LOG_LINES) {
                     script.value.logs.splice(0, script.value.logs.length - MAX_LOG_LINES);
                 }
@@ -770,7 +777,7 @@ const app = createApp({
                 scrollToBottom(trackerLogOutput.value);
             });
             socket.value.on('bark_log', async (data) => {
-                bark.value.logs.push(data.data.replace(/\n/g, '<br>'));
+                bark.value.logs.push(logHtml(data.data));
                 if (bark.value.logs.length > MAX_LOG_LINES) {
                     bark.value.logs.splice(0, bark.value.logs.length - MAX_LOG_LINES);
                 }
@@ -778,19 +785,19 @@ const app = createApp({
                 scrollToBottom(barkLogOutput.value);
             });
             socket.value.on('full_tracker_log', async (data) => {
-                const lines = data.data ? data.data.split('\n').map((line) => line.replace(/\n/g, '<br>')) : [];
+                const lines = data.data ? data.data.split('\n').map(logHtml) : [];
                 script.value.logs = lines.length > MAX_LOG_LINES ? lines.slice(-MAX_LOG_LINES) : lines;
                 await nextTick();
                 scrollToBottom(trackerLogOutput.value);
             });
             socket.value.on('full_bark_log', async (data) => {
-                const lines = data.data ? data.data.split('\n').map((line) => line.replace(/\n/g, '<br>')) : [];
+                const lines = data.data ? data.data.split('\n').map(logHtml) : [];
                 bark.value.logs = lines.length > MAX_LOG_LINES ? lines.slice(-MAX_LOG_LINES) : lines;
                 await nextTick();
                 scrollToBottom(barkLogOutput.value);
             });
             socket.value.on('remote_bark_log', async (data) => {
-                remoteBarkLogs.value.push(data.data.replace(/\n/g, '<br>'));
+                remoteBarkLogs.value.push(logHtml(data.data));
                 if (remoteBarkLogs.value.length > MAX_LOG_LINES) {
                     remoteBarkLogs.value.splice(0, remoteBarkLogs.value.length - MAX_LOG_LINES);
                 }
@@ -798,7 +805,7 @@ const app = createApp({
                 scrollToBottom(remoteBarkLogOutput.value);
             });
             socket.value.on('full_remote_bark_log', async (data) => {
-                const lines = data.data ? data.data.split('\n').map((line) => line.replace(/\n/g, '<br>')) : [];
+                const lines = data.data ? data.data.split('\n').map(logHtml) : [];
                 remoteBarkLogs.value = lines.length > MAX_LOG_LINES ? lines.slice(-MAX_LOG_LINES) : lines;
                 await nextTick();
                 scrollToBottom(remoteBarkLogOutput.value);
