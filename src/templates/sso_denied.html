@@ -7,9 +7,7 @@
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="/favicon.ico" sizes="any" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <script>
-      try { document.documentElement.dataset.scheme = localStorage.getItem('jppost_scheme') || 'auto'; } catch (e) { document.documentElement.dataset.scheme = 'auto'; }
-    </script>
+    {% include '_appearance_head.html' %}
     <link rel="stylesheet" href="/static/vendor/szyyw-design/tokens.css" />
     <link rel="stylesheet" href="/static/vendor/szyyw-design/components.css" />
     <link rel="stylesheet" href="/static/style.css" />
@@ -21,8 +19,8 @@
     <div class="auth-shell">
       <div class="auth-card glass rise">
         <div class="auth-eyebrow">JP Post Tracker</div>
-        <h1 class="auth-title">无法进入</h1>
-        <div class="message error">{{ message }}</div>
+        <h1 class="auth-title grad-text">无法进入</h1>
+        <div class="message err-text">{{ message }}</div>
         {% if portal_user %}
         <p class="auth-subtitle">当前 portal 用户：<code>{{ portal_user }}</code></p>
         {% endif %}

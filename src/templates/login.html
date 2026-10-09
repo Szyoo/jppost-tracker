@@ -7,9 +7,7 @@
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="/favicon.ico" sizes="any" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <script>
-      try { document.documentElement.dataset.scheme = localStorage.getItem('jppost_scheme') || 'auto'; } catch (e) { document.documentElement.dataset.scheme = 'auto'; }
-    </script>
+    {% include '_appearance_head.html' %}
     <link rel="stylesheet" href="/static/vendor/szyyw-design/tokens.css" />
     <link rel="stylesheet" href="/static/vendor/szyyw-design/components.css" />
     <link rel="stylesheet" href="/static/style.css" />
@@ -20,21 +18,25 @@
     <div class="auth-shell">
       <div class="auth-card glass rise{% if error %} shake{% endif %}">
         <div class="auth-eyebrow">JP Post Tracker</div>
-        <h1 class="auth-title">登录</h1>
+        <h1 class="auth-title grad-text">登录</h1>
         <p class="auth-subtitle">输入用户名和密码后，系统会按你的角色进入管理员后台或个人门户。</p>
 
         {% if error %}
-        <div class="message error">{{ error }}</div>
+        <div class="message err-text">{{ error }}</div>
         {% endif %}
 
-        <form method="post" class="auth-form">
+        <form method="post" class="auth-form stack">
           <input type="hidden" name="next" value="{{ next_target }}" />
 
-          <label for="username">用户名</label>
-          <input id="username" name="username" type="text" class="field" autocomplete="username" placeholder="输入用户名" required />
+          <div>
+            <label for="username">用户名</label>
+            <input id="username" name="username" type="text" class="field" autocomplete="username" placeholder="输入用户名" required />
+          </div>
 
-          <label for="password">密码</label>
-          <input id="password" name="password" type="password" class="field" autocomplete="current-password" placeholder="输入密码" required />
+          <div>
+            <label for="password">密码</label>
+            <input id="password" name="password" type="password" class="field" autocomplete="current-password" placeholder="输入密码" required />
+          </div>
 
           <button type="submit" class="btn">进入</button>
         </form>

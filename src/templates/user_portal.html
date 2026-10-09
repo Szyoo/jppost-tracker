@@ -7,9 +7,7 @@
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="/favicon.ico" sizes="any" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <script>
-      try { document.documentElement.dataset.scheme = localStorage.getItem('jppost_scheme') || 'auto'; } catch (e) { document.documentElement.dataset.scheme = 'auto'; }
-    </script>
+    {% include '_appearance_head.html' %}
     <link rel="stylesheet" href="/static/vendor/szyyw-design/tokens.css" />
     <link rel="stylesheet" href="/static/vendor/szyyw-design/components.css" />
     <link rel="stylesheet" href="/static/style.css" />
@@ -18,39 +16,42 @@
     <div class="bg-layer"></div>
 
     <div class="page">
-      <header class="site-header rise">
-        <div class="brand">
-          <span class="brand-sub">My Delivery Space</span>
-          <h1 class="brand-title">我的快递与 Bark 设置</h1>
+      <header class="app-header page-header rise">
+        <div class="app-brand">
+          <span class="app-sub">My Delivery Space</span>
+          <h1 class="app-title">我的快递与 Bark 设置</h1>
         </div>
-        <form method="post" action="/logout" class="header-session">
+        {%- if not sso_on %}
+        <!-- SSO 下身份与登出由右上角账户菜单提供，这里只在本地登录时显示 -->
+        <form method="post" action="/logout" class="app-actions">
           <span class="current-user">{{ viewer_state.display_name }} · {{ viewer_state.portal_user or viewer_state.username }}</span>
-          <span class="role-badge user">{{ viewer_state.role }}</span>{% if not sso_on %}
-          <button type="submit" class="btn-ghost btn-small danger">退出</button>{% endif %}
+          <span class="pill violet">{{ viewer_state.role }}</span>
+          <button type="submit" class="btn-ghost btn-small danger">退出</button>
         </form>
+        {%- endif %}
       </header>
 
       {% if message %}
-      <div class="message {{ status }}" id="flash-message" style="margin: 0 0 16px;">{{ message }}</div>
+      <div class="message flash {{ 'ok-text' if status == 'success' else 'err-text' }}" id="flash-message">{{ message }}</div>
       {% endif %}
 
       <h2 class="section-name">我的概览</h2>
-      <div class="widget-grid stagger">
-        <div class="widget glass lift spot">
-          <p class="widget-title">启用中任务</p>
-          <p class="widget-value">{{ account.active_task_count or 0 }}</p>
+      <div class="stat-grid stagger">
+        <div class="stat-card glass lift spot">
+          <div class="stat-label">启用中任务</div>
+          <div class="stat-value num">{{ account.active_task_count or 0 }}</div>
         </div>
-        <div class="widget glass lift spot">
-          <p class="widget-title">全部任务（含归档）</p>
-          <p class="widget-value">{{ account.task_count or 0 }}</p>
+        <div class="stat-card glass lift spot">
+          <div class="stat-label">全部任务（含归档）</div>
+          <div class="stat-value num">{{ account.task_count or 0 }}</div>
         </div>
-        <div class="widget glass lift spot">
-          <p class="widget-title">归档任务</p>
-          <p class="widget-value">{{ account.archived_tasks | length }}</p>
+        <div class="stat-card glass lift spot">
+          <div class="stat-label">归档任务</div>
+          <div class="stat-value num">{{ account.archived_tasks | length }}</div>
         </div>
-        <div class="widget glass lift spot">
-          <p class="widget-title">Bark 设备</p>
-          <p class="widget-value">{{ account.bark_device_count or 0 }}</p>
+        <div class="stat-card glass lift spot">
+          <div class="stat-label">Bark 设备</div>
+          <div class="stat-value num">{{ account.bark_device_count or 0 }}</div>
         </div>
       </div>
 
@@ -58,7 +59,7 @@
         <div class="panel glass rise">
           <div class="panel-head">
             <h2 class="panel-title">我的追踪任务</h2>
-            <span class="pill {{ 'ok' if account.active_task_count else 'pending' }}">
+            <span class="pill {{ 'green' if account.active_task_count else '' }}">
               {{ '启用中 %d 个' % account.active_task_count if account.active_task_count else '暂无启用任务' }}
             </span>
           </div>
@@ -69,7 +70,7 @@
             <form method="post" action="/me/tasks/{{ task.id }}/update" class="task-item inner">
               <div class="task-item-head">
                 <strong>{{ task.tracking_number }}</strong>
-                <span class="pill {% if not task.enabled %}pending{% elif task.last_error %}error{% else %}ok{% endif %}">
+                <span class="pill {% if not task.enabled %}{% elif task.last_error %}red{% else %}green{% endif %}">
                   {% if not task.enabled %}已停用{% elif task.last_error %}轮询异常{% else %}追踪中{% endif %}
                 </span>
               </div>
@@ -102,11 +103,11 @@
             {% endfor %}
           </div>
           {% else %}
-          <div class="empty-note" style="margin-bottom: 16px;">你还没有追踪任务，用下面的表单添加第一个单号。</div>
+          <div class="empty">你还没有追踪任务，用下面的表单添加第一个单号。</div>
           {% endif %}
 
           <form method="post" action="/me/tasks" class="inner task-create">
-            <h3 class="section-name" style="margin-bottom: 12px;">添加任务</h3>
+            <h3 class="section-name">添加任务</h3>
             <div class="task-fields">
               <label class="task-field">
                 <span>日本邮政单号</span>
@@ -121,7 +122,7 @@
                 <input name="check_interval" type="number" min="30" class="field" value="300" />
               </label>
             </div>
-            <label class="switch-row" style="margin-top: 12px;">
+            <label class="switch-row">
               <input name="enabled" type="checkbox" class="switch" checked />
               添加后立即启用
             </label>
@@ -133,13 +134,13 @@
 
           {% if account.archived_tasks %}
           <div class="divider"></div>
-          <h3 class="section-name" style="margin-bottom: 12px;">归档任务</h3>
+          <h3 class="section-name">归档任务</h3>
           <div class="task-list stagger">
             {% for task in account.archived_tasks %}
             <form method="post" action="/me/tasks" class="task-item inner">
               <div class="task-item-head">
                 <strong>{{ task.tracking_number }}</strong>
-                <span class="pill pending">已归档</span>
+                <span class="pill">已归档</span>
               </div>
               <p class="task-meta">
                 首次登记 {{ task.first_seen_at }} · 登记次数 {{ task.seen_count }}{% if task.label %} · 备注 {{ task.label }}{% endif %}
@@ -167,7 +168,7 @@
           </div>
 
           <form method="post" action="/me/update">
-            <div class="form-grid">
+            <div class="form-grid two-col">
               <div>
                 <label for="display_name">显示名称</label>
                 <input id="display_name" name="display_name" type="text" class="field" value="{{ account.display_name }}" />
@@ -189,7 +190,7 @@
               </div>
               <div class="full">
                 <label for="bark_keys">Bark Keys（支持多端，一行一个）</label>
-                <textarea id="bark_keys" name="bark_keys" class="field" rows="5" placeholder="可以粘贴完整推送 URL，也可以只填 key">{{ account.bark_keys }}</textarea>
+                <textarea id="bark_keys" name="bark_keys" class="field mono" rows="5" placeholder="可以粘贴完整推送 URL，也可以只填 key">{{ account.bark_keys }}</textarea>
                 <p class="hint">支持直接粘贴完整推送 URL，系统会自动提取 key。多设备同时推送时，一行放一个 key。</p>
               </div>
               <div class="full">
@@ -198,17 +199,17 @@
                 <p class="hint">例如 <code>?sound=minuet&level=timeSensitive</code>，会附加到每条 Bark 推送请求上。</p>
               </div>
               <div class="full">
-                <div class="inner" style="padding: 14px;">
-                  <h3 class="section-name" style="margin-bottom: 4px;">Bark 预览</h3>
-                  <p class="hint" style="margin: 0 0 12px;">直接使用当前表单里的 Keys、参数和链接开关发一条测试消息，不需要先保存。</p>
-                  <div class="form-grid">
+                <div class="inner sub-card">
+                  <h3 class="section-name">Bark 预览</h3>
+                  <p class="hint lead">直接使用当前表单里的 Keys、参数和链接开关发一条测试消息，不需要先保存。</p>
+                  <div class="form-grid two-col">
                     <div class="full">
                       <label for="test_title">测试标题</label>
                       <input id="test_title" name="test_title" type="text" class="field" value="测试推送" />
                     </div>
                     <div class="full">
                       <label for="test_body">测试内容</label>
-                      <textarea id="test_body" name="test_body" class="field" rows="3">这是 Bark 参数预览消息，用来确认通知样式、声音和链接效果。</textarea>
+                      <textarea id="test_body" name="test_body" class="field mono" rows="3">这是 Bark 参数预览消息，用来确认通知样式、声音和链接效果。</textarea>
                     </div>
                     <div class="full">
                       <label for="task_id">推送链接取自哪个任务</label>
@@ -244,35 +245,35 @@
             </div>
             <div class="guide-steps stagger">
               <div class="guide-step">
-                <span class="guide-step-no">01</span>
+                <span class="guide-step-no grad-text">01</span>
                 <div>
                   <strong>配置服务器地址</strong>
                   <p>在 iPhone / iPad 上安装 Bark，把服务器地址设为 <code>{{ bark_help.public_url or bark_help.internal_url or '未配置' }}</code>。</p>
                 </div>
               </div>
               <div class="guide-step">
-                <span class="guide-step-no">02</span>
+                <span class="guide-step-no grad-text">02</span>
                 <div>
                   <strong>复制推送 URL 或 key</strong>
                   <p>打开 Bark 后复制测试推送 URL，整条粘贴进 Bark Keys 即可，系统会自动提取 key。</p>
                 </div>
               </div>
               <div class="guide-step">
-                <span class="guide-step-no">03</span>
+                <span class="guide-step-no grad-text">03</span>
                 <div>
                   <strong>需要多端时逐个登记</strong>
                   <p>每个设备都有自己的 key。想让同一条消息推送到多个终端，就一行一个填进去。</p>
                 </div>
               </div>
               <div class="guide-step">
-                <span class="guide-step-no">04</span>
+                <span class="guide-step-no grad-text">04</span>
                 <div>
                   <strong>保存并测试</strong>
                   <p>点“发送 Bark 测试”预览实际效果。想确认服务在线，可访问 <code>{{ bark_help.public_url }}{{ bark_help.health_path }}</code>。</p>
                 </div>
               </div>
             </div>
-            <p class="hint" style="margin-top: 14px;">
+            <p class="hint">
               注意：一个 Bark key 对应一个已注册设备，多端推送需要把每个设备的 key 都填进来。
             </p>
           </div>

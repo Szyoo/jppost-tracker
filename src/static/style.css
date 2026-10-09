@@ -24,46 +24,17 @@ code {
   padding: 28px 24px 64px;
 }
 
-/* ---------- 页头（右侧给固定定位的 .corner-tools 工具位让位：明暗 + 齿轮两枚） ---------- */
-
-.site-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  flex-wrap: wrap;
+/* ---------- 页头 ----------
+   用包的 .app-header（右侧按 --corner-rail-w 自动给工具位让位，不再写死 padding-right）。
+   它缺省是贴视口的全宽顶栏，这里放在居中的 .page 内容列里，左/上内边距交给 .page */
+.app-header.page-header {
+  padding-top: 0;
+  padding-left: 0;
+  min-height: 0;
   margin-bottom: 26px;
-  padding-right: 92px;
 }
 
-.brand {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.brand-title {
-  margin: 0;
-  font-size: 26px;
-  font-weight: 700;
-  letter-spacing: 0.01em;
-  background: var(--grad);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
-
-.brand-sub {
-  font-size: 12px;
-  color: var(--text-dim);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
-.header-session {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+.app-header.page-header .app-actions {
   margin: 0;
 }
 
@@ -72,89 +43,46 @@ code {
   color: var(--text-dim);
 }
 
-/* 角色徽章：青=admin 紫=user */
-.role-badge {
-  display: inline-block;
-  padding: 2px 10px;
-  border-radius: 999px;
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  border: 1px solid;
-}
+/* ---------- 页签（包的 .tabs > .tab，外面套一条玻璃底） ---------- */
 
-.role-badge.admin {
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
-  background: var(--tint-cyan-bg);
-}
-
-.role-badge.user {
-  color: var(--accent2);
-  border-color: color-mix(in srgb, var(--accent2) 50%, transparent);
-  background: var(--tint-violet-bg);
-}
-
-/* ---------- 页签 ---------- */
-
-.nav-tabs {
-  display: flex;
-  gap: 6px;
+.tabs.nav-bar {
   padding: 6px;
-  width: 100%;
-  flex-wrap: wrap;
 }
 
-.tab {
-  appearance: none;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text-dim);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 500;
-  padding: 8px 18px;
-  border-radius: 10px;
-  cursor: pointer;
-  transition: color 0.2s var(--ease), background 0.2s var(--ease);
-}
-
-.tab:hover {
-  color: var(--text);
-}
-
-.tab.active {
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+.tabs.log-tabs {
+  margin-bottom: 16px;
 }
 
 /* ---------- 表单补充 ---------- */
 
-.hint {
-  font-size: 12px;
-  color: var(--text-dim);
-  margin: 6px 0 0;
-}
-
+/* 等宽字体来自包的 .mono，这里只管高度与拖拽方向 */
 textarea.field {
   resize: vertical;
   min-height: 90px;
-  font-family: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
-  font-size: 13px;
 }
 
-.field:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-/* 本项目表单用固定两列 + .full 跨行（覆盖包里的 auto-fit 网格） */
-.form-grid {
+/* 本项目表单用固定两列 + .full 跨行（包的 .form-grid 是 auto-fit，用修饰类而不是改写它） */
+.form-grid.two-col {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
 }
 
-.form-grid .full {
+.form-grid.two-col > .full {
   grid-column: 1 / -1;
+}
+
+/* 面板开头的说明行：包的 .hint 是「字段下方提示」（上边距 6px），放在段首时改成下边距 */
+.hint.lead {
+  margin: 0 0 14px;
+}
+
+/* 面板里的次级卡片（Bark 预览、新增账号） */
+.sub-card {
+  padding: 14px;
+}
+
+.sub-card.create-user {
+  margin-bottom: 14px;
 }
 
 /* ---------- 开关 ---------- */
@@ -186,22 +114,17 @@ textarea.field {
   cursor: not-allowed;
 }
 
-/* ---------- 行内反馈 ---------- */
+/* ---------- 行内反馈（颜色用包的 .ok-text / .err-text，这里只管位置） ---------- */
 
 .message {
   margin-top: 12px;
-  font-size: 13px;
 }
 
-.message.success {
-  color: var(--ok);
+.message.flash {
+  margin: 0 0 16px;
 }
 
-.message.error {
-  color: var(--err);
-}
-
-/* ---------- 状态点 / 胶囊语义别名 ---------- */
+/* ---------- 状态点 ---------- */
 
 .status-line {
   display: inline-flex;
@@ -229,68 +152,23 @@ textarea.field {
   box-shadow: 0 0 8px color-mix(in srgb, var(--err) 60%, transparent);
 }
 
-/* 模板里用的是语义名（ok/error/pending），映射到 token */
-.pill.ok {
-  color: var(--ok);
-  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
-  background: var(--tint-green-bg);
-}
+/* ---------- 指标卡（包的 .stat-*）：有异常时整块跳出来，不用用户去数 ---------- */
 
-.pill.error {
-  color: var(--err);
+.stat-card.alert {
   border-color: color-mix(in srgb, var(--err) 45%, transparent);
   background: var(--tint-red-bg);
 }
 
-.pill.pending {
-  color: var(--text-dim);
-}
-
-.pill.warn {
-  color: var(--warn);
-  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
-  background: var(--tint-amber-bg);
-}
-
-/* ---------- 指标 widget ---------- */
-
-.widget-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-  gap: 16px;
-}
-
-.widget {
-  padding: 16px 18px;
-  cursor: default;
-}
-
-.widget-title {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  color: var(--text-dim);
-  margin: 0 0 8px;
-}
-
-.widget-value {
-  font-size: 20px;
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
-  margin: 0;
-  word-break: break-all;
-  overflow-wrap: anywhere;
-}
-
-/* 有异常时这块指标要自己跳出来，不用用户去数 */
-.widget.alert {
-  border-color: color-mix(in srgb, var(--err) 45%, transparent);
-  background: var(--tint-red-bg);
-}
-
-.widget.alert .widget-value {
+.stat-card.alert .stat-value {
   color: var(--err);
+}
+
+.stat-grid.detail-stats {
+  margin-bottom: 18px;
+}
+
+.overview-filters {
+  margin-bottom: 14px;
 }
 
 /* ---------- 首页任务总览（跨账号一行一个任务） ---------- */
@@ -459,6 +337,14 @@ textarea.field {
   padding: 14px 16px;
 }
 
+.task-create .switch-row {
+  margin-top: 12px;
+}
+
+.task-create + .task-list {
+  margin-top: 16px;
+}
+
 .task-item .actions {
   margin-top: 4px;
 }
@@ -489,11 +375,6 @@ textarea.field {
 
 .history-item .actions {
   margin-top: 8px;
-}
-
-.empty-note {
-  font-size: 13px;
-  color: var(--text-dim);
 }
 
 /* ---------- 用户管理 ---------- */
@@ -563,15 +444,12 @@ textarea.field {
   align-items: flex-start;
 }
 
+/* 渐变字来自包的 .grad-text */
 .guide-step-no {
   flex: none;
   font-size: 12px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  background: var(--grad);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
   padding-top: 2px;
 }
 
@@ -587,24 +465,16 @@ textarea.field {
   color: var(--text-dim);
 }
 
-/* ---------- 日志（终端窗：刻意保持深色，浅色模式不变，DESIGN.md §9） ---------- */
+/* ---------- 日志（包的 .term 终端窗，DESIGN.md §9）：整页日志比包缺省的 260px 高 ---------- */
 
-.log-view {
-  padding: 14px;
+.term-body.log-body {
   height: 460px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  font-family: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.7;
-  white-space: pre-wrap;
-  word-break: break-all;
-  background: var(--term-bg);
-  color: var(--term-text);
-  border-color: var(--term-border);
+  max-height: none;
+  padding: 12px 14px;
 }
 
-.log-view div {
+/* 空行也占一行高，日志段落才不会挤在一起 */
+.log-body > .term-line {
   min-height: 1em;
 }
 
@@ -687,23 +557,15 @@ textarea.field {
   color: var(--text-dim);
 }
 
+/* 样子来自包的 .callout.info */
 .env-apply-note {
   margin: 12px 0 0;
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
-  border-left-width: 3px;
-  background: var(--tint-cyan-bg);
-  font-size: 12px;
-  line-height: 1.7;
-  color: var(--text);
 }
 
 /* 变量名是运维改 .env 时的索引，保留但压成次要信息 */
 .env-key {
   display: inline-block;
   margin-top: 6px;
-  font-family: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
   font-size: 11px;
   letter-spacing: 0.02em;
   color: var(--text-dim);
@@ -737,14 +599,11 @@ textarea.field {
   margin-bottom: 8px;
 }
 
+/* 渐变字来自包的 .grad-text */
 .auth-title {
   margin: 0 0 8px;
   font-size: 26px;
   font-weight: 700;
-  background: var(--grad);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
 }
 
 .auth-subtitle {
@@ -753,13 +612,9 @@ textarea.field {
   color: var(--text-dim);
 }
 
-.auth-form {
-  display: grid;
-  gap: 14px;
-}
-
-.auth-form label {
-  margin-bottom: -8px;
+/* 表单本身是包的 .stack（字段之间的间距由 gap 给）；提交按钮单独再隔开一点 */
+.auth-form > .btn {
+  margin-top: 4px;
 }
 
 .auth-link-row {
@@ -827,14 +682,6 @@ textarea.field {
   color: var(--text);
 }
 
-.remote-ok {
-  color: var(--ok);
-}
-
-.remote-bad {
-  color: var(--err);
-}
-
 /* ---------- 滚动条 ---------- */
 
 ::-webkit-scrollbar {
@@ -879,17 +726,7 @@ textarea.field {
     padding: 20px 14px 48px;
   }
 
-  /* 手机上指标卡两列并排，否则一屏只装得下两三个数字 */
-  .widget-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
-  }
-
-  .widget {
-    padding: 12px 14px;
-  }
-
-  .form-grid,
+  .form-grid.two-col,
   .env-fields,
   .task-fields {
     grid-template-columns: 1fr;
@@ -906,11 +743,7 @@ textarea.field {
     gap: 4px;
   }
 
-  .brand-title {
-    font-size: 22px;
-  }
-
-  .log-view {
+  .term-body.log-body {
     height: 340px;
   }
 }

@@ -146,6 +146,15 @@ a {
 
 .spot:hover::after { opacity: 1; }
 
+/* @corner:begin —— 从这里到 @corner:end 原样进 corner.css（scripts/build-corner-css.mjs）；
+   corner.css 给不加载本文件、只想挂右上角工具位的应用（配 tokens.css）。改了跑一次构建脚本 */
+
+/* 只作用于工具位与弹层自身：本文件的 * 已给全局 border-box，这里是给单独挂 corner.css 时兜底 */
+:where(.corner-tools, .corner-panel),
+:where(.corner-tools, .corner-panel) * {
+  box-sizing: border-box;
+}
+
 /* ---------- 右上角常驻工具位 ---------- */
 
 /* 容器管定位，按钮只管长相。order 小的在左边：明暗切换 10、背景参数 20 */
@@ -245,6 +254,67 @@ a {
   animation: rise 0.3s var(--ease) both;
 }
 .corner-panel[hidden] { display: none; }
+
+/* ---------- 工具位按钮的角标（.corner-badge，v0.13.0 公开）----------
+   createCornerButton 自带；手写时放进 .corner-tool 里：
+   <span class="corner-badge"></span> 空 = 小圆点，<span class="corner-badge">3</span> = 计数，hidden = 不显示 */
+.corner-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  font-family: 'Inter', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
+  color: var(--on-err);
+  background: var(--err);
+  /* 一圈底色描边，把角标从按钮边框上「剪」出来 */
+  box-shadow: 0 0 0 2px var(--bg);
+  pointer-events: none;
+}
+.corner-badge:empty {
+  top: -2px;
+  right: -2px;
+  min-width: 0;
+  width: 9px;
+  height: 9px;
+  padding: 0;
+}
+.corner-badge[hidden] { display: none; }
+
+/* 渲染成链接的工具位按钮（createCornerButton({ href })）：去掉链接下划线 */
+a.corner-tool { text-decoration: none; }
+
+/* ---------- 语言切换（.locale-toggle，locale-toggle.js）----------
+   按钮显示语言短名（中 / 日 / EN），宽度随内容；其余沿用 .corner-tool */
+.corner-tool.locale-toggle {
+  width: auto;
+  min-width: 34px;
+  padding: 0 9px;
+  font-family: 'Inter', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.corner-tool.locale-toggle[aria-expanded="true"] {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+/* ---------- 给工具位让位（.corner-clear，v0.13.0 公开）----------
+   全宽顶栏的右侧内边距 = 工具位实测占宽（--corner-rail-w，corner.js 发布）+ 一个空隙。
+   横排 / 纵排、未登录的「登录」按钮更宽、按钮增减都自动跟上——别再写死 padding-right: 160px。
+   工具位还没挂（或已全部卸下）时 --corner-rail-w 不存在，只留空隙 */
+.corner-clear {
+  padding-right: calc(var(--corner-rail-w, 0px) + var(--corner-gap, 12px));
+}
 
 /* ---------- 背景参数（.settings-panel，挂 .corner-panel）---------- */
 
@@ -355,6 +425,8 @@ a {
   align-items: center;
   justify-content: space-between;
 }
+
+/* @corner:end */
 
 input[type="range"] {
   appearance: none;
@@ -627,6 +699,9 @@ input[type="datetime-local"].field {
 
 .err-text { color: var(--err); font-size: 13px; }
 .ok-text { color: var(--ok); font-size: 13px; }
+/* v0.13.0：同一族的警示档，和字段下方的提示行 */
+.warn-text { color: var(--warn); font-size: 13px; }
+.hint { margin: 6px 0 0; font-size: 12px; color: var(--text-dim); }
 
 /* ---------- 徽章 / 胶囊 ---------- */
 
@@ -973,6 +1048,460 @@ table.tbl {
   to { visibility: hidden; }
 }
 
+/* ============================================================
+   v0.13.0 公开组件：提示条 / 标签页 / 分段 / toast / 紧凑输入 / 转圈 /
+   表格增强 / 下拉菜单 / 键值列表 / 侧边抽屉 / 页头。全部是新类或新属性，
+   不改动上面任何既有规则的外观。用法见 DESIGN.md §12，手测 demo/components-v013.html
+   ============================================================ */
+
+/* ---------- 提示条（.callout）----------
+   <div class="callout warn"><strong>注意</strong> 这一步不可撤销。</div>
+   变体 .ok / .warn / .err / .info；不带变体是中性灰 */
+.callout {
+  display: block;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--glass-border);
+  background: var(--inner-bg);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.callout > :first-child { margin-top: 0; }
+.callout > :last-child { margin-bottom: 0; }
+.callout.ok { background: var(--tint-green-bg); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+.callout.warn { background: var(--tint-amber-bg); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.callout.err { background: var(--tint-red-bg); border-color: color-mix(in srgb, var(--err) 45%, transparent); }
+/* info 跟随配色的 accent（aurora 下是翠绿），不写死青色 */
+.callout.info { background: color-mix(in srgb, var(--accent) 10%, transparent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.callout.ok > strong:first-child { color: var(--ok); }
+.callout.warn > strong:first-child { color: var(--warn); }
+.callout.err > strong:first-child { color: var(--err); }
+.callout.info > strong:first-child { color: var(--accent); }
+
+/* ---------- 标签页（.tabs > .tab）----------
+   选中：.active 或 [aria-selected="true"]（role="tab" 时用后者）。样子与 jppost / ashare 自写的 .tab 一致，
+   迁过来不跳。.tabs.compact 是紧凑档 */
+.tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.tab {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 8px 18px;
+  border-radius: 10px;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color 0.2s var(--ease), background 0.2s var(--ease);
+}
+.tab:hover { color: var(--text); }
+.tab.active,
+.tab[aria-selected="true"] {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.tab:disabled { opacity: 0.45; cursor: not-allowed; }
+.tab[hidden] { display: none; }
+.tabs.compact .tab { padding: 4px 12px; font-size: 13px; }
+/* 一行放不下时横向滚动而不是换行（窄抽屉里的标签栏） */
+.tabs.scroll { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+.tabs.scroll::-webkit-scrollbar { display: none; }
+.tabs.scroll .tab { flex: none; }
+
+/* ---------- 分段控件（.seg > button）----------
+   二到四个互斥选项（日 / 周 / 月、股票 / 基金）。选中：.active 或 aria-pressed="true" */
+.seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--inner-bg);
+  border: 1px solid var(--glass-border);
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.seg > :where(button, a) {
+  appearance: none;
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 7px;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color 0.15s var(--ease), background 0.15s var(--ease);
+}
+.seg > :where(button, a):hover { color: var(--text); }
+.seg > :where(button, a):where(.active, [aria-pressed="true"]) {
+  color: var(--accent);
+  background: var(--sheet-bg);
+  box-shadow: inset 0 0 0 1px var(--glass-border);
+}
+.seg > button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* ---------- toast（toast.js）----------
+   区域底部居中；有底部导航的页面把 --toast-offset 抬到导航之上：
+   :root { --toast-offset: calc(var(--nav-h) + 12px); } */
+.toast-region {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--toast-offset, 20px) + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  pointer-events: none;
+}
+.toast-region:empty { display: none; }
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  padding: 10px 16px 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--glass-border);
+  background: var(--sheet-bg);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: var(--pop-shadow);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.45;
+  cursor: pointer;
+  animation: toast-in 0.28s var(--ease) both;
+}
+.toast.leaving { animation: toast-out 0.22s var(--ease) both; }
+.toast-text { min-width: 0; overflow-wrap: anywhere; }
+.toast-icon {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--on-accent);
+  background: var(--accent);
+}
+.toast.ok { border-color: color-mix(in srgb, var(--ok) 55%, transparent); }
+.toast.ok .toast-icon { background: var(--ok); }
+.toast.warn { border-color: color-mix(in srgb, var(--warn) 55%, transparent); }
+.toast.warn .toast-icon { background: var(--warn); }
+.toast.err { border-color: color-mix(in srgb, var(--err) 60%, transparent); }
+.toast.err .toast-icon { background: var(--err); color: var(--on-err); }
+.toast.info { border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(14px) scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes toast-out {
+  to { opacity: 0; transform: translateY(8px) scale(0.98); }
+}
+
+/* ---------- 表单补充 ----------
+   .field.small：紧凑高度（表格行内筛选、工具条）。触屏 / 窄屏仍回到 16px——iOS 聚焦小于 16px 会缩放页面 */
+.field.small { padding: 6px 10px; font-size: 14px; }
+select.field.small { padding-right: 30px; }
+@media (pointer: coarse), (max-width: 640px) {
+  .field.small { font-size: 16px; }
+}
+.field:disabled {
+  cursor: not-allowed;
+  color: var(--text-dim);
+  background: var(--inner-bg);
+  opacity: 0.7;
+}
+.switch:disabled { cursor: not-allowed; opacity: 0.45; }
+
+/* ---------- 加载转圈（.spinner）----------
+   跟随文字颜色与字号：<button class="btn" disabled><span class="spinner"></span> 保存中</button>。
+   .spinner.lg 是区块级（2em）。减少动效时停转，但仍是一圈可见的缺口环 */
+.spinner {
+  display: inline-block;
+  flex: none;
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.15em;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-top-color: currentColor;
+  animation: spin 0.8s linear infinite;
+}
+.spinner.lg { width: 2em; height: 2em; border-width: 3px; }
+/* 旋转是匀速的「等待」语义，唯一不走 --ease 的动效 */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ---------- 表格增强（都是 .tbl 的修饰类，不加就和以前一样）----------
+   .tbl.sticky：表头吸顶。表格要放在 .table-wrap 里，wrap 自动获得纵向滚动上限 --table-max-h（缺省 70vh）
+   .tbl.hover：行悬停着色
+   th[aria-sort]：可排序列（ascending ↑ / descending ↓ / none ↕），th.sorted 高亮当前排序列
+   .col-num：数字列——右对齐 + 等宽数字（th 与 td 都加） */
+.table-wrap:has(> .tbl.sticky) {
+  max-height: var(--table-max-h, 70vh);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.tbl.sticky thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  /* 必须不透明（行从下面滚过）：卡片玻璃色叠在页面底色上，看起来和卡片一样 */
+  background: linear-gradient(var(--glass-bg), var(--glass-bg)), var(--bg);
+  /* border-collapse 下吸顶单元格的下边框会留在原地，用内阴影画 */
+  border-bottom-color: transparent;
+  box-shadow: inset 0 -1px 0 var(--glass-border);
+}
+.tbl.hover tbody tr { transition: background 0.15s var(--ease); }
+.tbl.hover tbody tr:hover { background: var(--hover-tint); }
+.tbl th[aria-sort] { cursor: pointer; user-select: none; }
+.tbl th[aria-sort]:hover { color: var(--text); }
+.tbl th[aria-sort]::after {
+  content: "↕";
+  display: inline-block;
+  margin-left: 4px;
+  opacity: 0.4;
+  font-weight: 400;
+}
+.tbl th[aria-sort="ascending"]::after { content: "↑"; opacity: 1; }
+.tbl th[aria-sort="descending"]::after { content: "↓"; opacity: 1; }
+.tbl th.sorted { color: var(--text); }
+.tbl th.sorted::after { color: var(--accent); }
+.tbl .col-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 下拉菜单（.menu > .menu-item）----------
+   锚定在按钮上的轻量下拉（行操作 ⋯）。纯 CSS：放进 .menu-wrap，绝对定位在按钮下方；
+   在 .table-wrap / .glass 里请用 menu.js 的 attachMenu（打开时搬到 body 下 fixed 定位，不被裁切）。
+   .menu.start 左对齐、.menu.up 向上弹（纯 CSS 时用） */
+.menu-wrap { position: relative; display: inline-block; }
+.menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 55;
+  min-width: 160px;
+  max-width: min(320px, calc(100vw - 16px));
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-radius: 12px;
+  border: 1px solid var(--glass-border);
+  background: var(--sheet-bg);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: var(--pop-shadow);
+  animation: rise 0.2s var(--ease) both;
+}
+.menu[hidden] { display: none; }
+.menu.start { right: auto; left: 0; }
+.menu.up { top: auto; bottom: calc(100% + 4px); }
+/* attachMenu 打开时加：坐标由 JS 实测写入 */
+.menu.menu-floating { position: fixed; right: auto; bottom: auto; }
+.menu-item {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: left;
+  text-decoration: none;
+  white-space: nowrap;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s var(--ease), color 0.15s var(--ease);
+}
+.menu-item:hover:not(:disabled) { background: var(--hover-tint); }
+.menu-item.danger { color: var(--err); }
+.menu-item.danger:hover:not(:disabled) { background: var(--tint-red-bg); }
+.menu-item:disabled { opacity: 0.45; cursor: not-allowed; }
+.menu-sep { height: 1px; margin: 4px 6px; background: var(--line-soft); }
+
+/* ---------- 键值列表（dl.kv > dt + dd）----------
+   诊断信息、详情页属性。窄屏改成上下两行 */
+.kv {
+  display: grid;
+  grid-template-columns: minmax(5.5rem, max-content) 1fr;
+  gap: 8px 14px;
+  margin: 0;
+  align-items: start;
+}
+.kv > dt { font-size: 12px; color: var(--text-dim); }
+.kv > dd { margin: 0; font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 520px) {
+  .kv { grid-template-columns: 1fr; gap: 2px 0; }
+  .kv > dd { margin-bottom: 8px; }
+}
+
+/* ---------- 侧边抽屉（.drawer > .drawer-head + .drawer-body + .drawer-foot）----------
+   右侧浮起的玻璃卡，高度撑满视口（留 12px 边）；手机上全宽全高。开合用 hidden。
+   要遮罩就在它前面放一个兄弟 <div class="overlay">（z 50，抽屉 51，点遮罩关闭由应用接）。
+   旋钮：--drawer-w（宽，缺省 440px）、--drawer-top（顶，缺省贴顶 12px；
+   想让右上角工具位露出来就设成 calc(10px + var(--corner-rail-h, 34px) + 12px)） */
+.drawer {
+  position: fixed;
+  top: var(--drawer-top, calc(12px + env(safe-area-inset-top, 0px)));
+  right: calc(12px + env(safe-area-inset-right, 0px));
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  z-index: 51;
+  width: min(var(--drawer-w, 440px), calc(100vw - 24px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 16px;
+  border: 1px solid var(--glass-border);
+  background: var(--sheet-bg);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  box-shadow: var(--pop-shadow);
+  animation: drawer-in 0.35s var(--ease) both;
+}
+.drawer[hidden] { display: none; }
+.drawer.left { right: auto; left: calc(12px + env(safe-area-inset-left, 0px)); animation-name: drawer-in-left; }
+.drawer-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px 10px;
+}
+.drawer-head :where(h1, h2, h3) { margin: 0; font-size: 17px; font-weight: 600; }
+.drawer-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.drawer-foot {
+  flex: none;
+  display: flex;
+  gap: 10px;
+  padding: 14px 18px 16px;
+}
+.drawer-foot .btn,
+.drawer-foot .btn-ghost { flex: 1; }
+
+@keyframes drawer-in {
+  from { opacity: 0; transform: translateX(24px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes drawer-in-left {
+  from { opacity: 0; transform: translateX(-24px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (max-width: 640px) {
+  .drawer,
+  .drawer.left {
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    border-radius: 0;
+    border: none;
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  .drawer-foot { padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
+}
+
+/* ---------- 页头（.app-header）----------
+   <header class="app-header">
+     <div class="app-brand"><h1 class="app-title">记账本</h1><span class="app-sub">FINANCE LEDGER</span></div>
+     <div class="app-actions">…</div>
+   </header>
+   右侧自动给工具位让位（同 .corner-clear），窄屏放不下时操作区换到下一行。
+   竖直方向与工具位按钮中线对齐（顶 10px + 34px 高） */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  min-height: calc(54px + env(safe-area-inset-top, 0px));
+  padding: calc(10px + env(safe-area-inset-top, 0px)) 20px 10px;
+  padding-right: max(20px, calc(var(--corner-rail-w, 0px) + var(--corner-gap, 12px)));
+}
+.app-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.app-title {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: 0.01em;
+  background: var(--grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.app-sub {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.app-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+@media (max-width: 640px) {
+  .app-header { padding-left: 16px; }
+  .app-title { font-size: 22px; }
+}
+
+/* v0.13.0 新组件的减少动效 */
+@media (prefers-reduced-motion: reduce) {
+  .toast, .toast.leaving, .menu, .drawer { animation: none; }
+  .spinner { animation: none; }
+}
+
 /* ---------- 桌面适配（弹层与统计卡的通用部分） ---------- */
 
 @media (min-width: 900px) {
@@ -1002,6 +1531,8 @@ table.tbl {
   .term-dot[data-live="1"], .term-cursor { animation: none; }
   .corner-panel { animation: none; }
 }
+
+/* @corner:begin */
 
 /* ---------- 应用切换器（右上角九宫格，switcher.js）---------- */
 
@@ -1134,3 +1665,57 @@ table.tbl {
 .account-menu-item:disabled { opacity: 0.45; cursor: not-allowed; }
 .account-menu-err { padding: 4px 10px 8px; }
 .account-menu-err[hidden] { display: none; }
+
+/* ---------- 语言列表（.locale-menu，locale-toggle.js）---------- */
+
+/* 位置、底色、开合见 .corner-panel */
+.locale-menu {
+  width: 200px;
+  padding: 6px;
+}
+
+.locale-menu-item {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s var(--ease), color 0.15s var(--ease);
+}
+.locale-menu-item:hover { background: var(--hover-tint); }
+.locale-menu-item.active { color: var(--accent); background: var(--inner-bg); }
+
+.locale-menu-short {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-dim);
+  background: var(--inner-bg);
+  border: 1px solid var(--glass-border);
+}
+.locale-menu-item.active .locale-menu-short {
+  color: var(--on-accent);
+  background: var(--grad);
+  border-color: transparent;
+}
+
+/* 工具位弹层的减少动效（与文件中段的总表重复一条，好让 corner.css 自成一体） */
+@media (prefers-reduced-motion: reduce) {
+  .corner-panel { animation: none; }
+}
+
+/* @corner:end */

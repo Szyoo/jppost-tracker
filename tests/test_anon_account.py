@@ -32,8 +32,10 @@ def test_anon_head_index(client, db, sso):
 
 def test_boot_mounts_account_menu(client, db):
     boot = client.get("/static/boot.js").data.decode()
-    assert "mountAccountMenu({ portal })" in boot and "root.dataset.sso === '1'" in boot
-    assert b"export function mountAccountMenu" in client.get("/static/vendor/szyyw-design/account.js").data
+    # mountChrome 在 portal 非空时挂切换器 + 账户菜单；SSO 关时传 null 不挂
+    assert "mountChrome(" in boot and "root.dataset.sso === '1'" in boot and ": null" in boot
+    chrome = client.get("/static/vendor/szyyw-design/chrome.js").data
+    assert b"export function mountChrome" in chrome and b"mountAccountMenu" in chrome
 
 
 def test_anon_data_endpoints_stay_401(client, db, sso):

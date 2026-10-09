@@ -7,19 +7,27 @@
 
    工具位还把自己的实测高度发布成 --corner-rail-h，供需要「让开这条」
    的浮层（背景参数抽屉）计算偏移——横竖排列、几枚按钮都对得上，
-   不用在别处再写一遍魔数。
+   不用在别处再写一遍魔数。v0.13.0 起再发布 --corner-rail-w（视口右缘到
+   工具位左缘的距离），顶栏用 .corner-clear 让位，不再写死 px。
+
+   项目自己的按钮优先用 createCornerButton（图标 + 无障碍文案 + 角标一次给齐），
+   只想塞一个现成元素时才用 mountCornerTool。
    ============================================================ */
 
 /** 内置工具的位次，留出间隔给项目自己的按钮 */
 export const CORNER_ORDER = {
   scheme: 10,
+  /** 语言切换（locale-toggle.js，v0.13.0）：明暗与外观之间 */
+  locale: 15,
   settings: 20
 };
 
 const RAIL_HEIGHT_VAR = "--corner-rail-h";
+const RAIL_WIDTH_VAR = "--corner-rail-w";
 
 let rail = null;
 let railObserver = null;
+let railMutations = null;
 
 const PANEL_TOP_VAR = "--corner-panel-top";
 const PANEL_RIGHT_VAR = "--corner-panel-right";
@@ -47,6 +55,8 @@ function publishRailHeight() {
   const rect = rail.getBoundingClientRect();
   // fixed 元素的 right 从视口内容区右缘量起（不含滚动条），所以用 clientWidth
   const viewport = document.documentElement.clientWidth;
+  // 顶栏要让开的宽度：视口右缘 → 工具位左缘（含右边距与安全区；横排 / 纵排都按实测）
+  setVar(RAIL_WIDTH_VAR, `${Math.max(0, Math.round(viewport - rect.left))}px`);
   const column = getComputedStyle(rail).flexDirection.startsWith("column");
   const top = column ? rect.top : rect.bottom + PANEL_GAP;
   const right = column ? viewport - rect.left + PANEL_GAP : viewport - rect.right;
@@ -76,6 +86,18 @@ export function cornerRail() {
     railObserver = new ResizeObserver(publishRailHeight);
     railObserver.observe(rail);
   }
+  // 按钮增减 / 显隐（含项目直接 append 进 .corner-tools 的）也要重算；
+  // 只写 <html> 的 style，不碰工具位自身，不会自激
+  if (typeof MutationObserver !== "undefined") {
+    railMutations?.disconnect();
+    railMutations = new MutationObserver(publishRailHeight);
+    railMutations.observe(rail, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["hidden", "class", "style"]
+    });
+  }
   // 窗口变宽变窄时工具位自身尺寸不变（观察不到），但 right 的像素值要跟着重算
   window.addEventListener("resize", publishRailHeight, { passive: true });
   publishRailHeight();
@@ -98,7 +120,10 @@ export function mountCornerTool(el, { order = 50 } = {}) {
       host.remove();
       railObserver?.disconnect();
       railObserver = null;
+      railMutations?.disconnect();
+      railMutations = null;
       document.documentElement.style.removeProperty(RAIL_HEIGHT_VAR);
+      document.documentElement.style.removeProperty(RAIL_WIDTH_VAR);
       document.documentElement.style.removeProperty(PANEL_TOP_VAR);
       document.documentElement.style.removeProperty(PANEL_RIGHT_VAR);
       window.removeEventListener("resize", publishRailHeight);
@@ -131,5 +156,69 @@ export function claimCornerPanel(close) {
   openPanelClose = close;
   return () => {
     if (openPanelClose === close) openPanelClose = null;
+  };
+}
+
+/* ---------- 现成的工具位按钮（v0.13.0）----------
+   项目自己的全局按钮（通知、管理、帮助…）一次给齐：图标、无障碍文案、位次、角标。
+   之前各项目照 .corner-tool 抄一份按钮样式、自己拼角标——用这个就不必了。 */
+
+/** 角标显示值：null / false / 0 / "" → 隐藏；true → 小圆点；数字 → 计数（> 99 显示 99+）；字符串原样 */
+function badgeText(value) {
+  if (value === null || value === undefined || value === false || value === 0 || value === "") return null;
+  if (value === true) return "";
+  if (typeof value === "number") return value > 99 ? "99+" : String(Math.max(0, Math.floor(value)));
+  return String(value);
+}
+
+/**
+ * 造一枚工具位按钮并挂进右上角工具位。
+ *
+ * @param {object} options
+ * @param {string|Node} options.icon   SVG / 文本字符串（按 HTML 插入，只传自己写死的图标，别传用户输入）或现成节点
+ * @param {string}  options.label      无障碍名（aria-label + title），必填
+ * @param {number}  options.order      工具位位次，缺省 50（外观 20 右边）
+ * @param {(e: MouseEvent) => void} options.onClick
+ * @param {string}  options.href       给了就渲染成 <a class="corner-tool">（如「管理」直接跳页）
+ * @param {number|boolean|string|null} options.badge  初始角标，语义同 setBadge
+ * @param {string}  options.className  额外的类（项目自己的修饰类）
+ * @returns {{ el: HTMLElement, setBadge(value: number|boolean|string|null): void, destroy(): void }}
+ */
+export function createCornerButton({ icon = "", label = "", order = 50, onClick = null, href = null, badge = null, className = "" } = {}) {
+  const el = document.createElement(href ? "a" : "button");
+  if (href) el.href = href;
+  else el.type = "button";
+  el.className = "corner-tool" + (className ? " " + className : "");
+  if (typeof icon === "string") el.innerHTML = icon;
+  else if (icon) el.append(icon);
+  if (label) {
+    el.title = label;
+    el.setAttribute("aria-label", label);
+  }
+  if (onClick) el.addEventListener("click", onClick);
+
+  const dot = document.createElement("span");
+  dot.className = "corner-badge";
+  dot.setAttribute("aria-hidden", "true");
+  dot.hidden = true;
+  el.append(dot);
+
+  function setBadge(value) {
+    const text = badgeText(value);
+    dot.hidden = text === null;
+    dot.textContent = text ?? "";
+    // 角标对读屏不可见，计数并进按钮的无障碍名
+    if (label) el.setAttribute("aria-label", text ? `${label} (${text})` : label);
+  }
+  setBadge(badge);
+
+  const unmount = mountCornerTool(el, { order });
+  return {
+    el,
+    setBadge,
+    destroy() {
+      if (onClick) el.removeEventListener("click", onClick);
+      unmount();
+    }
   };
 }

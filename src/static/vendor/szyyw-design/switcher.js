@@ -10,6 +10,7 @@
    ============================================================ */
 
 import { mountCornerTool, claimCornerPanel } from "./corner.js";
+import { chromeText } from "./chrome-text.js";
 
 // 账户菜单与切换器同属一族「工具位面板」，从这里也能拿到
 export { mountAccountMenu, ACCOUNT_ORDER } from "./account.js";
@@ -34,8 +35,9 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&
  * @param {number}  options.order      工具位位次，缺省 5（最左）
  * @param {string}  options.current    当前站点 host，用来高亮；缺省 location.host
  * @param {number}  options.cacheMs    列表缓存时长，缺省 60s；0 = 每次打开都拉
- * @param {object}  options.labels     文案
- * @returns {{ open(): void, close(): void, refresh(): Promise<void>, destroy(): void }}
+ * @param {object}  options.labels     文案（逐键覆盖 locale 的内置文案）
+ * @param {string}  options.locale     "zh" | "ja" | "en"（v0.13.0），缺省 "zh"——与旧版文案逐字相同
+ * @returns {{ open(): void, close(): void, refresh(): Promise<void>, setLocale(locale: string): void, destroy(): void }}
  */
 export function mountAppSwitcher({
   portal = "https://szyyw.xyz",
@@ -43,24 +45,18 @@ export function mountAppSwitcher({
   order = SWITCHER_ORDER,
   current = typeof location !== "undefined" ? location.host : "",
   cacheMs = 60_000,
-  labels = {}
+  labels = {},
+  locale = "zh"
 } = {}) {
-  const L = {
-    open: "应用",
-    portal: "回到门户",
-    loading: "加载中…",
-    empty: "没有可打开的应用",
-    unauth: "未登录",
-    error: "加载失败",
-    ...labels
-  };
+  // 内置文案（chrome-text.js）打底，labels 逐键覆盖；setLocale 换底不丢覆盖
+  const textFor = (loc) => ({ ...chromeText(loc).switcher, ...(labels || {}) });
+  let L = textFor(locale);
 
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "corner-tool app-switcher-toggle";
   btn.innerHTML = GRID_ICON;
-  btn.title = L.open;
-  btn.setAttribute("aria-label", L.open);
+  applyButtonText();
   btn.setAttribute("aria-haspopup", "true");
   btn.setAttribute("aria-expanded", "false");
 
@@ -73,13 +69,22 @@ export function mountAppSwitcher({
   let loadedAt = 0;
   let inflight = null;
   let release = null;
+  /** 当前显示的提示（文案键），切语言时按键重画；null = 列表 */
+  let shownMessage = null;
 
-  function renderMessage(text) {
-    panel.innerHTML = `<div class="app-switcher-msg">${esc(text)}</div>`;
+  function renderMessage(key) {
+    shownMessage = key;
+    panel.innerHTML = `<div class="app-switcher-msg">${esc(L[key])}</div>`;
+  }
+
+  function applyButtonText() {
+    btn.title = L.open;
+    btn.setAttribute("aria-label", L.open);
   }
 
   function renderList() {
-    if (!apps) return renderMessage(L.loading);
+    if (!apps) return renderMessage("loading");
+    shownMessage = null;
     const portalEntry = apps.find((a) => a.portal) || { host: new URL(portal).host, url: portal, title: L.portal };
     const others = apps.filter((a) => !a.portal);
     const item = (a, cls = "") => {
@@ -105,7 +110,7 @@ export function mountAppSwitcher({
         const r = await fetch(portal.replace(/\/$/, "") + endpoint, { credentials: "include" });
         if (r.status === 401) {
           apps = null;
-          renderMessage(L.unauth);
+          renderMessage("unauth");
           return;
         }
         if (!r.ok) throw new Error(String(r.status));
@@ -115,7 +120,7 @@ export function mountAppSwitcher({
         renderList();
       } catch {
         apps = null;
-        renderMessage(L.error);
+        renderMessage("error");
       } finally {
         inflight = null;
       }
@@ -158,6 +163,13 @@ export function mountAppSwitcher({
     open,
     close,
     refresh: () => load(true),
+    /** v0.13.0：换语言，按钮提示与面板（开着也算）就地重画，不重新拉列表 */
+    setLocale(next) {
+      L = textFor(next);
+      applyButtonText();
+      if (shownMessage) renderMessage(shownMessage);
+      else if (apps) renderList();
+    },
     destroy() {
       close();
       panel.remove();

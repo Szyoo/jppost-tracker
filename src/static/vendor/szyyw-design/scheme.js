@@ -7,6 +7,7 @@
    框架无关：React/Vue/Flask 静态页都能用。
    ============================================================ */
 
+import { appearanceText } from "./appearance-text.js";
 import { mountCornerTool, CORNER_ORDER } from "./corner.js";
 
 const SCHEMES = ["auto", "light", "dark"];
@@ -142,11 +143,13 @@ export function onSchemeChange(handler) {
  * 挂载常驻切换按钮（缺省进右上角工具位，背景参数按钮排在它右边）。
  * labels 用于 title/aria-label，传当前语言的文案即可。
  * container 传了就挂到那里，不进工具位——设置页里内嵌一枚时用。
+ * locale（v0.12.0）：用内置文案；labels 仍可覆盖。两者都不传时保持旧的英文缺省。
  */
-export function mountSchemeToggle({
-  container = null,
-  labels = { auto: "Follow system", light: "Light", dark: "Dark" }
-} = {}) {
+export function mountSchemeToggle({ container = null, labels = null, locale = null } = {}) {
+  labels = {
+    ...(locale ? appearanceText(locale).schemes : { auto: "Follow system", light: "Light", dark: "Dark" }),
+    ...(labels || {})
+  };
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "corner-tool scheme-toggle";

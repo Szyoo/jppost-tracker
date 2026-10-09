@@ -1,5 +1,21 @@
 # main 分支进度
 
+## 2026-10-09：@szyyw/design v0.11.0 → v0.13.1，自写组件统一换成包的公开类
+
+- **接线**：`boot.js` 改用 `mountChrome`（外观 + SSO 时切换器 / 账户菜单，`portal: null` 不挂），
+  工具位文案由包内置，不再抄「跟随系统 / 浅色 / 深色」。存储仍是 localStorage，键 `jppost_theme / jppost_palette / jppost_scheme`
+  （明暗沿用旧键，用户偏好不丢）。首屏内联脚本抽成 `templates/_appearance_head.html`，恢复三键（原来只恢复 scheme）。
+- **删自写副本**：`.widget-*` → `.stat-*`；`.log-view` → `.term` + `.term-body` / `.term-line`；`.nav-tabs/.tab` → `.tabs`；
+  `.brand-title` / `.site-header` → `.app-header` / `.app-title`（右侧按 `--corner-rail-w` 让位，去掉写死的 92px）；
+  `.role-badge` → `.pill.cyan/.violet`；`.pill.ok/.error/.warn/.pending` → 包色名 `green/red/amber/(无)`（app.js 的 tone 同步改）；
+  `.message.success/.error` → `.ok-text/.err-text`；`.empty-note` → `.empty`；`.env-apply-note` → `.callout.info`；
+  自写 `.hint` / `.field:disabled` 删除；渐变字用 `.grad-text`；等宽字体用 `.mono`。
+- **修饰类代替改写公开类**：`.form-grid.two-col`、`.hint.lead`、`.tabs.nav-bar`、`.term-body.log-body`、`.stat-card.alert`。
+  行内 style 全部清掉（`.row.wrap` / `.field-row` / `.actions.row` / 自有类）；登录 / 注册表单改 `.stack`，去掉 label 负边距。
+- **SSO 下页头不再显示自写的用户名 + 角色徽章**（账户菜单已提供）；本地登录模式照旧显示并带「退出」。
+- **安全**：日志 `v-html` 之前直接渲染子进程 / 公网 Bark 日志原文（XSS），现在先整行 HTML 转义再把换行换成 `<br>`。
+- `scripts/update-design.sh` 改为从目标 tag 取 sync.sh（`latest` 先解析成最新正式 tag），不再从 main 取。
+
 ## 2026-07-19：全部分支合并回 main，仓库回到单分支
 
 - `refactor/streamline-services`（重构第一刀）与 `feature/szyyw-design-package`

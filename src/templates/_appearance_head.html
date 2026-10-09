@@ -1,0 +1,12 @@
+<script>
+      // 首帧前恢复外观三键（DESIGN §2.1 静态页写法），避免闪烁；明暗缺省跟随系统。持久化由 boot.js 的 mountChrome 接管
+      (function () {
+        var d = document.documentElement;
+        try {
+          var t = localStorage.getItem('jppost_theme'), p = localStorage.getItem('jppost_palette'), s = localStorage.getItem('jppost_scheme');
+          if (t) d.setAttribute('data-theme', t);
+          if (p && p !== 'default') d.setAttribute('data-palette', p);
+          d.setAttribute('data-scheme', s === 'dark' || s === 'light' ? s : 'auto');
+        } catch (e) { d.setAttribute('data-scheme', 'auto'); }
+      })();
+    </script>

@@ -1,0 +1,765 @@
+/* ============================================================
+   @szyyw/design · corner.css —— 由 scripts/build-corner-css.mjs 从 components.css 生成，不要手改。
+   只含右上角工具位及其弹层（.corner-tools / .corner-tool / .corner-badge / .corner-panel /
+   .corner-clear / 明暗 / 外观 / 背景参数 / 应用切换器 / 账户菜单 / 语言切换），
+   不含任何元素级 / 全局规则（*、html、body、a、button…），给不加载 components.css 的应用
+   （自有样式体系，如 claude-bridge）单独挂工具位：<link> tokens.css + corner.css 即可。
+   与 components.css 二选一；同时加载也无害（规则相同、特异性相同）。
+   ============================================================ */
+
+/* 独立挂载基底：components.css 里由 body / a 提供；这里只作用于工具位与弹层自身 */
+:where(.corner-tools, .corner-panel) {
+  font-family: 'Inter', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--text);
+  -webkit-tap-highlight-color: transparent;
+}
+:where(.corner-tools, .corner-panel) a {
+  color: inherit;
+  text-decoration: none;
+}
+
+:where(.corner-tools, .corner-panel) .num {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+
+:where(.corner-tools, .corner-panel) .glass,
+.glass:where(.corner-panel) {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+/* 只作用于工具位与弹层自身：本文件的 * 已给全局 border-box，这里是给单独挂 corner.css 时兜底 */
+:where(.corner-tools, .corner-panel),
+:where(.corner-tools, .corner-panel) * {
+  box-sizing: border-box;
+}
+
+/* ---------- 右上角常驻工具位 ---------- */
+
+/* 容器管定位，按钮只管长相。order 小的在左边：明暗切换 10、背景参数 20 */
+.corner-tools {
+  position: fixed;
+  top: calc(10px + env(safe-area-inset-top, 0px));
+  right: calc(12px + env(safe-area-inset-right, 0px));
+  /* 高于 sticky 顶栏(30) 与背景参数抽屉(44)，低于弹层(50)——
+     弹开的 sheet 不该被它盖住，但抽屉开着时调色板要还能点 */
+  z-index: 45;
+  display: flex;
+  /* 排列方向是 token 旋钮：紧凑布局要纵向就在自己的 :root 设 column，
+     别用同权重 CSS 覆盖整条规则。order 在两个方向下同样生效 */
+  flex-direction: var(--corner-tools-dir, row);
+  align-items: center;
+  gap: 8px;
+}
+
+.corner-tool {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  appearance: none;
+  font-size: 16px;
+  line-height: 1;
+  border-radius: 11px;
+  cursor: pointer;
+  color: var(--text);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition: transform 0.15s var(--ease), border-color 0.15s var(--ease), background 0.15s var(--ease);
+}
+
+.corner-tool:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.corner-tool:active { transform: scale(0.94); }
+
+/* auto 模式加一枚小角标，跟固定模式区分开 */
+.scheme-toggle[data-scheme="auto"]::after {
+  content: "";
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* 面板开着时调色板点亮，表明这枚按钮就是开关 */
+.settings-toggle[aria-expanded="true"] {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+/* 有新版时调色板加一枚 warn 色小角标（跟 scheme 的 auto 角标同一位置语言） */
+.settings-toggle[data-update="1"]::after {
+  content: "";
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
+/* ---------- 工具位弹层（.corner-panel）----------
+   工具位按钮点开的所有面板共用这一套：背景参数、应用切换器、账户菜单，
+   以及项目自己挂进工具位的按钮（如 finance-ledger 的通知）。
+
+   - 位置读 corner.js 实测发布的锚点：横排贴在工具位下方，纵排贴在工具位左侧、顶端对齐
+   - 不加遮罩、不锁页面滚动——锁滚动会让滚动条消失、整页横向跳一下；
+     弹层是轻量浮层，点外面 / Esc 关闭即可
+   - 高度随内容，超出视口才在内部滚
+   - 底色用不透明度高的 --sheet-bg：叠在点阵与页面内容上也读得清
+   - 入场只有一个 rise，和其余浮层同一种动效
+   - z-index 高于工具位(45)、低于 sheet 弹层(50)；同一时刻只开一个（claimCornerPanel） */
+.corner-panel {
+  position: fixed;
+  top: var(--corner-panel-top, calc(10px + 34px + 8px + env(safe-area-inset-top, 0px)));
+  right: var(--corner-panel-right, calc(12px + env(safe-area-inset-right, 0px)));
+  z-index: 46;
+  max-width: calc(100vw - var(--corner-panel-right, 12px) - 12px);
+  max-height: calc(100dvh - var(--corner-panel-top, 52px) - 12px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--sheet-bg);
+  animation: rise 0.3s var(--ease) both;
+}
+.corner-panel[hidden] { display: none; }
+
+/* ---------- 工具位按钮的角标（.corner-badge，v0.13.0 公开）----------
+   createCornerButton 自带；手写时放进 .corner-tool 里：
+   <span class="corner-badge"></span> 空 = 小圆点，<span class="corner-badge">3</span> = 计数，hidden = 不显示 */
+.corner-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  font-family: 'Inter', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
+  color: var(--on-err);
+  background: var(--err);
+  /* 一圈底色描边，把角标从按钮边框上「剪」出来 */
+  box-shadow: 0 0 0 2px var(--bg);
+  pointer-events: none;
+}
+.corner-badge:empty {
+  top: -2px;
+  right: -2px;
+  min-width: 0;
+  width: 9px;
+  height: 9px;
+  padding: 0;
+}
+.corner-badge[hidden] { display: none; }
+
+/* 渲染成链接的工具位按钮（createCornerButton({ href })）：去掉链接下划线 */
+a.corner-tool { text-decoration: none; }
+
+/* ---------- 语言切换（.locale-toggle，locale-toggle.js）----------
+   按钮显示语言短名（中 / 日 / EN），宽度随内容；其余沿用 .corner-tool */
+.corner-tool.locale-toggle {
+  width: auto;
+  min-width: 34px;
+  padding: 0 9px;
+  font-family: 'Inter', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.corner-tool.locale-toggle[aria-expanded="true"] {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+/* ---------- 给工具位让位（.corner-clear，v0.13.0 公开）----------
+   全宽顶栏的右侧内边距 = 工具位实测占宽（--corner-rail-w，corner.js 发布）+ 一个空隙。
+   横排 / 纵排、未登录的「登录」按钮更宽、按钮增减都自动跟上——别再写死 padding-right: 160px。
+   工具位还没挂（或已全部卸下）时 --corner-rail-w 不存在，只留空隙 */
+.corner-clear {
+  padding-right: calc(var(--corner-rail-w, 0px) + var(--corner-gap, 12px));
+}
+
+/* ---------- 背景参数（.settings-panel，挂 .corner-panel）---------- */
+
+/* 头尾常驻，只让中间的参数区滚——整块滚会把「保存 / 恢复默认」滚走 */
+.settings-panel {
+  width: 340px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.settings-panel .panel-body { gap: 14px; scrollbar-width: thin; }
+
+/* 参数有十几项，单列约 900px 高，常见笔记本屏一打开就得在面板里滚。
+   宽屏排成两列，高度减半，整块一眼看全；窄屏（手机）仍单列，超出视口才滚 */
+@media (min-width: 720px) {
+  .settings-panel { width: 600px; }
+  .settings-panel .panel-body {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px 24px;
+    align-content: start;
+  }
+  /* 分隔线与版本行横跨两列 */
+  .settings-panel .panel-body > .divider,
+  .settings-panel .panel-body > .divider ~ * { grid-column: 1 / -1; }
+}
+
+.settings-panel .panel-head {
+  margin-bottom: 0;
+  padding: 16px 18px 10px;
+  flex-wrap: nowrap;
+}
+
+/* 面板高度随内容（上限是视口）：基准取内容高、允许收缩，超出才在这里滚 */
+.panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.panel-foot {
+  display: flex;
+  gap: 10px;
+  padding: 14px 18px 16px;
+}
+
+.panel-foot .btn, .panel-foot .btn-ghost { flex: 1; }
+
+.guest-note {
+  flex: 1;
+  align-self: center;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* ---------- 外观（.appearance-panel，在 .settings-panel 上扩展，appearance.js）----------
+   宽度、≥720px 两列网格都沿用 .settings-panel；配色 / 明暗行与折叠的背景参数段横跨两列，
+   背景参数段内部再按同样的两列排。chip 行复用 .chip / .chip-row，不另造样子 */
+.appearance-panel .panel-body > .appearance-row,
+.appearance-panel .panel-body > .appearance-advanced { grid-column: 1 / -1; }
+
+.appearance-advanced > summary { cursor: pointer; padding: 2px 0; }
+.appearance-advanced[open] > summary { margin-bottom: 14px; }
+.appearance-advanced-body { display: flex; flex-direction: column; gap: 14px; }
+.appearance-advanced-foot { display: flex; gap: 10px; margin-top: 16px; }
+.appearance-advanced-foot .btn { flex: 1; }
+
+@media (min-width: 720px) {
+  .appearance-advanced-body { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 24px; }
+}
+
+/* ---------- 参数控件 ---------- */
+
+.ctl {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ctl[hidden] { display: none; }
+
+.ctl-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ctl-label { font-size: 13px; color: var(--text); }
+.ctl-hint { display: block; font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+.ctl-value { font-size: 12px; color: var(--accent); }
+
+/* 版本检测区：变更链接与动作按钮 */
+.update-link { color: var(--accent); text-decoration: none; }
+.update-link:hover { text-decoration: underline; }
+.update-actions { display: flex; gap: 8px; }
+.update-actions .btn { flex: 1; }
+
+.ctl-toggle {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+:where(.corner-tools, .corner-panel) input[type="range"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--text-dim) 28%, transparent);
+  outline: none;
+}
+
+:where(.corner-tools, .corner-panel) input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 15px;
+  height: 15px;
+  border: none;
+  border-radius: 50%;
+  background: var(--grad);
+  cursor: pointer;
+  transition: transform 0.15s var(--ease);
+}
+
+:where(.corner-tools, .corner-panel) input[type="range"]::-webkit-slider-thumb:hover {
+ transform: scale(1.25);
+}
+
+:where(.corner-tools, .corner-panel) input[type="range"]::-moz-range-thumb {
+  width: 15px;
+  height: 15px;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+}
+
+:where(.corner-tools, .corner-panel) input[type="color"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 34px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+:where(.corner-tools, .corner-panel) input[type="color"]::-webkit-color-swatch-wrapper {
+ padding: 2px;
+}
+
+:where(.corner-tools, .corner-panel) input[type="color"]::-webkit-color-swatch {
+ border: none; border-radius: 4px;
+}
+
+:where(.corner-tools, .corner-panel) input[type="color"]::-moz-color-swatch {
+ border: none; border-radius: 4px;
+}
+
+:where(.corner-tools, .corner-panel) .switch {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  flex: none;
+  width: 40px;
+  height: 22px;
+  border-radius: 11px;
+  /* 轨道要压得住白色滑块——浅色模式下太淡就看不见关着的开关 */
+  background: color-mix(in srgb, var(--text-dim) 55%, transparent);
+  cursor: pointer;
+  transition: background 0.2s var(--ease);
+}
+
+:where(.corner-tools, .corner-panel) .switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--on-accent);
+  transition: transform 0.2s var(--ease);
+}
+
+:where(.corner-tools, .corner-panel) .switch:checked {
+ background: var(--grad);
+}
+
+:where(.corner-tools, .corner-panel) .switch:checked::after {
+ transform: translateX(18px);
+}
+
+:where(.corner-tools, .corner-panel) .panel-title {
+ margin: 0; font-size: 17px; font-weight: 600;
+}
+
+:where(.corner-tools, .corner-panel) .panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+:where(.corner-tools, .corner-panel) .btn {
+  appearance: none;
+  border: none;
+  border-radius: 10px;
+  padding: 10px 20px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--on-accent);
+  background: var(--grad);
+  cursor: pointer;
+  transition: transform 0.15s var(--ease), box-shadow 0.2s var(--ease), opacity 0.2s var(--ease);
+}
+
+:where(.corner-tools, .corner-panel) .btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 24px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+:where(.corner-tools, .corner-panel) .btn:disabled {
+  cursor: not-allowed;
+  background: var(--inner-bg);
+  color: var(--text-dim);
+  box-shadow: inset 0 0 0 1px var(--glass-border);
+}
+
+:where(.corner-tools, .corner-panel) .btn-ghost {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  padding: 10px 20px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color 0.2s var(--ease), border-color 0.2s var(--ease), transform 0.15s var(--ease);
+}
+
+:where(.corner-tools, .corner-panel) .btn-ghost:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+:where(.corner-tools, .corner-panel) .btn-ghost.danger:hover:not(:disabled) {
+  color: var(--err);
+  border-color: color-mix(in srgb, var(--err) 50%, transparent);
+}
+
+:where(.corner-tools, .corner-panel) .btn-ghost:disabled {
+ opacity: 0.4; cursor: not-allowed;
+}
+
+:where(.corner-tools, .corner-panel) .btn-small {
+ padding: 7px 14px; font-size: 13px; border-radius: 8px;
+}
+
+:where(.corner-tools, .corner-panel) label {
+  display: block;
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+:where(.corner-tools, .corner-panel) .err-text {
+ color: var(--err); font-size: 13px;
+}
+
+:where(.corner-tools, .corner-panel) .pill {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  border: 1px solid var(--glass-border);
+  color: var(--text-dim);
+}
+
+:where(.corner-tools, .corner-panel) .pill.cyan {
+ color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, transparent); background: var(--tint-cyan-bg);
+}
+
+:where(.corner-tools, .corner-panel) .pill.violet {
+ color: var(--accent2); border-color: color-mix(in srgb, var(--accent2) 50%, transparent); background: var(--tint-violet-bg);
+}
+
+:where(.corner-tools, .corner-panel) .pill.green {
+ color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); background: var(--tint-green-bg);
+}
+
+:where(.corner-tools, .corner-panel) .pill.red {
+ color: var(--err); border-color: color-mix(in srgb, var(--err) 50%, transparent); background: var(--tint-red-bg);
+}
+
+:where(.corner-tools, .corner-panel) .pill.amber {
+ color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); background: var(--tint-amber-bg);
+}
+
+:where(.corner-tools, .corner-panel) .chip {
+  appearance: none;
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-border);
+  background: var(--inner-bg);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color 0.15s var(--ease), border-color 0.15s var(--ease), background 0.15s var(--ease);
+  white-space: nowrap;
+}
+
+:where(.corner-tools, .corner-panel) .chip:hover {
+ color: var(--text);
+}
+
+:where(.corner-tools, .corner-panel) .chip.active {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+:where(.corner-tools, .corner-panel) .chip-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+:where(.corner-tools, .corner-panel) .close-x {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 20px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 8px;
+  transition: color 0.15s var(--ease);
+}
+
+:where(.corner-tools, .corner-panel) .close-x:hover {
+ color: var(--text);
+}
+
+:where(.corner-tools, .corner-panel) .divider {
+  height: 1px;
+  background: var(--line-soft);
+  margin: 12px 0;
+  border: none;
+}
+
+:where(.corner-tools, .corner-panel) .switch:disabled {
+ cursor: not-allowed; opacity: 0.45;
+}
+
+/* ---------- 应用切换器（右上角九宫格，switcher.js）---------- */
+
+/* 位置、底色、开合见 .corner-panel */
+.app-switcher {
+  width: 280px;
+  max-height: min(70vh, 520px);
+  padding: 6px;
+}
+
+.app-switcher-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  text-decoration: none;
+  color: var(--text);
+  transition: background 0.15s var(--ease);
+}
+.app-switcher-item:hover { background: var(--hover-tint); }
+.app-switcher-item.is-current { background: var(--inner-bg); }
+.app-switcher-portal .app-switcher-title { font-weight: 600; }
+
+.app-switcher-dot {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--on-accent);
+  background: var(--grad);
+}
+.app-switcher-text { display: flex; flex-direction: column; min-width: 0; }
+.app-switcher-title { font-size: 14px; line-height: 1.3; }
+.app-switcher-host {
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-switcher-sep { height: 1px; background: var(--line-soft); margin: 6px 4px; }
+.app-switcher-msg { padding: 14px 10px; font-size: 13px; color: var(--text-dim); text-align: center; }
+
+/* ---------- 账户菜单（右上角登录 / 头像，account.js）---------- */
+
+/* 未登录：图标 + 文字，宽度随内容，其余沿用 .corner-tool */
+.corner-tool.account-login {
+  width: auto;
+  padding: 0 11px 0 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* 登录后：圆形首字头像，灌品牌渐变 */
+.corner-tool.account-avatar {
+  border-radius: 50%;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--on-accent);
+  background: var(--grad);
+  border-color: transparent;
+}
+.corner-tool.account-avatar[aria-expanded="true"] {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/* 面板与切换器同位、同层（同一时刻只开一个，见 corner.js claimCornerPanel） */
+/* 位置、底色、开合见 .corner-panel */
+.account-menu {
+  width: 260px;
+  padding: 6px;
+}
+
+.account-menu-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  min-width: 0;
+}
+.account-menu-dot {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--on-accent);
+  background: var(--grad);
+}
+.account-menu-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu-item {
+  appearance: none;
+  display: block;
+  width: 100%;
+  padding: 9px 10px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s var(--ease), color 0.15s var(--ease);
+}
+.account-menu-item:hover:not(:disabled) { background: var(--hover-tint); }
+.account-menu-item.danger:hover:not(:disabled) { color: var(--err); }
+.account-menu-item:disabled { opacity: 0.45; cursor: not-allowed; }
+.account-menu-err { padding: 4px 10px 8px; }
+.account-menu-err[hidden] { display: none; }
+
+/* ---------- 语言列表（.locale-menu，locale-toggle.js）---------- */
+
+/* 位置、底色、开合见 .corner-panel */
+.locale-menu {
+  width: 200px;
+  padding: 6px;
+}
+
+.locale-menu-item {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s var(--ease), color 0.15s var(--ease);
+}
+.locale-menu-item:hover { background: var(--hover-tint); }
+.locale-menu-item.active { color: var(--accent); background: var(--inner-bg); }
+
+.locale-menu-short {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-dim);
+  background: var(--inner-bg);
+  border: 1px solid var(--glass-border);
+}
+.locale-menu-item.active .locale-menu-short {
+  color: var(--on-accent);
+  background: var(--grad);
+  border-color: transparent;
+}
+
+/* 工具位弹层的减少动效（与文件中段的总表重复一条，好让 corner.css 自成一体） */
+@media (prefers-reduced-motion: reduce) {
+  .corner-panel { animation: none; }
+}
+
+/* ---------- 用到的动效 ---------- */
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: none; }
+}
