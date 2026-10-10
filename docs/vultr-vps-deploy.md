@@ -119,8 +119,6 @@ curl -I https://jppost.szyyw.xyz/login  # 应返回 200
   （Bark 在独立容器里，由 compose 管理）；健康检查用的是 `BARK_SERVER_PUBLIC`，正常工作。
 - `.env` 设 `AUTO_START_TRACKER=1`（默认即开）后，Web 容器启动会自动运行追踪脚本，
   脚本意外退出 10 秒后自动重启；只有在控制台手动点"停止"才会保持停止。
-- **已知未修问题**（详见 [进度记录](progress/codex-raspi-local-funnel.md)）：
-  1. 登录限流信任 `X-Forwarded-For` 首值——即使经过 Caddy，攻击者也能自带伪造头绕过限流；
-     强口令是当前的实际防线。
-  2. 管理员被降级后旧 session 最长保留权限 24h。
-  两者已列入单独修复计划，公网开放期间尤其注意用强密码。
+- **登录限流的客户端 IP**：只在 `TRUSTED_PROXY_COUNT`（本部署 = Caddy 一层，填 `1`）大于 0 时才采信
+  `X-Forwarded-For`，且取右数第 N 个值；未配置时只用直连地址。管理员被降级或停用登录后立即失去权限
+  （角色每次请求都以数据库为准）。公网开放期间仍应使用强密码。
