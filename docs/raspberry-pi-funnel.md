@@ -144,7 +144,7 @@ curl https://your-node.your-tailnet.ts.net/ping
 
 仓库提供了示例服务文件：
 
-- [deploy/systemd/jppost-tracker-web.service.example](/Users/next/Documents/GitHub/jppost-tracker/deploy/systemd/jppost-tracker-web.service.example)
+- [deploy/systemd/jppost-tracker-web.service.example](../deploy/systemd/jppost-tracker-web.service.example)
 
 参考安装：
 
