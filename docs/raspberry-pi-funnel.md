@@ -155,7 +155,7 @@ sudo systemctl enable --now jppost-tracker-web
 sudo systemctl status jppost-tracker-web
 ```
 
-如果你的实际路径不是 `/srv/jppost-tracker`，或运行用户不是当前默认值，先修改示例文件里的 `User`、`Group`、`WorkingDirectory` 和 `ExecStart`。
+示例文件里的路径和用户都是占位符：先把 `User`、`Group`、`WorkingDirectory` 和 `ExecStart` 改成你的实际路径和运行用户。
 
 ## 4.1 如果要公开 6060 管理页
 

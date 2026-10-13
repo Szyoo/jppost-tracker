@@ -306,7 +306,7 @@ def get_login_window_seconds() -> int:
     except Exception:
         return 600
 
-# --- portal SSO（SZYYW_SSO=1 时启用，详见 docs/portal-sso.md）---
+# --- portal SSO（SZYYW_SSO=1 时启用）---
 # 开启后身份完全来自 Caddy 门卫注入的 X-Portal-Sub / X-User / X-Role，本地密码登录与自助注册关闭；
 # 账号按 X-Portal-Sub（portal 账号固定 ID）映射，X-User 只是当前用户名（用户可改）；
 # 未开启时下面所有 SSO 分支都不走，行为与接入前一致。

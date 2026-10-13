@@ -7,9 +7,9 @@ Wants=network-online.target docker.service
 Type=simple
 User=YOUR_USER
 Group=YOUR_USER
-WorkingDirectory=/srv/jppost-tracker
+WorkingDirectory=/path/to/jppost-tracker
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/srv/jppost-tracker/.venv/bin/python src/app.py
+ExecStart=/path/to/jppost-tracker/.venv/bin/python src/app.py
 Restart=always
 RestartSec=5
 KillMode=control-group

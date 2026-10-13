@@ -152,12 +152,12 @@ def test_x_role_admin_grants_admin_without_touching_stored_role(client, db, sso)
 
 
 def test_x_role_user_demotes_stored_admin(client, db, sso):
-    db.set_account_portal_sub(2, "sub-szyoo")
-    resp = client.get("/", headers=gate("szyoo", "user"))
+    db.set_account_portal_sub(2, "sub-carol")
+    resp = client.get("/", headers=gate("carol", "user"))
     assert resp.status_code == 200 and b"My Delivery Space" in resp.data
-    assert client.get("/api/users", headers=gate("szyoo", "user")).status_code == 403
+    assert client.get("/api/users", headers=gate("carol", "user")).status_code == 403
     assert db.get_account(2)["role"] == "admin"
-    assert client.get("/api/users", headers=gate("szyoo", "admin")).status_code == 200
+    assert client.get("/api/users", headers=gate("carol", "admin")).status_code == 200
 
 
 # --- 路由 ---
@@ -178,8 +178,8 @@ def test_login_honours_portal_origin(client, db, sso):
 
 
 def test_login_with_identity_goes_straight_in(client, db, sso):
-    db.set_account_portal_sub(2, "sub-szyoo")
-    resp = client.get("/login?next=/", headers=gate("szyoo", "admin"))
+    db.set_account_portal_sub(2, "sub-carol")
+    resp = client.get("/login?next=/", headers=gate("carol", "admin"))
     assert resp.status_code == 302 and resp.headers["Location"] == "/"
 
 
@@ -207,16 +207,16 @@ def test_healthz_under_sso(client, db, sso):
 
 
 def test_logout_goes_to_portal(client, db, sso):
-    db.set_account_portal_sub(2, "sub-szyoo")
-    resp = client.post("/logout", headers=gate("szyoo", "admin"))
+    db.set_account_portal_sub(2, "sub-carol")
+    resp = client.post("/logout", headers=gate("carol", "admin"))
     assert resp.status_code == 302 and resp.headers["Location"] == "https://szyyw.xyz"
 
 
 # --- 改密入口与 UI 标记 ---
 
 def test_password_ui_hidden_and_switcher_flag(client, db, sso):
-    db.set_account_portal_sub(2, "sub-szyoo")
-    admin_page = client.get("/", headers=gate("szyoo", "admin")).data
+    db.set_account_portal_sub(2, "sub-carol")
+    admin_page = client.get("/", headers=gate("carol", "admin")).data
     assert b'data-sso="1" data-portal="https://szyyw.xyz"' in admin_page
     assert b"meNewPassword" not in admin_page and b"userNewPassword" not in admin_page
     assert b"createPassword" not in admin_page and b"userPortalSub" in admin_page
@@ -246,8 +246,8 @@ def test_user_cannot_escalate_via_update_me(client, db, sso):
 # --- 管理端映射接口 ---
 
 def test_admin_portal_sub_endpoint(client, db, sso):
-    db.set_account_portal_sub(2, "sub-szyoo")
-    admin = gate("szyoo", "admin")
+    db.set_account_portal_sub(2, "sub-carol")
+    admin = gate("carol", "admin")
     kim = make_user(db, "kim")
     url = f"/api/admin/accounts/{kim['id']}/portal-user"
 
@@ -271,11 +271,11 @@ def test_admin_portal_sub_endpoint(client, db, sso):
 
 
 def test_admin_create_user_under_sso_needs_no_password(client, db, sso):
-    db.set_account_portal_sub(2, "sub-szyoo")
+    db.set_account_portal_sub(2, "sub-carol")
     resp = client.post(
         "/api/users",
         json={"username": "leo", "display_name": "Leo", "role": "user", "login_enabled": True, "portal_sub": "sub-Leo"},
-        headers=gate("szyoo", "admin"),
+        headers=gate("carol", "admin"),
     )
     assert resp.status_code == 200
     user = resp.get_json()["user"]
@@ -285,19 +285,19 @@ def test_admin_create_user_under_sso_needs_no_password(client, db, sso):
 # --- Socket.IO：握手请求经过门卫，处理器从握手的身份头读身份 ---
 
 def test_socketio_identity_from_headers(db, sso):
-    db.set_account_portal_sub(2, "sub-szyoo")
-    ok = app_module.socketio.test_client(app_module.app, headers=gate("szyoo", "admin"))
+    db.set_account_portal_sub(2, "sub-carol")
+    ok = app_module.socketio.test_client(app_module.app, headers=gate("carol", "admin"))
     assert ok.is_connected()
     ok.disconnect()
-    denied = app_module.socketio.test_client(app_module.app, headers=gate("szyoo", "user"))
+    denied = app_module.socketio.test_client(app_module.app, headers=gate("carol", "user"))
     assert not denied.is_connected()
     anonymous = app_module.socketio.test_client(app_module.app)
     assert not anonymous.is_connected()
 
 
 def test_socketio_forged_headers_ignored_without_sso(db):
-    db.set_account_portal_sub(2, "sub-szyoo")
-    forged = app_module.socketio.test_client(app_module.app, headers=gate("szyoo", "admin"))
+    db.set_account_portal_sub(2, "sub-carol")
+    forged = app_module.socketio.test_client(app_module.app, headers=gate("carol", "admin"))
     assert not forged.is_connected()
 
 

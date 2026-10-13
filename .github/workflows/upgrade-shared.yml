@@ -1,5 +1,5 @@
 # 共享包（szyyw-auth / szyyw-design）有新正式版 → 升级 → 测试通过就直接推到 main
-# → VPS 的 auto-deploy 在 2 分钟内上线（测试失败就不推；上线后健康检查失败由 deploy.sh 自动回滚）。
+# → 自动部署随后上线（测试失败就不推；上线后健康检查失败由部署脚本自动回滚）。
 name: upgrade-shared
 on:
   schedule:

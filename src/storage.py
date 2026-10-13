@@ -903,7 +903,7 @@ def resolve_portal_account(portal_sub: str, portal_user: str, portal_role: str =
     action: "mapped"（portal_sub 命中）/ "adopted"（同名且未映射，已写入 portal_sub）/
             "created"（自动建号）/ None（未开通，account 也为 None）。
     没有 sub 一律返回 (None, None)，绝不只按用户名匹配。本地 username 不随 portal 改名。
-    规则顺序见 docs/portal-sso.md，整个过程在一个事务里，避免并发请求重复建号。"""
+    规则顺序：先按 portal_sub 命中，再认领同名未映射账号，最后才自动建号；整个过程在一个事务里，避免并发请求重复建号。"""
     try:
         portal_sub = _normalize_portal_sub(portal_sub)
     except ValueError:

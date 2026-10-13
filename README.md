@@ -8,7 +8,7 @@
 - 追踪脚本并行处理所有启用的任务，推送失败自动重试；可随 Web 启动自动运行、意外退出自动重启
 - 管理后台：启动/停止追踪脚本与本地 Bark Server、实时查看日志（Socket.IO）、在线编辑系统配置（`.env` 白名单键）
 - Bark 地址内外分离：脚本走内网地址推送，手机使用公网 HTTPS 地址
-- 安全：登录限流、`/healthz` 无鉴权健康检查；可选对接上游反代注入身份头的统一登录（见 [docs/portal-sso.md](docs/portal-sso.md)）
+- 安全：登录限流、`/healthz` 无鉴权健康检查；可选对接上游反代注入身份头的统一登录（`SZYYW_SSO=1`，仅在反代已剥离并重写身份头时启用）
 
 ## 安装
 
@@ -45,7 +45,30 @@ bash install_bark.sh
 ### Docker / 服务器
 
 - `Dockerfile` 构建 Web 控制台镜像（`python src/app.py`，端口 6060，运行数据在 `/app/data`、`/app/logs`）。
-- `deploy/vps/docker-compose.yml` 是 Web + 官方 `finab/bark-server` 的编排示例，配置模板见 `deploy/vps/env.example`；对外经反向代理提供 HTTPS，容器不直接 publish 端口。
+- 对外建议经反向代理提供 HTTPS，容器不直接 publish 端口。最小示例（Web + 官方 `finab/bark-server`，`app.env` 内容见上方 `.env` 配置）：
+
+  ```yaml
+  services:
+    jppost-tracker:
+      build: .
+      restart: unless-stopped
+      env_file:
+        - path: ./app.env
+          format: raw   # 禁用插值，避免密码哈希里的 $ 被吃掉
+      volumes:
+        - ./data:/app/data
+        - ./logs:/app/logs
+        - ./app.env:/app/.env   # 供网页"在线编辑环境变量"读写
+      expose: ["6060"]
+    bark:
+      image: finab/bark-server
+      restart: unless-stopped
+      volumes:
+        - ./bark-data:/data
+      expose: ["8080"]
+  ```
+
+  在该部署形态下 Bark 独立运行，建议设 `LOCAL_BARK_ENABLED=0`。
 - 树莓派 + Tailscale Funnel + systemd 的本地部署见 [docs/raspberry-pi-funnel.md](docs/raspberry-pi-funnel.md)。
 - 没有自建 Bark Server 时，也可以把 `bark-server` 以 `./bark-server -serverless true` 部署到任意 PaaS，再把地址填进 `BARK_SERVER_PUBLIC`。
 
@@ -96,7 +119,7 @@ JSON 接口统一返回 `{"status": "success" | "error", "message": …}`，未�
 | `ADMIN_LOGIN_MAX_ATTEMPTS` / `ADMIN_LOGIN_WINDOW_SECONDS` | `5` / `600` | 登录限流 |
 | `TRUSTED_PROXY_COUNT` | `0` | 受信反代层数；大于 0 才采信 `X-Forwarded-For`（取右数第 N 个） |
 | `PUBLIC_URL` / `KEEPALIVE_INTERVAL` | 空 / `600` | 自 ping 保活地址与间隔（秒），留空禁用 |
-| `SZYYW_SSO` / `SZYYW_SSO_AUTOCREATE` / `PORTAL_ORIGIN` | `0` / `0` / — | 统一登录开关，见 [docs/portal-sso.md](docs/portal-sso.md) |
+| `SZYYW_SSO` / `SZYYW_SSO_AUTOCREATE` / `PORTAL_ORIGIN` | `0` / `0` / — | 统一登录开关与上游地址；开启后信任反代注入的 `X-User` / `X-Role` / `X-Portal-Sub` 头 |
 | `DESIGN_BASE` | CDN | 覆盖前端设计包的加载地址（本地离线开发用） |
 
 单号、检查间隔、Bark Keys 等按账号保存在 SQLite（`data/app.db`，表结构见 [docs/data-model.md](docs/data-model.md)），不在 `.env` 里。账号映射也可用命令行维护：`python src/manage.py list-accounts | map-account | unmap-account`。备份请一并保存 `.env`、`data/`、`bark-data/`。

@@ -102,8 +102,8 @@ def test_anon_socketio_rejected(db, sso):
 
 
 def test_identity_wins_over_anon_header(client, db, sso):
-    db.set_account_portal_sub(2, "sub-szyoo")
-    headers = {**gate("szyoo", "admin"), "X-Portal-Anon": "1"}
+    db.set_account_portal_sub(2, "sub-carol")
+    headers = {**gate("carol", "admin"), "X-Portal-Anon": "1"}
     resp = client.get("/", headers=headers)
     assert resp.status_code == 200 and b"Admin Control Room" in resp.data
     assert client.get("/api/me", headers=headers).status_code == 200
@@ -131,12 +131,12 @@ def test_forged_anon_ignored_without_sso(client, db):
 
 
 def test_logout_button_only_without_sso(client, db, sso):
-    db.set_account_portal_sub(2, "sub-szyoo")
+    db.set_account_portal_sub(2, "sub-carol")
     hank = db.create_account({"username": "hank", "password": "pw-hank", "role": "user"})
     db.set_account_portal_sub(hank["id"], "sub-hank")
     退出 = "退出</button>".encode()
     # SSO 下登出归右上角账户菜单（portal 登出），页内按钮去掉
-    assert 退出 not in client.get("/", headers=gate("szyoo", "admin")).data
+    assert 退出 not in client.get("/", headers=gate("carol", "admin")).data
     assert 退出 not in client.get("/", headers=gate("hank")).data
     # /logout 路由仍可用
     assert client.post("/logout", headers=gate("hank")).headers["Location"] == "https://szyyw.xyz"
