@@ -595,11 +595,9 @@ textarea.field {
   margin-bottom: 8px;
 }
 
-/* 渐变字来自包的 .grad-text */
-.auth-title {
+/* 标题字样来自包的 .app-title，这里只管与下方的间距 */
+.auth-heading {
   margin: 0 0 8px;
-  font-size: 26px;
-  font-weight: 700;
 }
 
 .auth-subtitle {
