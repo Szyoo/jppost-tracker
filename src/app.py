@@ -317,7 +317,7 @@ def get_portal_origin() -> str:
 # --- 设计包 @szyyw/design：直接引用自托管 CDN（design.szyyw.xyz），仓库里不再放副本 ---
 # 版本只在这一处声明；升级 = 改这行（scripts/update-design.sh / upgrade-shared.sh 会改它并验证 CDN 上存在）。
 # 每个 tag 发布后不可变，一页里所有设计包文件必须同一版本（模块间相对 import）。禁止用 /latest/。
-DESIGN_VERSION = "v0.18.0"
+DESIGN_VERSION = "v0.19.0"
 DESIGN_CDN_ORIGIN = "https://design.szyyw.xyz"
 
 def get_design_base() -> str:
