@@ -204,9 +204,7 @@ def _row_to_account(row, *, include_secret: bool = False):
     account["login_enabled"] = bool(account.get("login_enabled"))
     account["is_admin"] = account.get("role") == "admin"
     account["bark_keys"] = normalize_bark_keys(account.get("bark_keys", ""))
-    account["bark_key"] = account["bark_keys"]
     account["bark_keys_masked"] = _mask_keys(account["bark_keys"])
-    account["bark_key_masked"] = account["bark_keys_masked"]
     account["bark_device_count"] = len(parse_bark_keys(account["bark_keys"]))
     account["has_password"] = bool(account.get("password_hash"))
     if not include_secret:
@@ -807,7 +805,7 @@ def _create_account(conn, data: dict, *, self_register: bool = False):
                 "password_hash": password_hash,
                 "role": role,
                 "note": str(data.get("note", "")).strip(),
-                "bark_keys": data.get("bark_keys") or data.get("bark_key", ""),
+                "bark_keys": data.get("bark_keys", ""),
                 "bark_query_params": data.get("bark_query_params", PROFILE_DEFAULTS["bark_query_params"]),
                 "bark_url_enabled": data.get("bark_url_enabled", 1),
                 "login_enabled": login_enabled,
@@ -880,8 +878,6 @@ def update_account(account_id: int, data: dict, *, actor_role: str = "admin", ac
             # 按键是否存在判断，不能用 or 回落：提交空串表示清空，回落旧值会让 Bark Keys 永远清不掉
             if "bark_keys" in data:
                 bark_keys = data["bark_keys"]
-            elif "bark_key" in data:
-                bark_keys = data["bark_key"]
             else:
                 bark_keys = current["bark_keys"]
 
@@ -930,18 +926,6 @@ def _normalize_portal_sub(value) -> str | None:
     if len(portal_sub) > 64 or any(ch.isspace() for ch in portal_sub):
         raise ValueError("portal ID 格式不正确。")
     return portal_sub
-
-
-def get_account_by_portal_sub(portal_sub: str):
-    portal_sub = str(portal_sub or "").strip()
-    if not portal_sub:
-        return None
-    with closing(_connect()) as conn:
-        row = conn.execute("SELECT * FROM accounts WHERE portal_sub = ?", (portal_sub,)).fetchone()
-        account = _row_to_account(row)
-        if not account:
-            return None
-        return _attach_tasks(conn, [account])[0]
 
 
 def set_account_portal_sub(account_id: int, portal_sub):
@@ -1318,23 +1302,3 @@ def list_task_events(task_id: int, *, limit: int = 20, before: int | None = None
     events = [_row_to_event(row) for row in rows[:limit]]
     return events, len(rows) > limit
 
-
-def account_to_profile_env(account) -> dict:
-    """兼容旧的 .env 视图：任务字段取该账号首个启用任务。"""
-    if not account:
-        return {
-            "TRACKING_NUMBER": "",
-            "CHECK_INTERVAL": "300",
-            "BARK_KEY": "",
-            "BARK_QUERY_PARAMS": PROFILE_DEFAULTS["bark_query_params"],
-            "BARK_URL_ENABLED": "1",
-        }
-    tasks = account.get("tasks") or []
-    active = next((task for task in tasks if task.get("enabled")), None) or (tasks[0] if tasks else {})
-    return {
-        "TRACKING_NUMBER": str(active.get("tracking_number", "") or ""),
-        "CHECK_INTERVAL": str(_normalize_check_interval(active.get("check_interval"))),
-        "BARK_KEY": normalize_bark_keys(account.get("bark_keys", "")),
-        "BARK_QUERY_PARAMS": str(account.get("bark_query_params", "") or PROFILE_DEFAULTS["bark_query_params"]),
-        "BARK_URL_ENABLED": "1" if account.get("bark_url_enabled") else "0",
-    }

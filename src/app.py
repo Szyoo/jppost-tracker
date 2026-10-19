@@ -10,7 +10,6 @@ import os
 import sys
 import time
 import secrets
-import urllib.parse
 
 import shutil
 import subprocess
@@ -27,8 +26,9 @@ import requests
 from szyyw_auth import login_url, sso_enabled
 from szyyw_auth.flask import current_identity, is_anonymous
 
+import bark
+import env_schema
 from storage import (
-    account_to_profile_env,
     archive_task,
     build_tracking_url,
     create_account,
@@ -52,7 +52,7 @@ from storage import (
 )
 
 # --- 时区固定为日本 ---
-# Render/容器里即使设置了 TZ，有时也不会自动生效；这里强制设置并调用 tzset。
+# 容器里即使设置了 TZ，有时也不会自动生效；这里强制设置并调用 tzset。
 os.environ.setdefault("TZ", "Asia/Tokyo")
 if hasattr(time, "tzset"):
     try:
@@ -68,161 +68,10 @@ DOTENV_PATH = os.path.join(BASE_DIR, '.env')
 load_dotenv(DOTENV_PATH)
 ensure_storage(DOTENV_PATH)
 
-# 系统设置的分组元数据。分组、文案、生效时机在这里定义一份，白名单直接由它派生，
-# 避免"UI 一份、白名单一份"改了一处漏另一处。
-# apply=live：追踪脚本每轮重读 .env、控制台每次用时重读 os.environ，保存即生效；
-# apply=restart：只在进程启动时读一次的启动参数，必须重启 Web 服务。
-SYSTEM_ENV_GROUPS = [
-    {
-        "key": "bark_endpoint",
-        "title": "Bark 推送地址",
-        "desc": "决定推送发往哪台 Bark。脚本走内网地址直连，手机客户端用公网 HTTPS 地址注册设备；两者都留空时才会回退到兼容地址。",
-        "fields": [
-            {
-                "key": "BARK_SERVER_INTERNAL",
-                "label": "脚本推送地址（内网）",
-                "desc": "追踪脚本发推送时访问的地址，同机或同容器网络直连即可，例如 http://127.0.0.1:8080。",
-                "placeholder": "http://127.0.0.1:8080",
-                "apply": "live",
-                # tracker=True：追踪脚本也读这一项（每次查询前重读 .env），不是保存瞬间生效
-                "tracker": True,
-                "wide": True,
-            },
-            {
-                "key": "BARK_SERVER_PUBLIC",
-                "label": "手机接入地址（公网）",
-                "desc": "手机 Bark 客户端注册设备用的 HTTPS 地址，会显示在用户门户的接入指引里。",
-                "placeholder": "https://bark.example.com",
-                "apply": "live",
-                "tracker": True,
-                "wide": True,
-            },
-            {
-                "key": "BARK_SERVER",
-                "label": "兼容地址（旧版单地址）",
-                "desc": "上面两项留空时的回退值，只为兼容早期「一个地址通用」的配置保留，新部署留空即可。",
-                "placeholder": "留空",
-                "apply": "live",
-                "tracker": True,
-                "legacy": True,
-                "wide": True,
-            },
-        ],
-    },
-    {
-        "key": "bark_health",
-        "title": "Bark 健康检查",
-        "desc": "控制台探测 Bark 是否活着时用的请求参数，只影响首页那个健康状态显示。",
-        "fields": [
-            {
-                "key": "BARK_HEALTH_PATH",
-                "label": "健康检查路径",
-                "desc": "拼在 Bark 地址后面的探测路径，留空按 /ping 处理。",
-                "placeholder": "/ping",
-                "apply": "live",
-            },
-            {
-                "key": "BARK_HEALTH_TIMEOUT",
-                "label": "健康检查超时（秒）",
-                "desc": "单次探测的等待上限，留空或填非法值按 15 秒处理。",
-                "placeholder": "15",
-                "apply": "live",
-            },
-        ],
-    },
-    {
-        "key": "local_bark",
-        "title": "本地 Bark 服务",
-        "badge": "仅控制台托管 Bark 时有效",
-        "badge_tone": "amber",
-        "desc": "只有让控制台自己以子进程方式跑 Bark Server 时，这一组才有意义。线上 VPS 用的是独立 Bark 容器，整组保持关闭即可。",
-        "fields": [
-            {
-                "key": "LOCAL_BARK_ENABLED",
-                "label": "由控制台托管 Bark 子进程",
-                "desc": "关闭后首页不再出现本地 Bark 启停按钮，控制台也不去管子进程。独立容器部署应关闭。",
-                "type": "bool",
-                "default": "1",
-                "apply": "restart",
-            },
-            {
-                "key": "AUTO_START_BARK_SERVER",
-                "label": "Web 启动时自动拉起 Bark",
-                "desc": "需要上一项先打开才有效果。",
-                "type": "bool",
-                "default": "0",
-                "apply": "restart",
-                # 上一项关掉时这项完全不起作用，置灰避免"以为设了却没生效"
-                "requires": "LOCAL_BARK_ENABLED",
-            },
-            {
-                "key": "BARK_BIND_ADDRESS",
-                "label": "本地 Bark 监听地址",
-                "desc": "托管的 Bark 子进程监听的地址与端口，留空按 0.0.0.0:8080 处理。",
-                "placeholder": "0.0.0.0:8080",
-                "apply": "restart",
-            },
-        ],
-    },
-    {
-        "key": "web_runtime",
-        "title": "Web 服务与追踪",
-        "desc": "控制台自身的启动参数，改完要重启 Web 服务才会读到。",
-        "fields": [
-            {
-                "key": "APP_PORT",
-                "label": "Web 控制台端口",
-                "desc": "控制台监听端口，留空按 6060 处理；改了要同步改反向代理的转发目标。",
-                "placeholder": "6060",
-                "apply": "restart",
-            },
-            {
-                "key": "AUTO_START_TRACKER",
-                "label": "启动时自动运行追踪脚本",
-                "desc": "开启后 Web 一起来就拉起追踪脚本，脚本意外退出也会自动重启，省掉每次手动点启动。",
-                "type": "bool",
-                "default": "1",
-                "apply": "restart",
-            },
-        ],
-    },
-    {
-        "key": "keepalive",
-        "title": "云端保活（Render 遗留）",
-        "badge": "当前部署无需配置",
-        "badge_tone": "amber",
-        "desc": "Render 免费实例闲置会休眠，靠保活线程定时访问自己撑住。现在跑在常驻的公网 VPS 上，留空即可。",
-        "fields": [
-            {
-                "key": "PUBLIC_URL",
-                "label": "控制台公网地址",
-                "desc": "保活线程定时访问的自身地址；留空则保活不做事。",
-                "placeholder": "留空",
-                "apply": "live",
-                "legacy": True,
-                "wide": True,
-            },
-            {
-                "key": "KEEPALIVE_INTERVAL",
-                "label": "保活间隔（秒）",
-                "desc": "两次自我访问之间的间隔，默认 600。只在填了上面的公网地址时才有意义。",
-                "default": "600",
-                "apply": "restart",
-                "legacy": True,
-            },
-        ],
-    },
-]
-
-# 白名单：update_env 只认这里出现过的键，防止请求写入任意 .env 键
-SYSTEM_ENV_KEYS = [field["key"] for group in SYSTEM_ENV_GROUPS for field in group["fields"]]
-SYSTEM_ENV_FIELDS = {field["key"]: field for group in SYSTEM_ENV_GROUPS for field in group["fields"]}
-
-def _first_non_empty(*values: str) -> str:
-    for value in values:
-        if value and str(value).strip():
-            return str(value).strip()
-    return ""
+# 系统设置的分组、类型、生效时机都在 env_schema 里定义一份，白名单与保存提示由它派生
+SYSTEM_ENV_GROUPS = env_schema.serialize_groups()
+SYSTEM_ENV_KEYS = env_schema.ENV_KEYS
+SYSTEM_ENV_FIELDS = env_schema.ENV_FIELDS
 
 def _env_enabled(name: str, default: str = "0") -> bool:
     # 显式留空（KEY=）与未设置同样按默认值处理：系统设置里清空一项后，
@@ -231,18 +80,10 @@ def _env_enabled(name: str, default: str = "0") -> bool:
     return value.lower() in {"1", "true", "yes", "on"}
 
 def get_bark_internal_url() -> str:
-    return _first_non_empty(
-        os.getenv("BARK_SERVER_INTERNAL"),
-        os.getenv("BARK_SERVER"),
-        os.getenv("BARK_SERVER_PUBLIC"),
-    ).rstrip("/")
+    return bark.internal_url(os.environ)
 
 def get_bark_public_url() -> str:
-    return _first_non_empty(
-        os.getenv("BARK_SERVER_PUBLIC"),
-        os.getenv("BARK_SERVER"),
-        os.getenv("BARK_SERVER_INTERNAL"),
-    ).rstrip("/")
+    return bark.public_url(os.environ)
 
 def get_bark_health_timeout() -> int:
     try:
@@ -530,37 +371,6 @@ script_process = None
 script_thread = None
 # 区分"用户主动停止"与"脚本意外退出"，后者在自动模式下会被拉起来
 script_stop_requested = False
-
-# --- Render free 保活 ---
-keepalive_thread = None
-keepalive_stop_event = threading.Event()
-keepalive_last_code = None
-keepalive_last_error = None
-keepalive_last_at = None
-keepalive_state = "idle"  # idle | pinging | waiting | ok | error | disabled
-
-def get_public_url() -> str:
-    return os.getenv("PUBLIC_URL", "").strip().rstrip("/")
-
-def get_keepalive_interval() -> int:
-    try:
-        return int(os.getenv("KEEPALIVE_INTERVAL", "600"))
-    except Exception:
-        return 600
-
-def keepalive_is_running() -> bool:
-    return keepalive_thread is not None and keepalive_thread.is_alive()
-
-def emit_keepalive_status(running: bool, configured: bool, url: str):
-    socketio.emit('keepalive_status', {
-        'running': running,
-        'configured': configured,
-        'url': url,
-        'state': keepalive_state,
-        'last_code': keepalive_last_code,
-        'last_error': keepalive_last_error,
-        'last_at': keepalive_last_at
-    })
 
 # --- 分离的日志缓存及文件 ---
 TRACKER_LOG_FILE = os.path.join(LOG_DIR, 'tracker.log')
@@ -884,26 +694,7 @@ def build_system_env():
     return {key: system_env.get(key, "") for key in SYSTEM_ENV_KEYS}
 
 def build_env_apply_note(keys) -> str:
-    """只讲这次真改动的字段的生效时机——笼统一句"部分即时部分要重启"没人看得懂。"""
-    def label_of(key: str) -> str:
-        field = SYSTEM_ENV_FIELDS.get(key) or {}
-        return f"{field.get('label', key)}（{key}）"
-
-    def field_of(key: str) -> dict:
-        return SYSTEM_ENV_FIELDS.get(key) or {}
-
-    live = [label_of(key) for key in keys if field_of(key).get("apply") == "live" and not field_of(key).get("tracker")]
-    # 追踪脚本是独立子进程，每次查询前重读 .env，所以对它而言是"下次查询时"生效
-    tracker = [label_of(key) for key in keys if field_of(key).get("apply") == "live" and field_of(key).get("tracker")]
-    restart = [label_of(key) for key in keys if field_of(key).get("apply") == "restart"]
-    parts = []
-    if live:
-        parts.append("已即时生效：" + "、".join(live))
-    if tracker:
-        parts.append("控制台已即时生效，追踪脚本在下次查询时读取新值：" + "、".join(tracker))
-    if restart:
-        parts.append("需重启 Web 服务后生效：" + "、".join(restart))
-    return "；".join(parts)
+    return env_schema.apply_note(keys)
 
 def build_bark_help_state():
     return {
@@ -948,18 +739,6 @@ def check_bark_endpoint(bark_url: str, label: str = "BARK") -> dict:
             "note": None,
         }
 
-def _parse_bark_query_params(query_string: str) -> dict:
-    query_string = str(query_string or "").strip()
-    if not query_string:
-        return {}
-    result = {}
-    for part in query_string.lstrip("?").split("&"):
-        if not part:
-            continue
-        key, _, value = part.partition("=")
-        result[urllib.parse.unquote(key)] = urllib.parse.unquote(value)
-    return result
-
 def _bool_from_input(value, default: bool = False) -> bool:
     if value is None:
         return default
@@ -997,10 +776,8 @@ def build_bark_test_account(source_account: dict | None, data) -> dict:
         # 按键是否存在判断：表单里把 Keys 清空后测试，应当提示"没有 Keys"，而不是偷偷用已保存的
         if "bark_keys" in data:
             bark_keys = data.get("bark_keys") or ""
-        elif "bark_key" in data:
-            bark_keys = data.get("bark_key") or ""
         else:
-            bark_keys = source.get("bark_keys") or source.get("bark_key", "")
+            bark_keys = source.get("bark_keys", "")
 
     return {
         "display_name": str(data.get("display_name", source.get("display_name", "")) or "").strip() or source.get("display_name") or "当前用户",
@@ -1017,27 +794,16 @@ def extract_bark_test_message(data, *, default_title: str, default_body: str) ->
 
 def send_bark_test_push(account: dict, title: str = "测试推送", body: str = "Bark 设置已生效。") -> dict:
     bark_server = get_bark_internal_url()
-    bark_keys = parse_bark_keys(account.get("bark_keys") or account.get("bark_key"))
+    bark_keys = parse_bark_keys(account.get("bark_keys"))
     if not bark_server:
         raise ValueError("未配置 Bark 服务地址。")
     if not bark_keys:
         raise ValueError("当前用户还没有配置 Bark Keys。")
 
-    params = _parse_bark_query_params(account.get("bark_query_params", ""))
-    tracking_url = str(account.get("tracking_url", "") or "").strip()
-    if account.get("bark_url_enabled") and tracking_url:
-        params["url"] = tracking_url
-
-    timeout = get_bark_health_timeout()
-    if len(bark_keys) == 1:
-        title_enc = urllib.parse.quote(title, safe="")
-        body_enc = urllib.parse.quote(body, safe="")
-        query = urllib.parse.urlencode(params, doseq=True)
-        suffix = f"?{query}" if query else ""
-        resp = requests.get(f"{bark_server}/{bark_keys[0]}/{title_enc}/{body_enc}{suffix}", timeout=timeout)
-    else:
-        payload = {"title": title, "body": body, "device_keys": bark_keys, **params}
-        resp = requests.post(f"{bark_server}/push", json=payload, timeout=timeout)
+    params = bark.build_params(
+        account.get("bark_query_params", ""), account.get("bark_url_enabled"), account.get("tracking_url", "")
+    )
+    resp = bark.send_push(bark_server, bark_keys, title, body, params, get_bark_health_timeout())
 
     return {
         "ok": 200 <= resp.status_code < 300,
@@ -1072,12 +838,10 @@ def index():
             initial_bark_log=initial_bark_log,
         )
 
-    profile_env = account_to_profile_env(account)
     return render_template(
         'user_portal.html',
         viewer_state=viewer_state,
         account=account,
-        profile_env=profile_env,
         task_events=build_portal_task_events(account),
         event_page_size=PORTAL_EVENT_PREVIEW,
         bark_help=bark_help,
@@ -1092,16 +856,6 @@ def test_connect(auth=None):
         return False
     print('Client connected', flush=True)
     emit('script_status', {'running': script_process is not None and script_process.poll() is None})
-    public_url = get_public_url()
-    emit('keepalive_status', {
-        'running': keepalive_is_running(),
-        'configured': bool(public_url),
-        'url': public_url,
-        'state': keepalive_state,
-        'last_code': keepalive_last_code,
-        'last_error': keepalive_last_error,
-        'last_at': keepalive_last_at
-    })
     emit('bark_server_status', {'running': bark_server_process is not None and bark_server_process.poll() is None})
     # 只下发最近 LOG_TAIL_LINES 行，完整历史在日志文件里
     emit('full_tracker_log', {'data': tracker_log.tail()})
@@ -1130,10 +884,8 @@ def read_script_output(proc):
             pass
         return_code = proc.wait()
         log_tracker(_fmt('[TRACKER]', f"脚本已停止，返回码: {return_code}"))
-        # 已经有新进程接班时，状态和保活都归新进程管，这里只记一笔日志
+        # 已经有新进程接班时，状态归新进程管，这里只记一笔日志
         if script_process is proc:
-            # 停止保活线程
-            stop_keepalive()
             socketio.emit('script_status', {'running': False})
             script_process = None
 
@@ -1169,7 +921,6 @@ def start_tracker_script(start_reason: str = "manual") -> bool:
         )
         log_tracker(_fmt('[TRACKER]', "脚本已启动。"))
         socketio.emit('script_status', {'running': True})
-        start_keepalive()
 
         script_thread = threading.Thread(target=read_script_output, args=(script_process,), daemon=True)
         script_thread.start()
@@ -1178,77 +929,6 @@ def start_tracker_script(start_reason: str = "manual") -> bool:
         log_tracker(_fmt('[TRACKER]', f"启动脚本失败: {e}"))
         socketio.emit('script_status', {'running': False})
         return False
-
-def keepalive_loop():
-    """追踪脚本运行期间定时自 ping，避免 Render free 休眠。"""
-    global keepalive_last_code, keepalive_last_error, keepalive_last_at, keepalive_state
-    while True:
-        interval = get_keepalive_interval()
-        public_url = get_public_url()
-        if not public_url:
-            keepalive_state = "disabled"
-            emit_keepalive_status(True, False, "")
-            break
-
-        # 等待到下一次 ping
-        keepalive_state = "waiting"
-        emit_keepalive_status(True, True, public_url)
-        if keepalive_stop_event.wait(interval):
-            break
-
-        # 开始 ping
-        keepalive_state = "pinging"
-        emit_keepalive_status(True, True, public_url)
-        url = f"{public_url}/healthz"
-        try:
-            resp = requests.get(url, timeout=5)
-            keepalive_last_code = resp.status_code
-            keepalive_last_error = None if resp.ok else f"HTTP {resp.status_code}"
-            keepalive_state = "ok" if resp.ok else "error"
-        except Exception as e:
-            keepalive_last_code = None
-            keepalive_last_error = str(e)
-            keepalive_state = "error"
-        keepalive_last_at = time.strftime('%Y-%m-%d %H:%M:%S')
-        emit_keepalive_status(True, True, public_url)
-
-def start_keepalive():
-    global keepalive_thread, keepalive_last_code, keepalive_last_error, keepalive_last_at, keepalive_state
-    public_url = get_public_url()
-    interval = get_keepalive_interval()
-    if not public_url or interval <= 0:
-        keepalive_state = "disabled"
-        return
-    if keepalive_thread and keepalive_thread.is_alive():
-        return
-    keepalive_stop_event.clear()
-    keepalive_state = "pinging"
-    emit_keepalive_status(True, True, public_url)
-    # 启动时立即 ping 一次
-    try:
-        resp = requests.get(f"{public_url}/healthz", timeout=5)
-        keepalive_last_code = resp.status_code
-        keepalive_last_error = None if resp.ok else f"HTTP {resp.status_code}"
-        keepalive_state = "ok" if resp.ok else "error"
-    except Exception as e:
-        keepalive_last_code = None
-        keepalive_last_error = str(e)
-        keepalive_state = "error"
-    keepalive_last_at = time.strftime('%Y-%m-%d %H:%M:%S')
-    emit_keepalive_status(True, True, public_url)
-
-    keepalive_thread = threading.Thread(target=keepalive_loop, daemon=True)
-    keepalive_thread.start()
-    log_tracker(_fmt('[SYSTEM]', f"Render 保活已启用，每 {interval}s ping {public_url}"))
-
-def stop_keepalive():
-    global keepalive_thread, keepalive_state
-    if keepalive_thread and keepalive_thread.is_alive():
-        keepalive_stop_event.set()
-        keepalive_thread = None
-        public_url = get_public_url()
-        keepalive_state = "idle" if public_url else "disabled"
-        emit_keepalive_status(False, bool(public_url), public_url)
 
 @socketio.on('start_script')
 @socket_admin_required
@@ -1266,7 +946,6 @@ def stop_script():
         script_stop_requested = True
         log_tracker(_fmt('[SYSTEM]', "终止追踪脚本信号已发送。"))
         script_process.terminate()
-        stop_keepalive()
     else:
         log_tracker(_fmt('[TRACKER]', "脚本未运行。"))
         socketio.emit('script_status', {'running': False})
@@ -1364,7 +1043,7 @@ def stop_bark_server():
 ENV_UNSAFE_CHARS = set("#'\"\\$`")
 
 def normalize_env_value(key: str, value) -> str:
-    """把系统设置提交的值规整成可安全无引号写入 .env 的字符串，不能安全写入时抛 ValueError。"""
+    """把系统设置提交的值规整成可安全无引号写入 .env 的字符串；字符不安全或不符合字段类型、范围时抛 ValueError。"""
     label = (SYSTEM_ENV_FIELDS.get(key) or {}).get("label", key)
     if value is None:
         return ""
@@ -1375,7 +1054,7 @@ def normalize_env_value(key: str, value) -> str:
     text = str(value).strip()
     if any(ch.isspace() for ch in text) or any(ch in ENV_UNSAFE_CHARS for ch in text):
         raise ValueError(f"{label}（{key}）不能包含空白或 # ' \" \\ $ ` 等字符。")
-    return text
+    return env_schema.validate_value(key, text)
 
 @app.route('/update_env', methods=['POST'])
 @admin_required
@@ -1418,16 +1097,6 @@ def update_env():
         except Exception as e:
             errors.append(f"更新 {key} 失败: {e}")
     updated_count = len(updated_keys)
-
-    # 若更新了保活相关参数，按新值调整保活线程并刷新前端状态显示
-    if "PUBLIC_URL" in updated_keys or "KEEPALIVE_INTERVAL" in updated_keys:
-        public_url = get_public_url()
-        if not public_url:
-            stop_keepalive()
-        elif script_process is not None and script_process.poll() is None and not keepalive_is_running():
-            # 保活只在追踪脚本运行期间工作；运行中新填了地址就立刻拉起，不必重启脚本
-            start_keepalive()
-        emit_keepalive_status(keepalive_is_running(), bool(public_url), public_url)
 
     if updated_count > 0:
         message = f"成功更新 {updated_count} 个系统环境变量。"

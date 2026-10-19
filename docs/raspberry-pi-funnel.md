@@ -55,9 +55,6 @@ APP_PORT=6060
 
 # 推荐在树莓派服务模式下开启
 AUTO_START_BARK_SERVER=1
-
-# 本地部署通常留空；这是云端保活用的
-PUBLIC_URL=
 ```
 
 变量说明：
@@ -100,7 +97,6 @@ data/app.db
 - `BARK_HEALTH_PATH`
 - `BARK_HEALTH_TIMEOUT`
 - `BARK_BIND_ADDRESS`
-- `PUBLIC_URL`
 - `APP_PORT`
 - `AUTO_START_BARK_SERVER`
 
@@ -182,7 +178,7 @@ PY
 
 - `ADMIN_PASSWORD_HASH` 只建议手工写入 `.env`，不会显示在网页环境变量列表里。
 - 登录保护启用后，`/`、`/update_env`、`/remote_bark_status` 和 Socket.IO 控制入口都要先登录。
-- 程序另外提供了一个无鉴权的 `/healthz`，只用于保活和 systemd / 反向代理健康检查。
+- 程序另外提供了一个无鉴权的 `/healthz`，只用于 systemd / 反向代理健康检查。
 
 ## 5. 配置 iPhone Bark
 

@@ -100,7 +100,7 @@ JSON 接口统一返回 `{"status": "success" | "error", "message": …}`，未�
 ### Socket.IO（仅管理员可连接）
 
 - 客户端发送：`start_script`、`stop_script`、`start_bark_server`、`stop_bark_server`
-- 服务端推送：`script_status`、`bark_server_status`、`keepalive_status`（`{running: bool}` 等）；日志增量 `tracker_log`、`bark_log`、`remote_bark_log` 与连接时的最近 500 行 `full_tracker_log`、`full_bark_log`、`full_remote_bark_log`（`{data: str}`）；鉴权失败时 `auth_error`
+- 服务端推送：`script_status`、`bark_server_status`（`{running: bool}`）；日志增量 `tracker_log`、`bark_log`、`remote_bark_log` 与连接时的最近 500 行 `full_tracker_log`、`full_bark_log`、`full_remote_bark_log`（`{data: str}`）；鉴权失败时 `auth_error`
 
 ### 环境变量（`.env`）
 
@@ -108,7 +108,8 @@ JSON 接口统一返回 `{"status": "success" | "error", "message": …}`，未�
 |---|---|---|
 | `BARK_SERVER_INTERNAL` / `BARK_SERVER_PUBLIC` | 空 | 推送用内网地址 / 手机与健康检查用公网地址，互为回退 |
 | `BARK_SERVER` | 空 | 旧版单一地址，仅作兼容 |
-| `BARK_HEALTH_PATH` / `BARK_HEALTH_TIMEOUT` | `/ping` / `15` | Bark 健康检查路径与超时（秒） |
+| `BARK_HEALTH_PATH` / `BARK_HEALTH_TIMEOUT` | `/ping` / `15` | Bark 健康检查路径；探测与测试推送的超时（秒） |
+| `REQUEST_TIMEOUT` | `15` | 追踪脚本抓取官网、向 Bark 推送时单次请求的超时（秒） |
 | `BARK_BIND_ADDRESS` / `BARK_EXECUTABLE` | `0.0.0.0:8080` / 自动查找 | 本地 Bark Server 监听地址与可执行文件 |
 | `LOCAL_BARK_ENABLED` | `1` | `0` 时不管理本地 Bark 子进程（Bark 独立部署时） |
 | `AUTO_START_BARK_SERVER` | `0` | Web 启动时自动拉起本地 Bark |
@@ -119,12 +120,24 @@ JSON 接口统一返回 `{"status": "success" | "error", "message": …}`，未�
 | `SESSION_COOKIE_SECURE` / `ADMIN_SESSION_HOURS` | `0` / `24` | HTTPS-only cookie、登录有效期（小时） |
 | `ADMIN_LOGIN_MAX_ATTEMPTS` / `ADMIN_LOGIN_WINDOW_SECONDS` | `5` / `600` | 登录限流 |
 | `TRUSTED_PROXY_COUNT` | `0` | 受信反代层数；大于 0 才采信 `X-Forwarded-For`（取右数第 N 个） |
-| `PUBLIC_URL` / `KEEPALIVE_INTERVAL` | 空 / `600` | 自 ping 保活地址与间隔（秒），留空禁用 |
 | `SZYYW_SSO` / `SZYYW_SSO_AUTOCREATE` / `PORTAL_ORIGIN` | `0` / `0` / — | 统一登录开关与上游地址；开启后信任反代注入的 `X-User` / `X-Role` / `X-Portal-Sub` 头。账号只按 `X-Portal-Sub` 映射；自动开通遇到同名未映射本地账号时另起带数字后缀的用户名，不会并入旧账号 |
 | `SZYYW_SSO_ADOPT_BY_NAME` | `0` | `1` 时未映射的本地账号可被同名（`X-User`）门户用户认领。门户用户名可由用户自行修改，开启有被冒领风险，仅在一次性迁移旧账号时临时打开；平时请在「用户管理」里填写门户 ID 或用 `manage.py map-account` 映射 |
 | `DESIGN_BASE` | CDN | 覆盖前端设计包的加载地址（本地离线开发用） |
 
-后台「系统设置」以不加引号的 `KEY=value` 形式写回 `.env`（兼容按原样加载 env 文件的容器运行时），含空白、`#`、引号、反斜杠、`$`、反引号的值会被拒绝；留空即清空，`.env` 里出现过的键以文件为准，不回退到启动时的环境变量。
+后台「系统设置」按使用场景分组，只能编辑下表这些键（其余变量只能改 `.env` 后重启）。每个字段旁标着生效时机，保存后页面也会按实际改动的字段说明哪些已生效、哪些还要等：
+
+| 分组 | 键 | 生效时机 |
+|---|---|---|
+| Bark 推送 | `BARK_SERVER_INTERNAL`、`BARK_SERVER_PUBLIC`、`BARK_SERVER` | 控制台保存即生效，追踪脚本下次查询时生效 |
+| Bark 健康检查 | `BARK_HEALTH_PATH`、`BARK_HEALTH_TIMEOUT` | 保存即生效 |
+| 追踪脚本 | `REQUEST_TIMEOUT` | 追踪脚本下次查询时生效 |
+| 追踪脚本 | `AUTO_START_TRACKER` | 重启 Web 后生效（脚本意外退出后是否自动重启读取当前值） |
+| 本地 Bark 服务 | `LOCAL_BARK_ENABLED` | 保存即生效（不会停掉已运行的子进程） |
+| 本地 Bark 服务 | `BARK_BIND_ADDRESS` | 下次启动本地 Bark 时生效 |
+| 本地 Bark 服务 | `AUTO_START_BARK_SERVER` | 重启 Web 后生效 |
+| Web 服务 | `APP_PORT` | 重启 Web 后生效 |
+
+提交时按字段类型校验（开关、整数及范围、`http(s)://` 地址），不合法的一项都不写。写回 `.env` 用不加引号的 `KEY=value` 形式（兼容按原样加载 env 文件的容器运行时），含空白、`#`、引号、反斜杠、`$`、反引号的值会被拒绝；留空即清空，`.env` 里出现过的键以文件为准，不回退到启动时的环境变量。
 
 日志写在 `logs/tracker.log`、`logs/bark.log`、`logs/remote_bark.log`，单个文件超过 2 MB 自动轮转，保留 `.1`～`.3` 三份旧文件。
 

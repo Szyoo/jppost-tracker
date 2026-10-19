@@ -1,11 +1,12 @@
 import os
 import time
-import urllib.parse
 
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
+import bark
+from env_schema import TRACKER_ENV_KEYS
 from storage import (
     MIN_CHECK_INTERVAL,
     build_tracking_url,
@@ -18,7 +19,6 @@ from storage import (
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 DOTENV_PATH = os.path.join(BASE_DIR, ".env")
-SYSTEM_ENV_KEYS = ["BARK_SERVER_INTERNAL", "BARK_SERVER", "BARK_SERVER_PUBLIC", "REQUEST_TIMEOUT"]
 
 # 主循环单次休眠上限：即使所有任务都还没到期，也最多 30 秒后重查一次数据库，
 # 这样后台新建或改过间隔的任务不必等满一个 check_interval 才被感知。
@@ -39,13 +39,6 @@ if hasattr(time, "tzset"):
         pass
 
 
-def _first_non_empty(*values: str) -> str:
-    for value in values:
-        if value and str(value).strip():
-            return str(value).strip()
-    return ""
-
-
 def _normalize_int(value, default: int) -> int:
     try:
         parsed = int(value)
@@ -57,19 +50,6 @@ def _normalize_int(value, default: int) -> int:
 def _task_interval(task: dict) -> int:
     """任务的轮询间隔。写入口已强制下限，这里再兜一次底：库里可能还有下限出台前写入的小间隔。"""
     return max(MIN_CHECK_INTERVAL, _normalize_int(task.get("check_interval", 300), 300))
-
-
-def _parse_query_params(query_string: str) -> dict:
-    query_string = str(query_string or "").strip()
-    if not query_string:
-        return {}
-    result = {}
-    for part in query_string.lstrip("?").split("&"):
-        if not part:
-            continue
-        key, _, value = part.partition("=")
-        result[urllib.parse.unquote(key)] = urllib.parse.unquote(value)
-    return result
 
 
 def _build_log_prefix(display_name: str, label: str, tracking_number: str) -> str:
@@ -98,11 +78,7 @@ def build_runtime_config(task: dict, system_env: dict) -> dict:
     display_name = (
         account.get("display_name") or account.get("name") or account.get("username") or "用户"
     )
-    bark_server = _first_non_empty(
-        system_env.get("BARK_SERVER_INTERNAL"),
-        system_env.get("BARK_SERVER"),
-        system_env.get("BARK_SERVER_PUBLIC"),
-    ).rstrip("/")
+    bark_server = bark.internal_url(system_env)
     return {
         "task_id": task["id"],
         "account_id": task.get("account_id") or account.get("id"),
@@ -116,7 +92,7 @@ def build_runtime_config(task: dict, system_env: dict) -> dict:
         "check_interval": _task_interval(task),
         "request_timeout": _normalize_int(system_env.get("REQUEST_TIMEOUT", "15"), 15),
         "bark_server": bark_server,
-        "bark_keys": parse_bark_keys(account.get("bark_keys") or account.get("bark_key")),
+        "bark_keys": parse_bark_keys(account.get("bark_keys")),
         "bark_query_params": str(account.get("bark_query_params", "") or ""),
         "bark_url_enabled": bool(account.get("bark_url_enabled")),
         "last_tracking_info": str(task.get("last_tracking_info", "") or ""),
@@ -143,27 +119,15 @@ def send_bark_notification(config: dict, title: str, message: str) -> tuple[bool
         print(f"{config['log_prefix']} 未配置 Bark 地址或 Bark Keys，跳过推送。")
         return False, "未配置 Bark 地址或 Bark Keys"
 
-    query_params = _parse_query_params(config["bark_query_params"])
-    if config["bark_url_enabled"]:
-        query_params["url"] = config["tracking_url"]
+    query_params = bark.build_params(
+        config["bark_query_params"], config["bark_url_enabled"], config["tracking_url"]
+    )
 
     keys = config["bark_keys"]
     try:
-        # 单设备走 GET 短链，多设备只能用 /push 批量接口。
-        if len(keys) == 1:
-            title_enc = urllib.parse.quote(title, safe="")
-            body_enc = urllib.parse.quote(message, safe="")
-            extra = urllib.parse.urlencode(query_params, doseq=True)
-            suffix = f"?{extra}" if extra else ""
-            url = f"{config['bark_server']}/{keys[0]}/{title_enc}/{body_enc}{suffix}"
-            resp = requests.get(url, timeout=config["request_timeout"])
-        else:
-            payload = {"title": title, "body": message, "device_keys": keys, **query_params}
-            resp = requests.post(
-                f"{config['bark_server']}/push",
-                json=payload,
-                timeout=config["request_timeout"],
-            )
+        resp = bark.send_push(
+            config["bark_server"], keys, title, message, query_params, config["request_timeout"]
+        )
 
         if 200 <= resp.status_code < 300:
             print(f"{config['log_prefix']} Bark 通知已发送到 {len(keys)} 个设备。")
@@ -353,7 +317,7 @@ def main():
 
             # 每轮重读 .env：后台「系统设置」的修改与清空在下一轮即生效，
             # 文件里出现过的键以文件为准，不会回落到启动时继承的旧环境变量
-            system_env = load_system_env(DOTENV_PATH, SYSTEM_ENV_KEYS)
+            system_env = load_system_env(DOTENV_PATH, TRACKER_ENV_KEYS)
             for task in due_tasks:
                 task_id = int(task["id"])
                 interval = _task_interval(task)
