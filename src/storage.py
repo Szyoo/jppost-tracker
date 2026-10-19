@@ -13,6 +13,11 @@ BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DB_PATH = os.path.join(DATA_DIR, "app.db")
 
+# 查询间隔的合法范围（秒）。下限防止把日本邮政官网刷成被封，上限一周；
+# 前端输入框的 min / max 与这里同步。
+MIN_CHECK_INTERVAL = 30
+MAX_CHECK_INTERVAL = 7 * 24 * 3600
+
 PROFILE_DEFAULTS = {
     "check_interval": 300,
     "bark_keys": "",
@@ -51,18 +56,39 @@ def _has_column(conn, table_name: str, column: str) -> bool:
 
 
 def _load_env_value(env_values, key: str, default: str = "") -> str:
-    value = env_values.get(key)
-    if value is not None and str(value).strip() != "":
-        return str(value).strip().strip("'").strip('"')
+    """.env 文件里出现过的键以文件为准（包括显式留空），没出现才回退到进程环境变量。
+    否则后台把某项清空后，追踪脚本仍会读到启动时继承的旧环境变量，清空等于没生效。"""
+    if key in env_values:
+        value = env_values.get(key)
+        return str(value or "").strip().strip("'").strip('"') or default
     return os.getenv(key, default).strip()
 
 
 def _normalize_check_interval(value) -> int:
+    """读库与迁移用的宽松规整：历史数据里的非法值退回默认，不能因为一条旧数据让启动失败。"""
     try:
         parsed = int(value)
         return parsed if parsed > 0 else 300
     except Exception:
         return 300
+
+
+def _validate_check_interval(value, default: int | None = None) -> int:
+    """用户写入用的严格校验：超出范围直接报错，不静默改成别的值。
+    None / 空串按 default 处理（新建时是默认间隔，修改时是原值）。"""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        if default is None:
+            raise ValueError("请填写查询间隔。")
+        return int(default)
+    try:
+        parsed = int(str(value).strip()) if not isinstance(value, bool) else None
+    except (TypeError, ValueError):
+        parsed = None
+    if parsed is None:
+        raise ValueError("查询间隔必须是整数秒。")
+    if parsed < MIN_CHECK_INTERVAL or parsed > MAX_CHECK_INTERVAL:
+        raise ValueError(f"查询间隔需在 {MIN_CHECK_INTERVAL}–{MAX_CHECK_INTERVAL} 秒之间。")
+    return parsed
 
 
 def _normalize_bool(value, default: int = 0) -> int:
@@ -518,16 +544,19 @@ def _insert_account(conn, data: dict):
 
 
 def _insert_task(conn, account_id: int, data: dict):
-    """插入任务；同账号同单号已存在则复活它（archived=0，seen_count+1）。"""
+    """插入任务；同账号同单号已归档则复活它（archived=0，seen_count+1）。
+    同单号正在追踪（未归档）时拒绝：以前会静默覆盖备注和间隔，用户却看到"已添加"。"""
     number = _normalize_tracking_number(data.get("tracking_number", ""))
     if not number:
         raise ValueError("请填写日本邮政单号。")
 
     now = _ts()
     existing = conn.execute(
-        "SELECT id, seen_count FROM tracking_tasks WHERE account_id = ? AND tracking_number = ?",
+        "SELECT id, seen_count, archived FROM tracking_tasks WHERE account_id = ? AND tracking_number = ?",
         (account_id, number),
     ).fetchone()
+    if existing and not existing["archived"]:
+        raise ValueError("该单号已在追踪中，如需修改备注或间隔请直接编辑那条任务。")
     if existing:
         conn.execute(
             """
@@ -743,7 +772,9 @@ def _create_account(conn, data: dict, *, self_register: bool = False):
     if account_id and number:
         _insert_task(conn, int(account_id), {
             "tracking_number": number,
-            "check_interval": data.get("check_interval", PROFILE_DEFAULTS["check_interval"]),
+            "check_interval": _validate_check_interval(
+                data.get("check_interval"), default=PROFILE_DEFAULTS["check_interval"]
+            ),
             "label": data.get("label", ""),
             "enabled": data.get("tracking_enabled", 1),
         })
@@ -797,6 +828,14 @@ def update_account(account_id: int, data: dict, *, actor_role: str = "admin", ac
             password = str(data.get("password", "") or data.get("new_password", "")).strip()
             password_hash = generate_password_hash(password) if password else current["password_hash"]
 
+            # 按键是否存在判断，不能用 or 回落：提交空串表示清空，回落旧值会让 Bark Keys 永远清不掉
+            if "bark_keys" in data:
+                bark_keys = data["bark_keys"]
+            elif "bark_key" in data:
+                bark_keys = data["bark_key"]
+            else:
+                bark_keys = current["bark_keys"]
+
             if next_login_enabled and not password_hash:
                 raise ValueError("已启用登录的用户必须设置密码。")
 
@@ -814,8 +853,8 @@ def update_account(account_id: int, data: dict, *, actor_role: str = "admin", ac
                         display_name,
                         password_hash,
                         next_role,
-                        str(data.get("note", current["note"])).strip(),
-                        normalize_bark_keys(data.get("bark_keys") or data.get("bark_key", current["bark_keys"])),
+                        str(data.get("note", current["note"]) or "").strip(),
+                        normalize_bark_keys(bark_keys),
                         str(data.get("bark_query_params", current["bark_query_params"])).strip()
                         or PROFILE_DEFAULTS["bark_query_params"],
                         _normalize_bool(
@@ -897,13 +936,23 @@ def _derive_local_username(conn, portal_user: str) -> str:
     return _normalize_username(candidate)
 
 
-def resolve_portal_account(portal_sub: str, portal_user: str, portal_role: str = "user", *, autocreate: bool = False):
+def resolve_portal_account(
+    portal_sub: str,
+    portal_user: str,
+    portal_role: str = "user",
+    *,
+    autocreate: bool = False,
+    adopt_by_name: bool = False,
+):
     """按 portal 身份找本地账号，返回 (account, action)。portal_sub = X-Portal-Sub（固定 ID），
     portal_user = X-User（当前用户名，可改）。
     action: "mapped"（portal_sub 命中）/ "adopted"（同名且未映射，已写入 portal_sub）/
             "created"（自动建号）/ None（未开通，account 也为 None）。
     没有 sub 一律返回 (None, None)，绝不只按用户名匹配。本地 username 不随 portal 改名。
-    规则顺序：先按 portal_sub 命中，再认领同名未映射账号，最后才自动建号；整个过程在一个事务里，避免并发请求重复建号。"""
+    规则顺序：先按 portal_sub 命中；adopt_by_name 开启时再认领同名未映射账号；最后才自动建号。
+    同名认领默认关闭：portal 用户名用户自己能改，改成某个未映射本地账号的名字就能接管它。
+    自动建号遇到同名未映射账号时另起不冲突的用户名，绝不并入旧账号。
+    整个过程在一个事务里，避免并发请求重复建号。"""
     try:
         portal_sub = _normalize_portal_sub(portal_sub)
     except ValueError:
@@ -919,10 +968,12 @@ def resolve_portal_account(portal_sub: str, portal_user: str, portal_role: str =
             if row is not None:
                 account_id, action = int(row["id"]), "mapped"
             elif portal_user:
-                # 本地用户名一律小写，这里按原样精确比较：portal 里的 "Alice" 不会认领本地 "alice"
-                row = conn.execute(
-                    "SELECT id, portal_sub FROM accounts WHERE username = ?", (portal_user,)
-                ).fetchone()
+                row = None
+                if adopt_by_name:
+                    # 本地用户名一律小写，这里按原样精确比较：portal 里的 "Alice" 不会认领本地 "alice"
+                    row = conn.execute(
+                        "SELECT id, portal_sub FROM accounts WHERE username = ?", (portal_user,)
+                    ).fetchone()
                 if row is not None and row["portal_sub"] is None:
                     conn.execute(
                         "UPDATE accounts SET portal_sub = ?, updated_at = ? WHERE id = ?",
@@ -972,8 +1023,19 @@ def create_task(account_id: int, data: dict):
         with conn:
             if conn.execute("SELECT 1 FROM accounts WHERE id = ?", (int(account_id),)).fetchone() is None:
                 raise ValueError("用户不存在。")
-            task_id = _insert_task(conn, int(account_id), data)
-    return get_task(task_id)
+            payload = dict(data)
+            payload["check_interval"] = _validate_check_interval(
+                data.get("check_interval"), default=PROFILE_DEFAULTS["check_interval"]
+            )
+            revived = conn.execute(
+                "SELECT 1 FROM tracking_tasks WHERE account_id = ? AND tracking_number = ? AND archived = 1",
+                (int(account_id), _normalize_tracking_number(data.get("tracking_number", ""))),
+            ).fetchone() is not None
+            task_id = _insert_task(conn, int(account_id), payload)
+    task = get_task(task_id)
+    # 调用方据此给出"已从归档恢复"之类的准确提示
+    task["revived"] = revived
+    return task
 
 
 def update_task(task_id: int, data: dict, *, actor_role: str = "admin", actor_id: int | None = None):
@@ -999,7 +1061,7 @@ def update_task(task_id: int, data: dict, *, actor_role: str = "admin", actor_id
                     (
                         number,
                         str(data.get("label", current["label"]) or ""),
-                        _normalize_check_interval(data.get("check_interval", current["check_interval"])),
+                        _validate_check_interval(data.get("check_interval"), default=current["check_interval"]),
                         _normalize_bool(data.get("enabled", current["enabled"]), default=current["enabled"]),
                         _normalize_bool(data.get("archived", current["archived"]), default=current["archived"]),
                         "" if number_changed else current["last_tracking_info"],

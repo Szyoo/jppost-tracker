@@ -75,7 +75,27 @@ def test_autocreate_avoids_username_held_by_other_mapping(client, db, sso):
     assert me["username"] == "carol-2" and me["portal_sub"] == "sub-carol"
 
 
-def test_username_match_with_null_portal_sub_is_adopted(client, db, sso):
+def test_username_match_is_not_adopted_by_default(client, db, sso):
+    """默认不按 X-User 同名认领：portal 用户名用户自己能改，改成本地用户名就能接管账号。"""
+    dave = make_user(db, "dave")
+    resp = client.get("/api/me", headers=gate("dave", sub="attacker-sub"))
+    assert resp.status_code == 403
+    assert db.get_account(dave["id"])["portal_sub"] is None
+
+
+def test_autocreate_never_merges_into_unmapped_same_name_account(client, db, sso):
+    sso.setenv("SZYYW_SSO_AUTOCREATE", "1")
+    dave = make_user(db, "dave")
+    db.create_task(dave["id"], {"tracking_number": "AA111111111JP"})
+    me = client.get("/api/me", headers=gate("dave", sub="attacker-sub")).get_json()["user"]
+    assert me["id"] != dave["id"]
+    assert me["username"] == "dave-2" and me["portal_sub"] == "attacker-sub"
+    assert me["tasks"] == []
+    assert db.get_account(dave["id"])["portal_sub"] is None
+
+
+def test_username_match_with_null_portal_sub_is_adopted_when_enabled(client, db, sso):
+    sso.setenv("SZYYW_SSO_ADOPT_BY_NAME", "1")
     dave = make_user(db, "dave")
     resp = client.get("/api/me", headers=gate("dave", sub="3f2a-dave-uuid"))
     assert resp.status_code == 200
@@ -120,6 +140,7 @@ def test_missing_sub_is_logged_out(client, db, sso):
 
 
 def test_username_match_with_other_portal_sub_is_not_adopted(client, db, sso):
+    sso.setenv("SZYYW_SSO_ADOPT_BY_NAME", "1")
     erin = make_user(db, "erin")
     db.set_account_portal_sub(erin["id"], "sub-erin-portal")
     resp = client.get("/api/me", headers=gate("erin", sub="sub-other"))  # 同名但 sub 不同
@@ -128,6 +149,7 @@ def test_username_match_with_other_portal_sub_is_not_adopted(client, db, sso):
 
 
 def test_adoption_is_case_sensitive(client, db, sso):
+    sso.setenv("SZYYW_SSO_ADOPT_BY_NAME", "1")
     make_user(db, "frank")
     assert client.get("/api/me", headers=gate("Frank")).status_code == 403
     assert db.get_account_by_username("frank")["portal_sub"] is None
@@ -348,3 +370,28 @@ def test_user_portal_flash_is_toast_and_escaped(client, db, sso):
     html = client.get("/", query_string={"status": "error", "message": payload}, headers=gate("erin")).data.decode()
     assert "toast.js" in html and 'id="flash-message"' not in html
     assert payload not in html and "\\u003c/script\\u003e" in html
+
+
+# --- SSO 下的用户管理：角色以 X-Role 为准，管理员不能把自己锁在门外 ---
+
+def test_sso_role_field_is_ignored_and_ui_disabled(client, db, sso):
+    db.set_account_portal_sub(2, "sub-carol")
+    admin = gate("carol", "admin")
+    mia = make_user(db, "mia")
+    resp = client.put(f"/api/users/{mia['id']}", json={"role": "admin", "note": "x"}, headers=admin)
+    assert resp.status_code == 200
+    assert db.get_account(mia["id"])["role"] == "user" and db.get_account(mia["id"])["note"] == "x"
+    html = client.get("/", headers=admin).data.decode()
+    assert 'id="userRole" v-model="userForm.role" class="field" disabled' in html
+    assert "角色由门户「应用与权限」决定" in html and 'id="createRole"' not in html
+
+
+def test_sso_admin_cannot_disable_own_login(client, db, sso):
+    db.set_account_portal_sub(2, "sub-carol")
+    admin = gate("carol", "admin")
+    resp = client.put("/api/users/2", json={"login_enabled": False}, headers=admin)
+    assert resp.status_code == 400 and "自己的登录" in resp.get_json()["message"]
+    assert db.get_account(2)["login_enabled"]
+    nora = make_user(db, "nora")
+    assert client.put(f"/api/users/{nora['id']}", json={"login_enabled": False}, headers=admin).status_code == 200
+    assert not db.get_account(nora["id"])["login_enabled"]

@@ -22,6 +22,7 @@ os.environ["LOCAL_BARK_ENABLED"] = "0"
 os.environ["SECRET_KEY"] = "test-secret"
 os.environ.pop("SZYYW_SSO", None)
 os.environ.pop("SZYYW_SSO_AUTOCREATE", None)
+os.environ.pop("SZYYW_SSO_ADOPT_BY_NAME", None)
 
 import storage  # noqa: E402
 
@@ -38,6 +39,7 @@ def db(tmp_path, monkeypatch):
     monkeypatch.setattr(storage, "DB_PATH", str(tmp_path / "app.db"))
     monkeypatch.delenv("SZYYW_SSO", raising=False)
     monkeypatch.delenv("SZYYW_SSO_AUTOCREATE", raising=False)
+    monkeypatch.delenv("SZYYW_SSO_ADOPT_BY_NAME", raising=False)
     monkeypatch.delenv("PORTAL_ORIGIN", raising=False)
     storage.ensure_storage(str(tmp_path / "missing.env"))
     return storage

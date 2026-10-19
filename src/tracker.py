@@ -7,6 +7,7 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
 from storage import (
+    MIN_CHECK_INTERVAL,
     build_tracking_url,
     ensure_storage,
     list_due_tasks,
@@ -51,6 +52,11 @@ def _normalize_int(value, default: int) -> int:
         return parsed if parsed > 0 else default
     except Exception:
         return default
+
+
+def _task_interval(task: dict) -> int:
+    """任务的轮询间隔。写入口已强制下限，这里再兜一次底：库里可能还有下限出台前写入的小间隔。"""
+    return max(MIN_CHECK_INTERVAL, _normalize_int(task.get("check_interval", 300), 300))
 
 
 def _parse_query_params(query_string: str) -> dict:
@@ -107,7 +113,7 @@ def build_runtime_config(task: dict, system_env: dict) -> dict:
         "tracking_number": tracking_number,
         # storage 已经拼好 URL；这里兜底也复用它的实现，避免单号 URL 格式在两处各写一遍。
         "tracking_url": str(task.get("tracking_url") or "").strip() or build_tracking_url(tracking_number),
-        "check_interval": _normalize_int(task.get("check_interval", 300), 300),
+        "check_interval": _task_interval(task),
         "request_timeout": _normalize_int(system_env.get("REQUEST_TIMEOUT", "15"), 15),
         "bark_server": bark_server,
         "bark_keys": parse_bark_keys(account.get("bark_keys") or account.get("bark_key")),
@@ -285,10 +291,12 @@ def main():
                 time.sleep(max(0.5, min(MAX_LOOP_SLEEP, next_due - now)))
                 continue
 
+            # 每轮重读 .env：后台「系统设置」的修改与清空在下一轮即生效，
+            # 文件里出现过的键以文件为准，不会回落到启动时继承的旧环境变量
             system_env = load_system_env(DOTENV_PATH, SYSTEM_ENV_KEYS)
             for task in due_tasks:
                 task_id = int(task["id"])
-                interval = _normalize_int(task.get("check_interval", 300), 300)
+                interval = _task_interval(task)
                 needs_retry = process_task(task, system_env)
 
                 if needs_retry:
