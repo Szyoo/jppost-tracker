@@ -99,7 +99,7 @@ JSON 接口统一返回 `{"status": "success" | "error", "message": …}`，未�
 ### Socket.IO（仅管理员可连接）
 
 - 客户端发送：`start_script`、`stop_script`、`start_bark_server`、`stop_bark_server`
-- 服务端推送：`script_status`、`bark_server_status`、`keepalive_status`（`{running: bool}` 等）；日志增量 `tracker_log`、`bark_log`、`remote_bark_log` 与连接时的全量 `full_tracker_log`、`full_bark_log`、`full_remote_bark_log`（`{data: str}`）；鉴权失败时 `auth_error`
+- 服务端推送：`script_status`、`bark_server_status`、`keepalive_status`（`{running: bool}` 等）；日志增量 `tracker_log`、`bark_log`、`remote_bark_log` 与连接时的最近 500 行 `full_tracker_log`、`full_bark_log`、`full_remote_bark_log`（`{data: str}`）；鉴权失败时 `auth_error`
 
 ### 环境变量（`.env`）
 
@@ -119,10 +119,15 @@ JSON 接口统一返回 `{"status": "success" | "error", "message": …}`，未�
 | `ADMIN_LOGIN_MAX_ATTEMPTS` / `ADMIN_LOGIN_WINDOW_SECONDS` | `5` / `600` | 登录限流 |
 | `TRUSTED_PROXY_COUNT` | `0` | 受信反代层数；大于 0 才采信 `X-Forwarded-For`（取右数第 N 个） |
 | `PUBLIC_URL` / `KEEPALIVE_INTERVAL` | 空 / `600` | 自 ping 保活地址与间隔（秒），留空禁用 |
-| `SZYYW_SSO` / `SZYYW_SSO_AUTOCREATE` / `PORTAL_ORIGIN` | `0` / `0` / — | 统一登录开关与上游地址；开启后信任反代注入的 `X-User` / `X-Role` / `X-Portal-Sub` 头 |
+| `SZYYW_SSO` / `SZYYW_SSO_AUTOCREATE` / `PORTAL_ORIGIN` | `0` / `0` / — | 统一登录开关与上游地址；开启后信任反代注入的 `X-User` / `X-Role` / `X-Portal-Sub` 头。账号只按 `X-Portal-Sub` 映射；自动开通遇到同名未映射本地账号时另起带数字后缀的用户名，不会并入旧账号 |
+| `SZYYW_SSO_ADOPT_BY_NAME` | `0` | `1` 时未映射的本地账号可被同名（`X-User`）门户用户认领。门户用户名可由用户自行修改，开启有被冒领风险，仅在一次性迁移旧账号时临时打开；平时请在「用户管理」里填写门户 ID 或用 `manage.py map-account` 映射 |
 | `DESIGN_BASE` | CDN | 覆盖前端设计包的加载地址（本地离线开发用） |
 
-单号、检查间隔、Bark Keys 等按账号保存在 SQLite（`data/app.db`，表结构见 [docs/data-model.md](docs/data-model.md)），不在 `.env` 里。账号映射也可用命令行维护：`python src/manage.py list-accounts | map-account | unmap-account`。备份请一并保存 `.env`、`data/`、`bark-data/`。
+后台「系统设置」以不加引号的 `KEY=value` 形式写回 `.env`（兼容按原样加载 env 文件的容器运行时），含空白、`#`、引号、反斜杠、`$`、反引号的值会被拒绝；留空即清空，`.env` 里出现过的键以文件为准，不回退到启动时的环境变量。
+
+日志写在 `logs/tracker.log`、`logs/bark.log`、`logs/remote_bark.log`，单个文件超过 2 MB 自动轮转，保留 `.1`～`.3` 三份旧文件。
+
+单号、检查间隔（30 秒～7 天）、Bark Keys 等按账号保存在 SQLite（`data/app.db`，表结构见 [docs/data-model.md](docs/data-model.md)），不在 `.env` 里。账号映射也可用命令行维护：`python src/manage.py list-accounts | map-account | unmap-account`。备份请一并保存 `.env`、`data/`、`bark-data/`。
 
 ## 许可
 

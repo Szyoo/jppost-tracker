@@ -1,4 +1,11 @@
-import io
+# 必须在其余 import 之前打补丁：Socket.IO 跑在 gevent 上，不打补丁时 requests / time.sleep /
+# 子进程管道读取都是真阻塞，一个慢请求会卡住整个进程；后台线程也不是协程，从里面 emit 不安全。
+# 只在直接运行本文件时打补丁（生产入口 `python src/app.py`），测试以模块方式 import 时不打。
+if __name__ == "__main__":
+    from gevent import monkey
+
+    monkey.patch_all()
+
 import os
 import sys
 import time
@@ -9,6 +16,7 @@ import shutil
 import subprocess
 import threading
 
+from collections import deque
 from datetime import timedelta
 from functools import wraps
 
@@ -74,6 +82,8 @@ SYSTEM_ENV_GROUPS = [
                 "desc": "追踪脚本发推送时访问的地址，同机或同容器网络直连即可，例如 http://127.0.0.1:8080。",
                 "placeholder": "http://127.0.0.1:8080",
                 "apply": "live",
+                # tracker=True：追踪脚本也读这一项（每次查询前重读 .env），不是保存瞬间生效
+                "tracker": True,
                 "wide": True,
             },
             {
@@ -82,6 +92,7 @@ SYSTEM_ENV_GROUPS = [
                 "desc": "手机 Bark 客户端注册设备用的 HTTPS 地址，会显示在用户门户的接入指引里。",
                 "placeholder": "https://bark.example.com",
                 "apply": "live",
+                "tracker": True,
                 "wide": True,
             },
             {
@@ -90,6 +101,7 @@ SYSTEM_ENV_GROUPS = [
                 "desc": "上面两项留空时的回退值，只为兼容早期「一个地址通用」的配置保留，新部署留空即可。",
                 "placeholder": "留空",
                 "apply": "live",
+                "tracker": True,
                 "legacy": True,
                 "wide": True,
             },
@@ -211,7 +223,10 @@ def _first_non_empty(*values: str) -> str:
     return ""
 
 def _env_enabled(name: str, default: str = "0") -> bool:
-    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+    # 显式留空（KEY=）与未设置同样按默认值处理：系统设置里清空一项后，
+    # 运行中（os.environ 设为空串）与重启后（容器按原样加载空值）的行为才一致
+    value = os.getenv(name, "").strip() or default
+    return value.lower() in {"1", "true", "yes", "on"}
 
 def get_bark_internal_url() -> str:
     return _first_non_empty(
@@ -328,6 +343,11 @@ def sso_autocreate_enabled() -> bool:
     # 默认关：未映射的 portal 用户看到"尚未开通"，由管理员手动映射
     return _env_enabled("SZYYW_SSO_AUTOCREATE", "0")
 
+def sso_adopt_by_name_enabled() -> bool:
+    # 默认关：按 X-User 同名认领未映射的本地账号。portal 用户名用户自己能改，
+    # 开着就等于谁改成某个本地用户名谁就能接管那个账号；只在一次性迁移旧账号时临时打开
+    return _env_enabled("SZYYW_SSO_ADOPT_BY_NAME", "0")
+
 def external_url(path: str) -> str:
     """浏览器看到的绝对地址（Caddy 会带 X-Forwarded-Proto/Host），用作 portal 登录的 rd。"""
     proto = request.headers.get("X-Forwarded-Proto", "").split(",")[0].strip()
@@ -349,7 +369,11 @@ def resolve_sso_account():
         result = (None, "no_identity")
     else:
         account, action = resolve_portal_account(
-            portal_sub, ident.user, ident.role, autocreate=sso_autocreate_enabled()
+            portal_sub,
+            ident.user,
+            ident.role,
+            autocreate=sso_autocreate_enabled(),
+            adopt_by_name=sso_adopt_by_name_enabled(),
         )
         if action == "adopted":
             log_tracker(_fmt('[SSO]', f"portal 用户 {ident.user}（sub {portal_sub}）认领同名本地账号 id={account['id']}"))
@@ -416,14 +440,71 @@ def _ensure_nl(s: str) -> str:
 def _fmt(tag: str, message: str) -> str:
     return f"{_ts()} {tag} {message}".rstrip() + "\n"
 
-def _append_log(buffer: io.StringIO, filepath: str, event: str, line: str):
-    buffer.write(line)
-    with open(filepath, 'a') as f:
-        f.write(line)
+# --- 日志：文件按大小轮转，内存只留尾部 ---
+# 以前三个日志文件无限增长，启动时整份读进内存、每次 Socket 连接整份下发，越跑越慢。
+LOG_MAX_BYTES = 2 * 1024 * 1024   # 单个日志文件上限
+LOG_BACKUP_COUNT = 3              # 轮转保留的旧文件份数（xxx.log.1 ~ xxx.log.3）
+LOG_TAIL_LINES = 500              # 内存缓存与连接时下发的行数，与前端 MAX_LOG_LINES 一致
+LOG_TAIL_READ_BYTES = 256 * 1024  # 启动时只读文件末尾这么多字节来恢复尾部
+
+def _rotate_log_file(filepath: str, max_bytes: int = LOG_MAX_BYTES, backup_count: int = LOG_BACKUP_COUNT):
+    """文件超过上限就整体后移：xxx.log → .1 → .2 …，最旧的一份被覆盖。"""
     try:
-        socketio.emit(event, {'data': line})
-    except Exception:
-        pass
+        if os.path.getsize(filepath) < max_bytes:
+            return
+    except OSError:
+        return
+    for index in range(backup_count - 1, 0, -1):
+        src = f"{filepath}.{index}"
+        if os.path.exists(src):
+            os.replace(src, f"{filepath}.{index + 1}")
+    if backup_count > 0:
+        os.replace(filepath, f"{filepath}.1")
+    else:
+        os.remove(filepath)
+
+def _read_tail_lines(filepath: str, limit: int = LOG_TAIL_LINES) -> list:
+    try:
+        with open(filepath, 'rb') as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - LOG_TAIL_READ_BYTES))
+            data = f.read()
+    except OSError:
+        return []
+    lines = data.decode('utf-8', errors='replace').splitlines(keepends=True)
+    if size > LOG_TAIL_READ_BYTES and lines:
+        # 从文件中间截断读的，第一行大概率不完整
+        lines = lines[1:]
+    return lines[-limit:]
+
+class LogChannel:
+    """一类日志：追加写文件（带轮转）+ 内存尾部缓存 + 推送给前端。"""
+
+    def __init__(self, filepath: str, event: str, tail_lines: int = LOG_TAIL_LINES):
+        self.filepath = filepath
+        self.event = event
+        self.lines = deque(_read_tail_lines(filepath, tail_lines), maxlen=tail_lines)
+        self.lock = threading.Lock()
+
+    def append(self, line: str):
+        with self.lock:
+            self.lines.append(line)
+            try:
+                _rotate_log_file(self.filepath, LOG_MAX_BYTES, LOG_BACKUP_COUNT)
+                with open(self.filepath, 'a', encoding='utf-8') as f:
+                    f.write(line)
+            except OSError:
+                # 写盘失败不能影响业务流程，内存里仍有这一行
+                pass
+        try:
+            socketio.emit(self.event, {'data': line})
+        except Exception:
+            pass
+
+    def tail(self) -> str:
+        with self.lock:
+            return "".join(self.lines)
 
 app = Flask(__name__, template_folder=os.path.join(os.path.dirname(__file__), 'templates'),
             static_folder=os.path.join(os.path.dirname(__file__), 'static'))
@@ -480,34 +561,24 @@ def emit_keepalive_status(running: bool, configured: bool, url: str):
     })
 
 # --- 分离的日志缓存及文件 ---
-tracker_log_buffer = io.StringIO()
-bark_log_buffer = io.StringIO()
-remote_bark_log_buffer = io.StringIO()
 TRACKER_LOG_FILE = os.path.join(LOG_DIR, 'tracker.log')
 BARK_LOG_FILE = os.path.join(LOG_DIR, 'bark.log')
 REMOTE_BARK_LOG_FILE = os.path.join(LOG_DIR, 'remote_bark.log')
+tracker_log = LogChannel(TRACKER_LOG_FILE, 'tracker_log')
+bark_log = LogChannel(BARK_LOG_FILE, 'bark_log')
+remote_bark_log = LogChannel(REMOTE_BARK_LOG_FILE, 'remote_bark_log')
 login_attempts = {}
 login_attempts_lock = threading.Lock()
 
-if os.path.exists(TRACKER_LOG_FILE):
-    with open(TRACKER_LOG_FILE, 'r') as f:
-        tracker_log_buffer.write(f.read())
-if os.path.exists(BARK_LOG_FILE):
-    with open(BARK_LOG_FILE, 'r') as f:
-        bark_log_buffer.write(f.read())
-if os.path.exists(REMOTE_BARK_LOG_FILE):
-    with open(REMOTE_BARK_LOG_FILE, 'r') as f:
-        remote_bark_log_buffer.write(f.read())
-
 def log_remote_bark(line: str):
     """写入远程 Bark 健康检测日志，并推送到前端。"""
-    _append_log(remote_bark_log_buffer, REMOTE_BARK_LOG_FILE, 'remote_bark_log', _ensure_nl(line))
+    remote_bark_log.append(_ensure_nl(line))
 
 def log_tracker(line: str):
-    _append_log(tracker_log_buffer, TRACKER_LOG_FILE, 'tracker_log', _ensure_nl(line))
+    tracker_log.append(_ensure_nl(line))
 
 def log_bark(line: str):
-    _append_log(bark_log_buffer, BARK_LOG_FILE, 'bark_log', _ensure_nl(line))
+    bark_log.append(_ensure_nl(line))
 
 def get_trusted_proxy_count() -> int:
     try:
@@ -810,11 +881,18 @@ def build_env_apply_note(keys) -> str:
         field = SYSTEM_ENV_FIELDS.get(key) or {}
         return f"{field.get('label', key)}（{key}）"
 
-    live = [label_of(key) for key in keys if (SYSTEM_ENV_FIELDS.get(key) or {}).get("apply") == "live"]
-    restart = [label_of(key) for key in keys if (SYSTEM_ENV_FIELDS.get(key) or {}).get("apply") == "restart"]
+    def field_of(key: str) -> dict:
+        return SYSTEM_ENV_FIELDS.get(key) or {}
+
+    live = [label_of(key) for key in keys if field_of(key).get("apply") == "live" and not field_of(key).get("tracker")]
+    # 追踪脚本是独立子进程，每次查询前重读 .env，所以对它而言是"下次查询时"生效
+    tracker = [label_of(key) for key in keys if field_of(key).get("apply") == "live" and field_of(key).get("tracker")]
+    restart = [label_of(key) for key in keys if field_of(key).get("apply") == "restart"]
     parts = []
     if live:
         parts.append("已即时生效：" + "、".join(live))
+    if tracker:
+        parts.append("控制台已即时生效，追踪脚本在下次查询时读取新值：" + "、".join(tracker))
     if restart:
         parts.append("需重启 Web 服务后生效：" + "、".join(restart))
     return "；".join(parts)
@@ -908,11 +986,17 @@ def build_bark_test_account(source_account: dict | None, data) -> dict:
             data.get("bark_url_enabled"),
             default=bool(source.get("bark_url_enabled")),
         )
-        bark_keys = data.get("bark_keys") or data.get("bark_key", "")
+        # 按键是否存在判断：表单里把 Keys 清空后测试，应当提示"没有 Keys"，而不是偷偷用已保存的
+        if "bark_keys" in data:
+            bark_keys = data.get("bark_keys") or ""
+        elif "bark_key" in data:
+            bark_keys = data.get("bark_key") or ""
+        else:
+            bark_keys = source.get("bark_keys") or source.get("bark_key", "")
 
     return {
         "display_name": str(data.get("display_name", source.get("display_name", "")) or "").strip() or source.get("display_name") or "当前用户",
-        "bark_keys": bark_keys or source.get("bark_keys") or source.get("bark_key", ""),
+        "bark_keys": bark_keys,
         "bark_query_params": str(data.get("bark_query_params", source.get("bark_query_params", "")) or "").strip(),
         "bark_url_enabled": bark_url_enabled,
         "tracking_url": resolve_test_tracking_url(data, source),
@@ -967,8 +1051,8 @@ def index():
     if viewer_state["is_admin"]:
         system_env = build_system_env()
         user_state = build_user_state()
-        initial_tracker_log = tracker_log_buffer.getvalue()
-        initial_bark_log = bark_log_buffer.getvalue()
+        initial_tracker_log = tracker_log.tail()
+        initial_bark_log = bark_log.tail()
         return render_template(
             'index.html',
             viewer_state=viewer_state,
@@ -1009,17 +1093,19 @@ def test_connect(auth=None):
         'last_at': keepalive_last_at
     })
     emit('bark_server_status', {'running': bark_server_process is not None and bark_server_process.poll() is None})
-    emit('full_tracker_log', {'data': tracker_log_buffer.getvalue()})
-    emit('full_bark_log', {'data': bark_log_buffer.getvalue()})
-    emit('full_remote_bark_log', {'data': remote_bark_log_buffer.getvalue()})
+    # 只下发最近 LOG_TAIL_LINES 行，完整历史在日志文件里
+    emit('full_tracker_log', {'data': tracker_log.tail()})
+    emit('full_bark_log', {'data': bark_log.tail()})
+    emit('full_remote_bark_log', {'data': remote_bark_log.tail()})
 
 # --- 追踪脚本控制 ---
 
-def read_script_output():
-    """从追踪脚本进程的管道中实时读取输出，并发送到独立的事件。"""
+def read_script_output(proc):
+    """从追踪脚本进程的管道中实时读取输出，并发送到独立的事件。
+    只操作启动时捕获的 proc：停止后立刻再启动时，全局 script_process 已经是新进程，
+    旧读线程收尾若去引用全局变量，会把新进程的管道关掉、把状态清成"未运行"。"""
     global script_process
-    if script_process is None: return
-    stream = script_process.stdout
+    stream = proc.stdout
     if stream is None:
         return
     try:
@@ -1028,20 +1114,23 @@ def read_script_output():
     except Exception as e:
         log_tracker(_fmt('[TRACKER]', f"ERROR: 读取脚本输出时发生错误: {e}"))
     finally:
-        # 停止保活线程
-        stop_keepalive()
-        if script_process and script_process.stdout:
-            script_process.stdout.close()
-
-        return_code = script_process.wait() if script_process else 'N/A'
+        try:
+            stream.close()
+        except Exception:
+            pass
+        return_code = proc.wait()
         log_tracker(_fmt('[TRACKER]', f"脚本已停止，返回码: {return_code}"))
-        socketio.emit('script_status', {'running': False})
-        script_process = None
+        # 已经有新进程接班时，状态和保活都归新进程管，这里只记一笔日志
+        if script_process is proc:
+            # 停止保活线程
+            stop_keepalive()
+            socketio.emit('script_status', {'running': False})
+            script_process = None
 
-        # 自动模式下，意外退出（非用户主动停止）10 秒后自动拉起
-        if tracker_auto_start_enabled() and not script_stop_requested:
-            log_tracker(_fmt('[SYSTEM]', "检测到脚本意外退出，10 秒后自动重启。"))
-            threading.Thread(target=_delayed_tracker_restart, daemon=True).start()
+            # 自动模式下，意外退出（非用户主动停止）10 秒后自动拉起
+            if tracker_auto_start_enabled() and not script_stop_requested:
+                log_tracker(_fmt('[SYSTEM]', "检测到脚本意外退出，10 秒后自动重启。"))
+                threading.Thread(target=_delayed_tracker_restart, daemon=True).start()
 
 def tracker_auto_start_enabled() -> bool:
     return _env_enabled("AUTO_START_TRACKER", "1")
@@ -1072,7 +1161,7 @@ def start_tracker_script(start_reason: str = "manual") -> bool:
         socketio.emit('script_status', {'running': True})
         start_keepalive()
 
-        script_thread = threading.Thread(target=read_script_output, daemon=True)
+        script_thread = threading.Thread(target=read_script_output, args=(script_process,), daemon=True)
         script_thread.start()
         return True
     except Exception as e:
@@ -1174,11 +1263,11 @@ def stop_script():
 
 # --- Bark 服务控制 ---
 
-def read_bark_output():
-    """从 Bark 服务进程的管道中实时读取输出，并发送到独立的事件。"""
+def read_bark_output(proc):
+    """从 Bark 服务进程的管道中实时读取输出，并发送到独立的事件。
+    与 read_script_output 一样只操作自己捕获的 proc，不碰可能已被替换的全局变量。"""
     global bark_server_process
-    if bark_server_process is None: return
-    stream = bark_server_process.stdout
+    stream = proc.stdout
     if stream is None:
         return
     try:
@@ -1187,13 +1276,15 @@ def read_bark_output():
     except Exception as e:
         log_bark(_fmt('[BARK]', f"ERROR: 读取服务输出时发生错误: {e}"))
     finally:
-        if bark_server_process and bark_server_process.stdout:
-            bark_server_process.stdout.close()
-            
-        return_code = bark_server_process.wait() if bark_server_process else 'N/A'
+        try:
+            stream.close()
+        except Exception:
+            pass
+        return_code = proc.wait()
         log_bark(_fmt('[BARK]', f"服务已停止，返回码: {return_code}"))
-        socketio.emit('bark_server_status', {'running': False})
-        bark_server_process = None
+        if bark_server_process is proc:
+            socketio.emit('bark_server_status', {'running': False})
+            bark_server_process = None
 
 def local_bark_enabled() -> bool:
     # VPS 容器部署下 Bark 由 compose 独立管理，设 LOCAL_BARK_ENABLED=0
@@ -1230,7 +1321,7 @@ def start_local_bark_server(start_reason: str = "manual") -> bool:
         log_bark(_fmt('[BARK]', f"服务已启动。监听地址: {get_bark_bind_address()}"))
         socketio.emit('bark_server_status', {'running': True})
         
-        bark_server_thread = threading.Thread(target=read_bark_output, daemon=True)
+        bark_server_thread = threading.Thread(target=read_bark_output, args=(bark_server_process,), daemon=True)
         bark_server_thread.start()
         return True
     except Exception as e:
@@ -1258,6 +1349,24 @@ def stop_bark_server():
 
 # --- 环境变量更新 ---
 
+# 无引号写入 .env 时会出问题的字符：空白（截断 / 换行注入）、# （被当成注释）、
+# 引号与反斜杠（解析器会去引号 / 转义，与容器原样加载的结果不一致）、$ 与反引号（变量展开）
+ENV_UNSAFE_CHARS = set("#'\"\\$`")
+
+def normalize_env_value(key: str, value) -> str:
+    """把系统设置提交的值规整成可安全无引号写入 .env 的字符串，不能安全写入时抛 ValueError。"""
+    label = (SYSTEM_ENV_FIELDS.get(key) or {}).get("label", key)
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if not isinstance(value, (str, int, float)):
+        raise ValueError(f"{label}（{key}）的值格式不正确。")
+    text = str(value).strip()
+    if any(ch.isspace() for ch in text) or any(ch in ENV_UNSAFE_CHARS for ch in text):
+        raise ValueError(f"{label}（{key}）不能包含空白或 # ' \" \\ $ ` 等字符。")
+    return text
+
 @app.route('/update_env', methods=['POST'])
 @admin_required
 def update_env():
@@ -1271,28 +1380,43 @@ def update_env():
     if not os.path.exists(DOTENV_PATH):
         open(DOTENV_PATH, 'a').close()
 
-    system_changes = {key: value for key, value in data.items() if key in SYSTEM_ENV_KEYS}
-    if not system_changes:
+    raw_changes = {key: value for key, value in data.items() if key in SYSTEM_ENV_KEYS}
+    if not raw_changes:
         return jsonify({"status": "error", "message": "没有可更新的系统配置。"}), 400
+
+    # 先整体校验再写：有一项不合法就一项都不写，避免写一半
+    system_changes = {}
+    invalid = []
+    for key, value in raw_changes.items():
+        try:
+            system_changes[key] = normalize_env_value(key, value)
+        except ValueError as exc:
+            invalid.append(str(exc))
+    if invalid:
+        return jsonify({"status": "error", "message": "；".join(invalid)}), 400
 
     updated_keys = []
     errors = []
     for key, value in system_changes.items():
         try:
-            set_key(DOTENV_PATH, key, value)
+            # 不加引号：生产容器按原样（raw）把这个文件加载成环境变量，引号会原样留在值里，
+            # 写成 KEY='1' 会让 _env_enabled 之类的判断全部失效。能否安全无引号写入已在上面校验过。
+            set_key(DOTENV_PATH, key, value, quote_mode="never")
             updated_keys.append(key)
+            # 留空也要写进当前进程：否则会继续用启动时的旧环境变量，清空不生效
+            os.environ[key] = value
         except Exception as e:
             errors.append(f"更新 {key} 失败: {e}")
     updated_count = len(updated_keys)
 
-    for key, value in system_changes.items():
-        if isinstance(value, str) and value.strip() == "":
-            continue
-        os.environ[key] = str(value)
-
-    # 若更新了保活相关参数，刷新前端状态显示
-    if "PUBLIC_URL" in system_changes or "KEEPALIVE_INTERVAL" in system_changes:
+    # 若更新了保活相关参数，按新值调整保活线程并刷新前端状态显示
+    if "PUBLIC_URL" in updated_keys or "KEEPALIVE_INTERVAL" in updated_keys:
         public_url = get_public_url()
+        if not public_url:
+            stop_keepalive()
+        elif script_process is not None and script_process.poll() is None and not keepalive_is_running():
+            # 保活只在追踪脚本运行期间工作；运行中新填了地址就立刻拉起，不必重启脚本
+            start_keepalive()
         emit_keepalive_status(keepalive_is_running(), bool(public_url), public_url)
 
     if updated_count > 0:
@@ -1372,6 +1496,16 @@ def api_get_user(user_id: int):
 @admin_required
 def api_update_user(user_id: int):
     data = strip_password_fields(request.get_json() or {})
+    if sso_enabled():
+        # SSO 下授权角色以 X-Role 为准，库里的 role 不参与授权；改它不会生效，干脆不接受
+        data.pop("role", None)
+    current = current_account()
+    if current and int(current["id"]) == int(user_id):
+        # 防止管理员在用户管理里把自己锁在门外
+        if "login_enabled" in data and not _bool_from_input(data.get("login_enabled"), default=True):
+            return jsonify({"status": "error", "message": "不能关闭当前登录账号自己的登录。"}), 400
+        if "role" in data and str(data.get("role") or "").strip().lower() != "admin":
+            return jsonify({"status": "error", "message": "不能降低当前登录账号自己的权限。"}), 400
     try:
         user = update_account(user_id, data, actor_role="admin")
         return jsonify({
@@ -1427,6 +1561,13 @@ def api_user_test_push(user_id: int):
         return jsonify({"status": "error", "message": str(exc)}), 400
 
 
+def task_created_message(task: dict) -> str:
+    # 同单号在追踪中会被 storage 拒绝；能走到这里要么是新建，要么是从归档里恢复
+    if task.get("revived"):
+        return "该单号曾归档，已恢复追踪并更新设置。"
+    return "追踪任务已添加。"
+
+
 TASK_INPUT_KEYS = ("tracking_number", "label", "check_interval", "enabled", "archived")
 
 
@@ -1465,7 +1606,7 @@ def api_create_task(user_id: int):
     data = request.get_json() or {}
     try:
         task = create_task(user_id, build_task_payload(data))
-        return build_task_success("追踪任务已添加。", task)
+        return build_task_success(task_created_message(task), task)
     except Exception as exc:
         return jsonify({"status": "error", "message": str(exc)}), 400
 
@@ -1582,8 +1723,8 @@ def task_form_payload() -> dict:
 def me_create_task_form():
     account = current_account()
     try:
-        create_task(account["id"], task_form_payload())
-        return redirect(url_for('index', status='success', message='追踪任务已添加。'))
+        task = create_task(account["id"], task_form_payload())
+        return redirect(url_for('index', status='success', message=task_created_message(task)))
     except Exception as exc:
         return redirect(url_for('index', status='error', message=str(exc)))
 

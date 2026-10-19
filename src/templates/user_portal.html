@@ -80,7 +80,7 @@
                 </label>
                 <label class="task-field">
                   <span>查询间隔（秒）</span>
-                  <input name="check_interval" type="number" min="30" class="field" value="{{ task.check_interval }}" />
+                  <input name="check_interval" type="number" min="30" max="604800" class="field" value="{{ task.check_interval }}" />
                 </label>
               </div>
               <label class="switch-row">
@@ -114,7 +114,7 @@
               </label>
               <label class="task-field">
                 <span>查询间隔（秒）</span>
-                <input name="check_interval" type="number" min="30" class="field" value="300" />
+                <input name="check_interval" type="number" min="30" max="604800" class="field" value="300" />
               </label>
             </div>
             <label class="switch-row">

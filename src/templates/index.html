@@ -281,6 +281,7 @@
                   <input id="createPassword" type="password" class="field" v-model="newUserForm.password" />
                 </div>
                 {%- endif %}
+                {%- if not sso_on %}
                 <div>
                   <label for="createRole">角色</label>
                   <select id="createRole" v-model="newUserForm.role" class="field">
@@ -288,6 +289,7 @@
                     <option value="admin">admin</option>
                   </select>
                 </div>
+                {%- endif %}
                 <div class="full switch-group">
                   <label class="switch-row">
                     <input type="checkbox" class="switch" v-model="newUserForm.login_enabled" />
@@ -355,10 +357,20 @@
               </div>
               <div>
                 <label for="userRole">角色</label>
-                <select id="userRole" v-model="userForm.role" class="field">
+                {%- if sso_on %}
+                <!-- SSO 下权限以门户下发的 X-Role 为准，库里的角色不参与授权，改了也不生效 -->
+                <select id="userRole" v-model="userForm.role" class="field" disabled>
                   <option value="user">user</option>
                   <option value="admin">admin</option>
                 </select>
+                <p class="hint">统一登录下角色由门户「应用与权限」决定，这里不可修改。</p>
+                {%- else %}
+                <select id="userRole" v-model="userForm.role" class="field" :disabled="selectedUserId === viewerAccountId">
+                  <option value="user">user</option>
+                  <option value="admin">admin</option>
+                </select>
+                <p v-if="selectedUserId === viewerAccountId" class="hint">不能修改当前登录账号自己的角色。</p>
+                {%- endif %}
               </div>
               <div class="full">
                 <label for="userNote">备注</label>
@@ -378,9 +390,9 @@
                   <input type="checkbox" class="switch" v-model="userForm.bark_url_enabled" />
                   推送附带追踪链接
                 </label>
-                <label class="switch-row">
-                  <input type="checkbox" class="switch" v-model="userForm.login_enabled" />
-                  允许登录
+                <label :class="['switch-row', { 'is-locked': selectedUserId === viewerAccountId }]">
+                  <input type="checkbox" class="switch" v-model="userForm.login_enabled" :disabled="selectedUserId === viewerAccountId" />
+                  [[ selectedUserId === viewerAccountId ? '允许登录（当前登录账号，不能关闭）' : '允许登录' ]]
                 </label>
               </div>
               {%- if sso_on %}
@@ -454,7 +466,7 @@
                   </label>
                   <label class="task-field">
                     <span>查询间隔（秒）</span>
-                    <input type="number" min="30" class="field" v-model.number="taskDrafts[task.id].check_interval" />
+                    <input type="number" min="30" max="604800" class="field" v-model.number="taskDrafts[task.id].check_interval" />
                   </label>
                 </div>
                 <p class="task-meta">最近结果 [[ task.last_error || task.last_tracking_info || '暂无记录' ]]</p>
@@ -482,7 +494,7 @@
                 </label>
                 <label class="task-field">
                   <span>查询间隔（秒）</span>
-                  <input type="number" min="30" class="field" v-model.number="newTaskForm.check_interval" />
+                  <input type="number" min="30" max="604800" class="field" v-model.number="newTaskForm.check_interval" />
                 </label>
               </div>
               <label class="switch-row">
@@ -568,7 +580,7 @@
                   </label>
                   <label class="task-field">
                     <span>查询间隔（秒）</span>
-                    <input type="number" min="30" class="field" v-model.number="taskDrafts[task.id].check_interval" />
+                    <input type="number" min="30" max="604800" class="field" v-model.number="taskDrafts[task.id].check_interval" />
                   </label>
                 </div>
                 <p class="task-meta">最近结果 [[ task.last_error || task.last_tracking_info || '暂无记录' ]]</p>
@@ -596,7 +608,7 @@
                 </label>
                 <label class="task-field">
                   <span>查询间隔（秒）</span>
-                  <input type="number" min="30" class="field" v-model.number="myTaskForm.check_interval" />
+                  <input type="number" min="30" max="604800" class="field" v-model.number="myTaskForm.check_interval" />
                 </label>
               </div>
               <label class="switch-row">
