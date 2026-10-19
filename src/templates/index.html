@@ -153,9 +153,6 @@
                   <button type="button" class="btn btn-small" @click="startScript" :disabled="script.running">启动</button>
                   <button type="button" class="btn-ghost btn-small danger" @click="stopScript" :disabled="!script.running">停止</button>
                 </div>
-                <p class="hint" v-if="keepalive.configured">
-                  保活 [[ keepalive.running ? '已启用' : '未启用' ]] · [[ keepalive.url ]]
-                </p>
               </div>
 
               <div class="service-card inner" v-if="barkHelp.local_bark_enabled">
@@ -202,6 +199,8 @@
             <p class="hint">这里编辑的是全局 <code>.env</code>。用户自己的单号、Bark Keys 和推送参数不在这里改。</p>
             <p class="hint">
               字段右上角标着生效时机：<span class="pill green">即时生效</span> 保存即可，
+              <span class="pill cyan">脚本下次查询时生效</span> 控制台保存即生效、追踪脚本在下次查询前重读，
+              <span class="pill violet">下次启动 Bark 时生效</span> 要等本地 Bark 重新启动，
               <span class="pill amber">需重启 Web</span> 要重启控制台进程才会被读到。
             </p>
           </div>
@@ -221,18 +220,16 @@
                         [[ field.label ]]
                         <span v-if="field.legacy" class="pill">遗留</span>
                       </label>
-                      <span :class="['pill', field.apply === 'live' ? 'green' : 'amber']">
-                        [[ field.apply === 'live' ? '即时生效' : '需重启 Web' ]]
-                      </span>
+                      <span :class="['pill', field.apply_tone]">[[ field.apply_label ]]</span>
                     </div>
 
                     <label v-if="field.type === 'bool'" :class="['switch-row', { 'is-locked': envFieldLocked(field) }]">
                       <input type="checkbox" class="switch" :id="'env-' + field.key" :checked="envBoolValue(field)" :disabled="envFieldLocked(field)" @change="setEnvBool(field, $event.target.checked)" />
                       [[ envFieldLocked(field) ? '需先打开上一项' : (envBoolValue(field) ? '已开启' : '已关闭') ]]
                     </label>
-                    <input v-else type="text" class="field" :id="'env-' + field.key" :placeholder="field.placeholder || ''" v-model="envVars[field.key]" />
+                    <input v-else type="text" class="field" :id="'env-' + field.key" :placeholder="field.placeholder || ''" :inputmode="field.type === 'int' ? 'numeric' : (field.type === 'url' ? 'url' : 'text')" autocomplete="off" v-model="envVars[field.key]" />
 
-                    <p class="env-field-desc">[[ field.desc ]]</p>
+                    <p class="env-field-desc">[[ field.desc ]]<template v-if="field.type === 'int'">（范围 [[ field.min ]]～[[ field.max ]]）</template></p>
                     <code class="env-key">[[ field.key ]]</code>
                   </div>
                 </div>

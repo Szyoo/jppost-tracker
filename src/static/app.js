@@ -84,7 +84,7 @@ const app = createApp({
             display_name: user.display_name || user.name || '',
             role: user.role || 'user',
             note: user.note || '',
-            bark_keys: user.bark_keys || user.bark_key || '',
+            bark_keys: user.bark_keys || '',
             bark_query_params: user.bark_query_params || '?sound=minuet&level=timeSensitive',
             bark_url_enabled: Boolean(user.bark_url_enabled),
             login_enabled: user.login_enabled !== false,
@@ -179,15 +179,6 @@ const app = createApp({
         );
 
         const script = ref({ running: false, logs: [] });
-        const keepalive = ref({
-            running: false,
-            configured: false,
-            url: '',
-            state: 'idle',
-            last_code: null,
-            last_error: null,
-            last_at: ''
-        });
         const bark = ref({ running: false, logs: [] });
         const remoteBarkLogs = ref([]);
         const remoteBark = ref({
@@ -219,29 +210,38 @@ const app = createApp({
         const selectedUserArchivedTasks = computed(() => selectedUser.value?.archived_tasks || []);
         const selectedUserTaskCount = computed(() => Number(selectedUser.value?.task_count || 0));
         const selectedUserActiveTaskCount = computed(() => Number(selectedUser.value?.active_task_count || 0));
-        const selectedUserErrorTaskCount = computed(
-            () => selectedUserTasks.value.filter((task) => task.last_error).length
-        );
+        const selectedUserErrorTaskCount = computed(() => countErrorTasks(selectedUserTasks.value));
 
-        const selectedUserTrackingState = computed(() => {
-            if (!selectedUser.value) {
-                return { tone: '', label: '未选择账号' };
+        // 三处"追踪状态"徽章（首页 / 选中账号 / 我的设置）共用的判定，顺序与 taskState 一致：
+        // 异常最优先，脚本没跑只是"还没开始"。各处只提供自己的数量与文案。
+        const summarizeTracking = ({ total, active, errors, emptyLabel, okLabel }) => {
+            if (!total) {
+                return { tone: '', label: emptyLabel };
             }
-            if (!selectedUserTaskCount.value) {
-                return { tone: '', label: '待添加任务' };
+            if (errors) {
+                return { tone: 'red', label: `${errors} 个任务异常` };
             }
-            // 判定顺序与 taskState 保持一致：异常最优先，脚本没跑只是"还没开始"
-            if (selectedUserErrorTaskCount.value) {
-                return { tone: 'red', label: `${selectedUserErrorTaskCount.value} 个任务异常` };
-            }
-            if (!selectedUserActiveTaskCount.value) {
+            if (!active) {
                 return { tone: '', label: '任务全部停用' };
             }
             if (!script.value.running) {
                 return { tone: 'amber', label: '追踪脚本未运行' };
             }
-            return { tone: 'green', label: `追踪中 ${selectedUserActiveTaskCount.value} 个` };
-        });
+            return { tone: 'green', label: `${okLabel} ${active} 个` };
+        };
+        const countErrorTasks = (tasks) => tasks.filter((task) => taskState(task).key === 'error').length;
+
+        const selectedUserTrackingState = computed(() =>
+            selectedUser.value
+                ? summarizeTracking({
+                      total: selectedUserTaskCount.value,
+                      active: selectedUserActiveTaskCount.value,
+                      errors: selectedUserErrorTaskCount.value,
+                      emptyLabel: '待添加任务',
+                      okLabel: '追踪中',
+                  })
+                : { tone: '', label: '未选择账号' }
+        );
 
         // 任务状态的唯一判据：weight 兼作首页排序权重，越小越该被先看到
         const taskState = (task) => {
@@ -285,21 +285,15 @@ const app = createApp({
             () => globalTasks.value.filter((task) => taskState(task).key === 'error').length
         );
 
-        const globalTrackingState = computed(() => {
-            if (!totalTaskCount.value) {
-                return { tone: '', label: '还没有任务' };
-            }
-            if (globalErrorTaskCount.value) {
-                return { tone: 'red', label: `${globalErrorTaskCount.value} 个任务异常` };
-            }
-            if (!activeTaskCount.value) {
-                return { tone: '', label: '任务全部停用' };
-            }
-            if (!script.value.running) {
-                return { tone: 'amber', label: '追踪脚本未运行' };
-            }
-            return { tone: 'green', label: `正常追踪 ${activeTaskCount.value} 个` };
-        });
+        const globalTrackingState = computed(() =>
+            summarizeTracking({
+                total: totalTaskCount.value,
+                active: activeTaskCount.value,
+                errors: globalErrorTaskCount.value,
+                emptyLabel: '还没有任务',
+                okLabel: '正常追踪',
+            })
+        );
 
         const overviewFilter = ref('all');
 
@@ -347,25 +341,19 @@ const app = createApp({
         const meArchivedTasks = computed(() => meAccount.value?.archived_tasks || []);
         const meTaskCount = computed(() => Number(meAccount.value?.task_count || 0));
         const meActiveTaskCount = computed(() => Number(meAccount.value?.active_task_count || 0));
-        const meErrorTaskCount = computed(() => meTasks.value.filter((task) => task.last_error).length);
+        const meErrorTaskCount = computed(() => countErrorTasks(meTasks.value));
         // 设备数跟着输入框实时变，比保存后的账号字段更贴合"我现在填了几个"
         const meDeviceCount = computed(() => countBarkKeys(meForm.value.bark_keys));
 
-        const meTrackingState = computed(() => {
-            if (!meTaskCount.value) {
-                return { tone: '', label: '待添加任务' };
-            }
-            if (meErrorTaskCount.value) {
-                return { tone: 'red', label: `${meErrorTaskCount.value} 个任务异常` };
-            }
-            if (!meActiveTaskCount.value) {
-                return { tone: '', label: '任务全部停用' };
-            }
-            if (!script.value.running) {
-                return { tone: 'amber', label: '追踪脚本未运行' };
-            }
-            return { tone: 'green', label: `追踪中 ${meActiveTaskCount.value} 个` };
-        });
+        const meTrackingState = computed(() =>
+            summarizeTracking({
+                total: meTaskCount.value,
+                active: meActiveTaskCount.value,
+                errors: meErrorTaskCount.value,
+                emptyLabel: '待添加任务',
+                okLabel: '追踪中',
+            })
+        );
 
         // 任务操作后不重建账号表单，否则会把正在编辑的账号字段冲掉
         const syncUserState = (state, { keepUserForm = false } = {}) => {
@@ -752,9 +740,6 @@ const app = createApp({
             socket.value.on('script_status', (data) => {
                 script.value.running = data.running;
             });
-            socket.value.on('keepalive_status', (data) => {
-                keepalive.value = { ...keepalive.value, ...data };
-            });
             socket.value.on('bark_server_status', (data) => {
                 bark.value.running = data.running;
             });
@@ -861,7 +846,6 @@ const app = createApp({
             saveMe,
             sendMeTestPush,
             script,
-            keepalive,
             bark,
             remoteBark,
             remoteBarkLogs,
