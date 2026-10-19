@@ -47,6 +47,29 @@ tracking_tasks —— 追什么（一个账号 N 条）
 
 `check_interval` 后端强制 30 秒到 7 天，超出范围报错。
 
+## 任务时间线 task_events
+
+```
+task_events —— 发生过什么（一个任务 N 条）
+  id, task_id →tracking_tasks.id (ON DELETE CASCADE), account_id,
+  tracking_number, kind, status, detail, created_at
+  INDEX(task_id, created_at), INDEX(created_at)
+```
+
+- `kind` 穷举：`status_change` 状态变化 / `push_ok` 推送成功 / `push_fail` 推送失败 /
+  `query_error` 查询出错 / `query_recovered` 查询恢复。定义在 `storage.EVENT_KIND_META`，
+  写入时校验；前端映射在 `src/static/timeline.js`，测试比对两边必须一致。
+- 写入都在 `update_task_state` 的同一事务里，且带抓取时的单号做校验：抓取期间单号被改了，整次回写作废，防止串号。
+  `tracking_number` 记事件发生时的单号，任务改单号后旧事件仍留在这条任务下。
+- 去重：推送失败时 `last_tracking_info` 不落库，重试会带着同一批记录回来——`status_change` 以本单号最近一条为界只追加之后的；
+  同一状态连续推送失败只记第一次；查询出错只在「正常→出错」「出错→恢复」切换时各记一条。
+- tracker 解析履历表的全部记录，两次轮询之间走过的中间状态都会记成 `status_change`（首次抓取记下全部历史）。
+- 保留：每个任务最多 500 条，全表只留 180 天，写入时顺手清理。
+- 分页接口 `GET /api/tasks/<id>/events?limit=&before=`，按 id 倒序（id 与写入时间同序），本人或管理员可看。
+
+建表在 `ensure_storage` 里排在 v1→v2 迁移之后（`CREATE TABLE IF NOT EXISTS`，已有库启动时自动补表）。
+以后若要重建 `tracking_tasks`，下面那个外键坑同样适用于 `task_events`。
+
 ## v1 → v2 迁移
 
 `ensure_storage()` 启动时自动跑，幂等（判据：`accounts` 是否还有 `tracking_number` 列）。

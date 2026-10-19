@@ -18,6 +18,22 @@ DB_PATH = os.path.join(DATA_DIR, "app.db")
 MIN_CHECK_INTERVAL = 30
 MAX_CHECK_INTERVAL = 7 * 24 * 3600
 
+# 任务事件（时间线）的类型穷举：写入时校验，前端文案/配色映射与之一一对应（测试会比对两边）。
+EVENT_KIND_META = {
+    "status_change": {"label": "状态变化", "tone": "violet"},
+    "push_ok": {"label": "推送成功", "tone": "green"},
+    "push_fail": {"label": "推送失败", "tone": "red"},
+    "query_error": {"label": "查询出错", "tone": "amber"},
+    "query_recovered": {"label": "查询恢复", "tone": "cyan"},
+}
+EVENT_KINDS = frozenset(EVENT_KIND_META)
+
+# 事件保留策略：每个任务最多留这么多条，且整体只留最近这么多天；写入时顺手清理。
+EVENT_MAX_PER_TASK = 500
+EVENT_RETENTION_DAYS = 180
+# 事件分页每页上限
+EVENT_PAGE_MAX = 100
+
 PROFILE_DEFAULTS = {
     "check_interval": 300,
     "bark_keys": "",
@@ -279,6 +295,37 @@ def _migrate_portal_sub_column(conn):
     )
 
 
+def _ensure_events_schema(conn):
+    """任务时间线：状态变化、推送结果、查询出错/恢复。随任务删除级联删除。
+    tracking_number 记下事件发生时的单号——任务改过单号后，旧单号的事件仍留在这条任务下，
+    也用它防止「抓旧单号的结果写到新单号下」。
+
+    ⚠️ 本表的外键指向 tracking_tasks：以后若要重建 tracking_tasks（RENAME 再 DROP），
+    同样会踩 data-model.md 里那个外键重定向 + 级联删光的坑，必须先把事件读进内存再重建。"""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS task_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL,
+            account_id INTEGER NOT NULL,
+            tracking_number TEXT NOT NULL DEFAULT '',
+            kind TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT '',
+            detail TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(task_id) REFERENCES tracking_tasks(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_task_events_task_time ON task_events(task_id, created_at)"
+    )
+    # 按时间整体清理用
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_task_events_time ON task_events(created_at)"
+    )
+
+
 # --- v1 → v2 迁移 ---
 
 def _migrate_v1_to_v2(conn):
@@ -505,6 +552,8 @@ def ensure_storage(dotenv_path: str):
                 _ensure_accounts_schema(conn)
                 _migrate_v1_to_v2(conn)
                 _ensure_tasks_schema(conn)
+                # 事件表必须排在 v1→v2 迁移之后：迁移会重建任务表，事件表的外键要指向定型后的表
+                _ensure_events_schema(conn)
                 _migrate_portal_sub_column(conn)
                 if conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] == 0:
                     _migrate_legacy_profiles(conn, dotenv_path)
@@ -1093,21 +1142,108 @@ def delete_task(task_id: int, *, actor_role: str = "admin", actor_id: int | None
             conn.execute("DELETE FROM tracking_tasks WHERE id = ?", (int(task_id),))
 
 
-def update_task_state(task_id: int, *, latest_info: str | None = None, error: str | None = None, pushed: bool = False):
-    """tracker 回写轮询结果。"""
+def _latest_event(conn, task_id: int, tracking_number: str, kinds):
+    placeholders = ", ".join("?" for _ in kinds)
+    return conn.execute(
+        f"""
+        SELECT * FROM task_events
+        WHERE task_id = ? AND tracking_number = ? AND kind IN ({placeholders})
+        ORDER BY id DESC LIMIT 1
+        """,
+        (int(task_id), tracking_number, *kinds),
+    ).fetchone()
+
+
+def _insert_event(conn, task_row, kind: str, status: str = "", detail: str = "", created_at: str | None = None):
+    if kind not in EVENT_KINDS:
+        raise ValueError(f"未定义的事件类型：{kind}")
+    conn.execute(
+        """
+        INSERT INTO task_events (task_id, account_id, tracking_number, kind, status, detail, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            int(task_row["id"]),
+            int(task_row["account_id"]),
+            str(task_row["tracking_number"] or ""),
+            kind,
+            str(status or ""),
+            str(detail or ""),
+            created_at or _ts(),
+        ),
+    )
+
+
+def _prune_events(conn, task_id: int):
+    """保留策略：本任务只留最新 EVENT_MAX_PER_TASK 条；全表删掉 EVENT_RETENTION_DAYS 天前的。"""
+    conn.execute(
+        """
+        DELETE FROM task_events
+        WHERE task_id = ? AND id <= (
+            SELECT id FROM task_events WHERE task_id = ? ORDER BY id DESC LIMIT 1 OFFSET ?
+        )
+        """,
+        (int(task_id), int(task_id), EVENT_MAX_PER_TASK),
+    )
+    cutoff = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() - EVENT_RETENTION_DAYS * 86400))
+    conn.execute("DELETE FROM task_events WHERE created_at < ?", (cutoff,))
+
+
+def _status_records_to_add(conn, task_row, records) -> list:
+    """去重：推送失败时 latest_info 不落库，下一轮会再次判定为「有变化」并带着同一批记录回来。
+    以本单号最近一条 status_change 为界，只追加它之后的记录。"""
+    if not records:
+        return []
+    last = _latest_event(conn, task_row["id"], task_row["tracking_number"], ("status_change",))
+    if last is None:
+        return list(records)
+    last_status = last["status"]
+    infos = [record["info"] for record in records]
+    if last_status in infos:
+        # 同一状态文本可能出现多次，以最后一次为准
+        index = len(infos) - 1 - infos[::-1].index(last_status)
+        return list(records[index + 1:])
+    return list(records)
+
+
+def update_task_state(
+    task_id: int,
+    *,
+    latest_info: str | None = None,
+    error: str | None = None,
+    pushed: bool = False,
+    tracking_number: str | None = None,
+    query_ok: bool | None = None,
+    new_records=None,
+    push_status: str = "",
+    push_failed: str | None = None,
+    push_detail: str = "",
+):
+    """tracker 回写轮询结果，并在同一事务里写时间线事件。
+
+    - tracking_number：tracker 抓取时的单号。给了就校验——用户可能在抓取期间改了单号，
+      这时旧单号的结果不能写到新单号头上，整次回写作废，返回 None。
+    - query_ok：True/False 表示这轮查询成功/失败（None 表示不涉及）。只在
+      「正常→出错」「出错→恢复」切换时各写一条事件，持续出错不重复写。
+    - new_records：上次已知之后新增的物流记录 [{"info", "detail"}]，按时间正序。
+    - pushed / push_failed：推送成功 / 失败原因；push_status 是这次推送的物流状态。
+      同一状态连续推送失败只记第一次（失败会按退避反复重试）。"""
     with closing(_connect()) as conn:
         with conn:
             row = conn.execute("SELECT * FROM tracking_tasks WHERE id = ?", (int(task_id),)).fetchone()
             if row is None:
                 return None
             current = dict(row)
+            if tracking_number is not None and current["tracking_number"] != tracking_number:
+                return None
             checked_at = _ts()
-            conn.execute(
+            # WHERE 再带一次单号：上面的 SELECT 与这里之间单号仍可能被改，以实际更新行数为准
+            cursor = conn.execute(
                 """
                 UPDATE tracking_tasks
                 SET last_tracking_info = ?, last_checked_at = ?, last_error = ?,
                     last_push_at = ?, updated_at = ?
-                WHERE id = ?
+                WHERE id = ? AND tracking_number = ?
                 """,
                 (
                     current["last_tracking_info"] if latest_info is None else str(latest_info),
@@ -1116,9 +1252,71 @@ def update_task_state(task_id: int, *, latest_info: str | None = None, error: st
                     checked_at if pushed else current["last_push_at"],
                     checked_at,
                     int(task_id),
+                    current["tracking_number"],
                 ),
             )
+            if cursor.rowcount != 1:
+                return None
+
+            wrote = False
+            if query_ok is not None:
+                last_query = _latest_event(
+                    conn, task_id, current["tracking_number"], ("query_error", "query_recovered")
+                )
+                in_error = last_query is not None and last_query["kind"] == "query_error"
+                if not query_ok and not in_error:
+                    _insert_event(conn, current, "query_error", current["last_tracking_info"], error or "", checked_at)
+                    wrote = True
+                elif query_ok and in_error:
+                    _insert_event(conn, current, "query_recovered", latest_info or current["last_tracking_info"], "", checked_at)
+                    wrote = True
+
+            for record in _status_records_to_add(conn, current, new_records or []):
+                _insert_event(conn, current, "status_change", record["info"], record.get("detail", ""), checked_at)
+                wrote = True
+
+            if pushed:
+                _insert_event(conn, current, "push_ok", push_status, push_detail, checked_at)
+                wrote = True
+            elif push_failed is not None:
+                attempted = str(push_status or "")
+                last_push = _latest_event(conn, task_id, current["tracking_number"], ("push_ok", "push_fail"))
+                repeated = (
+                    last_push is not None
+                    and last_push["kind"] == "push_fail"
+                    and last_push["status"] == attempted
+                )
+                if not repeated:
+                    _insert_event(conn, current, "push_fail", attempted, push_failed, checked_at)
+                    wrote = True
+
+            if wrote:
+                _prune_events(conn, task_id)
     return get_task(task_id)
+
+
+def _row_to_event(row):
+    event = dict(row)
+    event["kind_label"] = EVENT_KIND_META[event["kind"]]["label"]
+    event["kind_tone"] = EVENT_KIND_META[event["kind"]]["tone"]
+    return event
+
+
+def list_task_events(task_id: int, *, limit: int = 20, before: int | None = None):
+    """按时间倒序分页。游标用事件 id：id 随写入单调递增，与 created_at 同序，
+    同一秒写入的多条也能稳定翻页。返回 (events, has_more)。"""
+    limit = max(1, min(EVENT_PAGE_MAX, int(limit)))
+    params: list = [int(task_id)]
+    query = "SELECT * FROM task_events WHERE task_id = ?"
+    if before is not None:
+        query += " AND id < ?"
+        params.append(int(before))
+    query += " ORDER BY id DESC LIMIT ?"
+    params.append(limit + 1)
+    with closing(_connect()) as conn:
+        rows = conn.execute(query, params).fetchall()
+    events = [_row_to_event(row) for row in rows[:limit]]
+    return events, len(rows) > limit
 
 
 def account_to_profile_env(account) -> dict:

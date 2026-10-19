@@ -12,6 +12,35 @@
     <link rel="stylesheet" href="/static/style.css" />
   </head>
   <body>
+    {#- 任务时间线：先渲染最近几条，更多的由 /static/timeline.js 调 /api/tasks/<id>/events 追加（行结构与 timeline.js 的 buildRow 一致） #}
+    {%- macro task_timeline(task) %}
+    {%- set page = task_events[task.id] %}
+    <details class="task-timeline" data-task-timeline="{{ task.id }}" data-number="{{ task.tracking_number }}"{% if page.has_more %} data-next-before="{{ page.events[-1].id }}"{% endif %}>
+      <summary>时间线</summary>
+      {%- if page.events %}
+      <ol class="timeline-list">
+        {%- for ev in page.events %}
+        <li class="timeline-row{% if ev.kind == 'push_fail' %} is-fail{% endif %}">
+          <time class="timeline-time">{{ ev.created_at }}</time>
+          <span class="pill {{ ev.kind_tone }}">{{ ev.kind_label }}</span>
+          <div class="timeline-body">
+            <span class="timeline-status">{{ ev.status or '—' }}</span>
+            {%- set extra = [ev.detail, ('旧单号 ' ~ ev.tracking_number) if ev.tracking_number and ev.tracking_number != task.tracking_number else ''] | select | join(' · ') %}
+            {%- if extra %}
+            <span class="timeline-detail">{{ extra }}</span>
+            {%- endif %}
+          </div>
+        </li>
+        {%- endfor %}
+      </ol>
+      {%- if page.has_more %}
+      <button type="button" class="btn-ghost btn-small" data-timeline-more>加载更多</button>
+      {%- endif %}
+      {%- else %}
+      <div class="empty">还没有记录。物流状态变化、推送结果和查询出错都会记在这里。</div>
+      {%- endif %}
+    </details>
+    {%- endmacro %}
     <div class="bg-layer"></div>
 
     <div class="page">
@@ -89,6 +118,7 @@
               </label>
               <p class="task-meta">最近结果 {{ task.last_error or task.last_tracking_info or '暂无记录' }}</p>
               <p class="task-meta">最近检查 {{ task.last_checked_at or '-' }} · 最近推送 {{ task.last_push_at or '-' }}</p>
+              {{ task_timeline(task) }}
               <div class="actions">
                 <button type="submit" class="btn btn-small">保存</button>
                 <button type="submit" class="btn-ghost btn-small" formaction="/me/tasks/{{ task.id }}/archive">归档</button>
@@ -144,6 +174,7 @@
               <input type="hidden" name="label" value="{{ task.label }}" />
               <input type="hidden" name="check_interval" value="{{ task.check_interval }}" />
               <input type="hidden" name="enabled" value="1" />
+              {{ task_timeline(task) }}
               <div class="actions">
                 <button type="submit" class="btn btn-small">恢复</button>
                 <button type="submit" class="btn-ghost btn-small danger" formaction="/me/tasks/{{ task.id }}/delete">删除</button>
@@ -277,6 +308,7 @@
     </div>
 
     <script type="module" src="/static/boot.js"></script>
+    <script type="module" src="/static/timeline.js"></script>
     {%- if message %}
     <!-- 表单提交后的操作反馈（重定向带回的 message / status）：用包的 toast()，与控制台一致 -->
     <script type="module">

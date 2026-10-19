@@ -35,10 +35,12 @@ from storage import (
     create_task,
     delete_task,
     ensure_storage,
+    EVENT_KIND_META,
     get_account,
     get_account_by_username,
     get_task,
     list_accounts,
+    list_task_events,
     load_system_env,
     parse_bark_keys,
     register_user,
@@ -723,7 +725,13 @@ def add_security_headers(response):
 def inject_sso_flags():
     # 模板据此隐藏注册/改密入口、挂载应用切换器；关闭时模板输出与以前完全一样
     # DESIGN_BASE：模板里设计包 CSS 与 import map 的前缀（见 _design_head.html）
-    return {"sso_on": sso_enabled(), "portal_origin": get_portal_origin(), "DESIGN_BASE": get_design_base()}
+    # EVENT_KIND_META：时间线事件类型的文案与配色，门户模板直接用
+    return {
+        "sso_on": sso_enabled(),
+        "portal_origin": get_portal_origin(),
+        "DESIGN_BASE": get_design_base(),
+        "EVENT_KIND_META": EVENT_KIND_META,
+    }
 
 ICON_DIR = os.path.join(os.path.dirname(__file__), 'static', 'icons')
 
@@ -1070,6 +1078,8 @@ def index():
         viewer_state=viewer_state,
         account=account,
         profile_env=profile_env,
+        task_events=build_portal_task_events(account),
+        event_page_size=PORTAL_EVENT_PREVIEW,
         bark_help=bark_help,
         message=request.args.get("message", "").strip(),
         status=request.args.get("status", "").strip() or "success",
@@ -1657,6 +1667,55 @@ def api_delete_task(task_id: int):
         return build_task_success("追踪任务已删除。")
     except Exception as exc:
         return jsonify({"status": "error", "message": str(exc)}), 400
+
+
+TASK_EVENTS_DEFAULT_LIMIT = 20
+# 普通用户门户每个任务直接渲染的最近事件条数，更多的走「加载更多」
+PORTAL_EVENT_PREVIEW = 5
+
+
+def build_portal_task_events(account: dict) -> dict:
+    """门户是服务端渲染：每个任务（含归档）先带上最近几条事件。"""
+    result = {}
+    for task in (account.get("tasks") or []) + (account.get("archived_tasks") or []):
+        events, has_more = list_task_events(task["id"], limit=PORTAL_EVENT_PREVIEW)
+        result[task["id"]] = {"events": events, "has_more": has_more}
+    return result
+
+
+def _parse_positive_int(value, name: str):
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        parsed = int(str(value).strip())
+    except ValueError:
+        raise ValueError(f"{name} 必须是正整数。") from None
+    if parsed <= 0:
+        raise ValueError(f"{name} 必须是正整数。")
+    return parsed
+
+
+@app.route('/api/tasks/<int:task_id>/events', methods=['GET'])
+@login_required
+def api_task_events(task_id: int):
+    """任务时间线，按时间倒序分页：limit 每页条数（上限见 storage.EVENT_PAGE_MAX），
+    before 传上一页返回的 next_before。本人或管理员可看。"""
+    account = current_account()
+    _, error = guard_task_access(task_id, account)
+    if error:
+        return error
+    try:
+        limit = _parse_positive_int(request.args.get("limit"), "limit") or TASK_EVENTS_DEFAULT_LIMIT
+        before = _parse_positive_int(request.args.get("before"), "before")
+    except ValueError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
+    events, has_more = list_task_events(task_id, limit=limit, before=before)
+    return jsonify({
+        "status": "success",
+        "events": events,
+        "has_more": has_more,
+        "next_before": events[-1]["id"] if has_more and events else None,
+    })
 
 
 @app.route('/api/me', methods=['GET'])

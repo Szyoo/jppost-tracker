@@ -122,6 +122,8 @@
                 <div class="overview-cell overview-action">
                   <button type="button" class="btn-ghost btn-small" @click="openTaskEditor(task)">去编辑</button>
                 </div>
+                <!-- 时间线占满整行，展开后才拉取 -->
+                <task-timeline class="overview-timeline" :task-id="task.id" :number="task.tracking_number"></task-timeline>
               </div>
             </div>
             <div v-else class="empty">
@@ -471,6 +473,7 @@
                 </div>
                 <p class="task-meta">最近结果 [[ task.last_error || task.last_tracking_info || '暂无记录' ]]</p>
                 <p class="task-meta">最近检查 [[ task.last_checked_at || '-' ]] · 最近推送 [[ task.last_push_at || '-' ]]</p>
+                <task-timeline :task-id="task.id" :number="task.tracking_number"></task-timeline>
                 <div class="actions">
                   <button type="button" class="btn btn-small" @click="saveTask(task)">保存</button>
                   <button type="button" class="btn-ghost btn-small" @click="toggleTask(task)">[[ task.enabled ? '停用' : '启用' ]]</button>
@@ -514,6 +517,7 @@
                   <span class="pill">已归档</span>
                 </div>
                 <p class="task-meta">首次登记 [[ task.first_seen_at ]] · 登记次数 [[ task.seen_count ]]</p>
+                <task-timeline :task-id="task.id" :number="task.tracking_number"></task-timeline>
                 <div class="actions">
                   <button type="button" class="btn btn-small" @click="restoreTask(task)">恢复</button>
                   <button type="button" class="btn-ghost btn-small danger" @click="deleteTask(task)">删除</button>
@@ -585,6 +589,7 @@
                 </div>
                 <p class="task-meta">最近结果 [[ task.last_error || task.last_tracking_info || '暂无记录' ]]</p>
                 <p class="task-meta">最近检查 [[ task.last_checked_at || '-' ]] · 最近推送 [[ task.last_push_at || '-' ]]</p>
+                <task-timeline :task-id="task.id" :number="task.tracking_number"></task-timeline>
                 <div class="actions">
                   <button type="button" class="btn btn-small" @click="saveTask(task, 'me')">保存</button>
                   <button type="button" class="btn-ghost btn-small" @click="toggleTask(task, 'me')">[[ task.enabled ? '停用' : '启用' ]]</button>
@@ -634,6 +639,7 @@
                   <p class="task-meta">
                     首次登记 [[ task.first_seen_at ]] · 登记次数 [[ task.seen_count ]][[ task.label ? ' · 备注 ' + task.label : '' ]]
                   </p>
+                  <task-timeline :task-id="task.id" :number="task.tracking_number"></task-timeline>
                   <div class="actions">
                     <button type="button" class="btn btn-small" @click="restoreTask(task, 'me')">恢复</button>
                     <button type="button" class="btn-ghost btn-small danger" @click="deleteTask(task, 'me')">删除</button>
