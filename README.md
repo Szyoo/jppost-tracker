@@ -6,7 +6,8 @@
 
 - 多用户：本地 SQLite 账号，管理员后台 + 普通用户自助注册；每个账号可追踪多个单号、绑定多台设备的 Bark Key
 - 追踪脚本并行处理所有启用的任务，推送失败自动重试；可随 Web 启动自动运行、意外退出自动重启
-- 任务时间线：每个任务记录物流状态变化（含两次查询之间的中间状态）、推送成功/失败、查询出错与恢复，后台与个人页均可查看
+- 任务时间线：每个任务记录物流状态变化（含两次查询之间的中间状态）、推送成功/失败、查询出错与恢复、签收自动归档，后台与个人页均可查看
+- 签收后自动归档：物流记录出现签收状态（`お届け先にお届け済み` / `お届け済み` / `窓口でお渡し`）时，推送成功后自动归档、停止轮询；推送失败按退避重试，成功后再归档；账号没配 Bark Keys 时只记录状态不推送，签收即归档（可在系统设置关闭）
 - 管理后台：启动/停止追踪脚本与本地 Bark Server、实时查看日志（Socket.IO）、在线编辑系统配置（`.env` 白名单键）
 - Bark 地址内外分离：脚本走内网地址推送，手机使用公网 HTTPS 地址
 - 安全：登录限流、`/healthz` 无鉴权健康检查；可选对接上游反代注入身份头的统一登录（`SZYYW_SSO=1`，仅在反代已剥离并重写身份头时启用）
@@ -135,14 +136,15 @@ PUT 请求体可省略；给了必须是 JSON 对象，只接受下列字段（`
 | `revive` | 布尔 | 任务被用户在网页里删除或归档后，是否仍要重新追踪（见下） |
 
 PUT 响应 `{"result": …, "tracking": {…}}`，`result` 取值：`created`（新建，201）、`existing`（本调用方已登记且在追踪）、
-`linked`（关联到账号下已有的任务）、`revived`（从归档恢复）。
+`linked`（关联到账号下已有的任务）、`revived`（从归档恢复）、`delivered`（已签收并被自动归档，原样返回、不恢复追踪）。
 
-`tracking` 对象字段：`tracking_number`、`label`、`external_ref`、`source_state`（本调用方的来源状态，未登记为 `null`）、
+`tracking` 对象字段：`tracking_number`、`label`、`external_ref`、`source_state`（本调用方的来源状态：`active`、`archived_by_api`、
+`user_archived`、`delivered_archived`、`user_deleted` 之一，未登记为 `null`）、
 `enabled`、`archived`、`last_tracking_info`、`last_checked_at`、`last_error`、`last_push_at`、`tracking_url`、`created_at`、`updated_at`。
 没有值的 `last_*` 与 `external_ref` 为 `null`；时间格式 `YYYY-MM-DD HH:MM:SS`（日本时间）。
 
 GET 响应 `{"tracking": {…}, "events": [{"id", "kind", "status", "detail", "tracking_number", "created_at"}, …]}`，事件按时间倒序，
-`kind` 取值同网页时间线：`status_change`、`push_ok`、`push_fail`、`query_error`、`query_recovered`。
+`kind` 取值同网页时间线：`status_change`、`push_ok`、`push_fail`、`query_error`、`query_recovered`、`auto_archived`（签收自动归档）。
 
 archive 响应 `{"result": "archived" | "already_archived", "tracking": {…}}`。
 
@@ -168,6 +170,9 @@ archive 响应 `{"result": "archived" | "already_archived", "tracking": {…}}`�
 - 用户在网页里**归档**的任务，PUT 得到 409 `user_archived`；带 `revive: true` 恢复追踪（200 `revived`），不改用户的备注与间隔。
   用户在网页里自己取消归档后，PUT 照常返回 200。
 - 调用方**自己**用 archive 接口归档的任务，再 PUT 视为新一轮，不需要 `revive` 就会恢复追踪（200 `revived`）。
+- 追踪脚本检测到**签收**后自动归档的任务，来源状态为 `delivered_archived`：再 PUT 返回 200 `delivered`（`tracking.archived` 为 `true`），
+  不恢复追踪；带 `revive: true` 才恢复（200 `revived`）。GET 照常返回，时间线最新一条为 `auto_archived`；archive 返回 200 `already_archived`，
+  来源状态保持 `delivered_archived`。用户在网页里取消归档后来源状态回到 `active`。
 - 账号下已有用户手动添加的同单号任务时，PUT 只做关联，不改它的备注、间隔、暂停状态，也不报错。
 - archive 对任何人归档的任务都幂等返回 200，但不会把「用户归档」改记成「调用方归档」。
 
@@ -184,6 +189,7 @@ archive 响应 `{"result": "archived" | "already_archived", "tracking": {…}}`�
 | `BARK_SERVER` | 空 | 旧版单一地址，仅作兼容 |
 | `BARK_HEALTH_PATH` / `BARK_HEALTH_TIMEOUT` | `/ping` / `15` | Bark 健康检查路径；探测与测试推送的超时（秒） |
 | `REQUEST_TIMEOUT` | `15` | 追踪脚本抓取官网、向 Bark 推送时单次请求的超时（秒） |
+| `AUTO_ARCHIVE_DELIVERED` | `1` | 签收后自动归档；`0` 时签收的任务照旧轮询 |
 | `BARK_BIND_ADDRESS` / `BARK_EXECUTABLE` | `0.0.0.0:8080` / 自动查找 | 本地 Bark Server 监听地址与可执行文件 |
 | `LOCAL_BARK_ENABLED` | `1` | `0` 时不管理本地 Bark 子进程（Bark 独立部署时） |
 | `AUTO_START_BARK_SERVER` | `0` | Web 启动时自动拉起本地 Bark |
@@ -204,7 +210,7 @@ archive 响应 `{"result": "archived" | "already_archived", "tracking": {…}}`�
 |---|---|---|
 | Bark 推送 | `BARK_SERVER_INTERNAL`、`BARK_SERVER_PUBLIC`、`BARK_SERVER` | 控制台保存即生效，追踪脚本下次查询时生效 |
 | Bark 健康检查 | `BARK_HEALTH_PATH`、`BARK_HEALTH_TIMEOUT` | 保存即生效 |
-| 追踪脚本 | `REQUEST_TIMEOUT` | 追踪脚本下次查询时生效 |
+| 追踪脚本 | `REQUEST_TIMEOUT`、`AUTO_ARCHIVE_DELIVERED` | 追踪脚本下次查询时生效 |
 | 追踪脚本 | `AUTO_START_TRACKER` | 重启 Web 后生效（脚本意外退出后是否自动重启读取当前值） |
 | 本地 Bark 服务 | `LOCAL_BARK_ENABLED` | 保存即生效（不会停掉已运行的子进程） |
 | 本地 Bark 服务 | `BARK_BIND_ADDRESS` | 下次启动本地 Bark 时生效 |

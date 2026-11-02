@@ -9,6 +9,7 @@ export const EVENT_KIND_META = Object.freeze({
     push_fail: { label: '推送失败', tone: 'red' },
     query_error: { label: '查询出错', tone: 'amber' },
     query_recovered: { label: '查询恢复', tone: 'cyan' },
+    auto_archived: { label: '签收自动归档', tone: 'green' },
 });
 
 export const eventKindMeta = (kind) => {

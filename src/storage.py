@@ -27,6 +27,7 @@ EVENT_KIND_META = {
     "push_fail": {"label": "推送失败", "tone": "red"},
     "query_error": {"label": "查询出错", "tone": "amber"},
     "query_recovered": {"label": "查询恢复", "tone": "cyan"},
+    "auto_archived": {"label": "签收自动归档", "tone": "green"},
 }
 EVENT_KINDS = frozenset(EVENT_KIND_META)
 
@@ -1206,6 +1207,7 @@ def update_task_state(
     push_status: str = "",
     push_failed: str | None = None,
     push_detail: str = "",
+    auto_archive: bool = False,
 ):
     """tracker 回写轮询结果，并在同一事务里写时间线事件。
 
@@ -1215,7 +1217,10 @@ def update_task_state(
       「正常→出错」「出错→恢复」切换时各写一条事件，持续出错不重复写。
     - new_records：上次已知之后新增的物流记录 [{"info", "detail"}]，按时间正序。
     - pushed / push_failed：推送成功 / 失败原因；push_status 是这次推送的物流状态。
-      同一状态连续推送失败只记第一次（失败会按退避反复重试）。"""
+      同一状态连续推送失败只记第一次（失败会按退避反复重试）。
+    - auto_archive：签收后自动归档。与上面的事件同一事务：先把引用这条任务、仍为 active 的
+      来源记录标成 delivered_archived，再归档（archived=1、enabled=0），最后记 auto_archived 事件
+      （排在本轮的 status_change / push_ok 之后）。任务已归档则跳过。"""
     with closing(_connect()) as conn:
         with conn:
             row = conn.execute("SELECT * FROM tracking_tasks WHERE id = ?", (int(task_id),)).fetchone()
@@ -1278,9 +1283,32 @@ def update_task_state(
                     _insert_event(conn, current, "push_fail", attempted, push_failed, checked_at)
                     wrote = True
 
+            if auto_archive and not current["archived"]:
+                # 先标来源状态再归档：trg_api_refs_task_archive 只改仍为 active 的记录，
+                # 这样外部调用方看到的是 delivered_archived，而不是 user_archived
+                conn.execute(
+                    "UPDATE api_refs SET state = 'delivered_archived', updated_at = ? WHERE task_id = ? AND state = 'active'",
+                    (checked_at, int(task_id)),
+                )
+                conn.execute(
+                    "UPDATE tracking_tasks SET archived = 1, enabled = 0, updated_at = ? WHERE id = ?",
+                    (checked_at, int(task_id)),
+                )
+                status = current["last_tracking_info"] if latest_info is None else str(latest_info)
+                _insert_event(conn, current, "auto_archived", status, "", checked_at)
+                wrote = True
+
             if wrote:
                 _prune_events(conn, task_id)
     return get_task(task_id)
+
+
+def task_has_event(task_id: int, tracking_number: str, kind: str) -> bool:
+    """本单号下是否记过某类事件。tracker 用它判断「已签收但从未自动归档过」的任务。"""
+    if kind not in EVENT_KINDS:
+        raise ValueError(f"未定义的事件类型：{kind}")
+    with closing(_connect()) as conn:
+        return _latest_event(conn, task_id, str(tracking_number or ""), (kind,)) is not None
 
 
 def _row_to_event(row):
@@ -1316,11 +1344,14 @@ API_TOKEN_MAX_LENGTH = 128
 # last_used_at 节流：距上次写入超过这么多秒才再写，避免每个请求都写库
 API_LAST_USED_THROTTLE_SECONDS = 60
 
-# api_refs.state 穷举。前三种由触发器随任务变化自动维护，见 _ensure_api_schema。
+# api_refs.state 穷举。user_archived / user_deleted / 回到 active 由触发器随任务变化自动维护，
+# archived_by_api 与 delivered_archived 由归档方在同一事务里先标记，见 _ensure_api_schema。
+# 新增状态后已有库的 CHECK 约束会由 _migrate_api_refs_states 自动放宽。
 API_REF_STATES = {
     "active": "调用方登记过、任务在追踪（含暂停）",
     "archived_by_api": "调用方自己通过 archive 接口归档；再 PUT 视为新一轮，自动复活",
     "user_archived": "用户在网页里归档；再 PUT 需带 revive",
+    "delivered_archived": "追踪脚本检测到签收后自动归档；再 PUT 返回 delivered 不复活，需带 revive",
     "user_deleted": "用户在网页里删除了任务或改走了单号（墓碑，task_id 置空）；再 PUT 需带 revive",
 }
 
@@ -1332,16 +1363,98 @@ _API_REF_STATE_SQL = ", ".join(f"'{state}'" for state in API_REF_STATES)
 _SQL_NOW = "strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')"
 
 
+_API_REFS_TABLE_SQL = f"""
+    CREATE TABLE {{name}} (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        caller_id INTEGER NOT NULL,
+        account_id INTEGER NOT NULL,
+        tracking_number TEXT NOT NULL,
+        task_id INTEGER,
+        external_ref TEXT NOT NULL DEFAULT '',
+        state TEXT NOT NULL DEFAULT 'active' CHECK(state IN ({_API_REF_STATE_SQL})),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(caller_id, tracking_number),
+        FOREIGN KEY(caller_id) REFERENCES api_callers(id) ON DELETE CASCADE,
+        FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE
+    )
+"""
+_API_REFS_COLUMNS = "id, caller_id, account_id, tracking_number, task_id, external_ref, state, created_at, updated_at"
+
+# 建在 tracking_tasks 上、维护 api_refs 的四个触发器。定义变了的会在 ensure_storage 里 DROP 后重建
+# （sqlite_master 里存的就是这段文本，按空白规整后比对），不动任何表。
+_API_REF_TRIGGERS = {
+    "trg_api_refs_task_delete": f"""
+        CREATE TRIGGER trg_api_refs_task_delete
+        BEFORE DELETE ON tracking_tasks
+        BEGIN
+            UPDATE api_refs SET task_id = NULL, state = 'user_deleted', updated_at = {_SQL_NOW}
+            WHERE task_id = OLD.id;
+        END
+    """,
+    "trg_api_refs_task_renumber": f"""
+        CREATE TRIGGER trg_api_refs_task_renumber
+        AFTER UPDATE OF tracking_number ON tracking_tasks
+        WHEN OLD.tracking_number <> NEW.tracking_number
+        BEGIN
+            UPDATE api_refs SET task_id = NULL, state = 'user_deleted', updated_at = {_SQL_NOW}
+            WHERE task_id = NEW.id;
+        END
+    """,
+    "trg_api_refs_task_archive": f"""
+        CREATE TRIGGER trg_api_refs_task_archive
+        AFTER UPDATE OF archived ON tracking_tasks
+        WHEN OLD.archived = 0 AND NEW.archived = 1
+        BEGIN
+            UPDATE api_refs SET state = 'user_archived', updated_at = {_SQL_NOW}
+            WHERE task_id = NEW.id AND state = 'active';
+        END
+    """,
+    "trg_api_refs_task_unarchive": f"""
+        CREATE TRIGGER trg_api_refs_task_unarchive
+        AFTER UPDATE OF archived ON tracking_tasks
+        WHEN OLD.archived = 1 AND NEW.archived = 0
+        BEGIN
+            UPDATE api_refs SET state = 'active', updated_at = {_SQL_NOW}
+            WHERE task_id = NEW.id AND state IN ('user_archived', 'archived_by_api', 'delivered_archived');
+        END
+    """,
+}
+
+
+def _squash_sql(sql) -> str:
+    return " ".join(str(sql or "").split())
+
+
+def _migrate_api_refs_states(conn):
+    """已有库的 api_refs 建表语句里 CHECK 约束是旧的状态集合（SQLite 不能 ALTER 约束），
+    新增状态后按官方的「新表 → 复制 → 删旧表 → 改名」流程重建 api_refs 本身。
+    api_refs 没有被任何表外键引用，重建不会触发 data-model.md 里那个级联坑；
+    建在 tracking_tasks 上的触发器引用了 api_refs，先删掉（随后由 _ensure_api_schema 按新定义重建），
+    否则改名时 SQLite 会因触发器引用了不存在的表而报错。tracking_tasks 不动。"""
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'api_refs'").fetchone()
+    if row is None or _API_REF_STATE_SQL in row[0]:
+        return
+    for name in _API_REF_TRIGGERS:
+        conn.execute(f"DROP TRIGGER IF EXISTS {name}")
+    conn.execute("DROP TABLE IF EXISTS api_refs_new")
+    conn.execute(_API_REFS_TABLE_SQL.format(name="api_refs_new"))
+    conn.execute(f"INSERT INTO api_refs_new ({_API_REFS_COLUMNS}) SELECT {_API_REFS_COLUMNS} FROM api_refs")
+    conn.execute("DROP TABLE api_refs")
+    conn.execute("ALTER TABLE api_refs_new RENAME TO api_refs")
+
+
 def _ensure_api_schema(conn):
     """api_callers：调用方令牌；api_refs：调用方登记过的单号（来源记录 + 墓碑）。
 
     api_refs.task_id 刻意不设外键：data-model.md 里那个「RENAME 重定向外键 + 级联」的坑，
-    一旦以后重建 tracking_tasks 会把来源记录全部弄丢。墓碑由下面四个触发器维护，
+    一旦以后重建 tracking_tasks 会把来源记录全部弄丢。墓碑由 _API_REF_TRIGGERS 的四个触发器维护，
     对任何删除/归档路径（网页、管理员、账号级联、以后新增的代码）都生效：
     - 删除任务前：引用它的记录置 task_id = NULL、state = user_deleted（BEFORE，赶在删除之前）
     - 改单号：同上（原单号已不再由这条任务追踪）
-    - 归档（0→1）：仍为 active 的记录 → user_archived（API 自己归档时会先把状态改成 archived_by_api）
-    - 取消归档（1→0）：user_archived / archived_by_api → active"""
+    - 归档（0→1）：仍为 active 的记录 → user_archived（API 自己归档、签收自动归档时会先把状态
+      改成 archived_by_api / delivered_archived，触发器就不会误记成用户归档）
+    - 取消归档（1→0）：user_archived / archived_by_api / delivered_archived → active"""
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS api_callers (
@@ -1357,68 +1470,16 @@ def _ensure_api_schema(conn):
         )
         """
     )
-    conn.execute(
-        f"""
-        CREATE TABLE IF NOT EXISTS api_refs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            caller_id INTEGER NOT NULL,
-            account_id INTEGER NOT NULL,
-            tracking_number TEXT NOT NULL,
-            task_id INTEGER,
-            external_ref TEXT NOT NULL DEFAULT '',
-            state TEXT NOT NULL DEFAULT 'active' CHECK(state IN ({_API_REF_STATE_SQL})),
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            UNIQUE(caller_id, tracking_number),
-            FOREIGN KEY(caller_id) REFERENCES api_callers(id) ON DELETE CASCADE,
-            FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE
-        )
-        """
-    )
+    _migrate_api_refs_states(conn)
+    if not _has_table(conn, "api_refs"):
+        conn.execute(_API_REFS_TABLE_SQL.format(name="api_refs"))
     conn.execute("CREATE INDEX IF NOT EXISTS idx_api_refs_task ON api_refs(task_id)")
-    conn.execute(
-        f"""
-        CREATE TRIGGER IF NOT EXISTS trg_api_refs_task_delete
-        BEFORE DELETE ON tracking_tasks
-        BEGIN
-            UPDATE api_refs SET task_id = NULL, state = 'user_deleted', updated_at = {_SQL_NOW}
-            WHERE task_id = OLD.id;
-        END
-        """
-    )
-    conn.execute(
-        f"""
-        CREATE TRIGGER IF NOT EXISTS trg_api_refs_task_renumber
-        AFTER UPDATE OF tracking_number ON tracking_tasks
-        WHEN OLD.tracking_number <> NEW.tracking_number
-        BEGIN
-            UPDATE api_refs SET task_id = NULL, state = 'user_deleted', updated_at = {_SQL_NOW}
-            WHERE task_id = NEW.id;
-        END
-        """
-    )
-    conn.execute(
-        f"""
-        CREATE TRIGGER IF NOT EXISTS trg_api_refs_task_archive
-        AFTER UPDATE OF archived ON tracking_tasks
-        WHEN OLD.archived = 0 AND NEW.archived = 1
-        BEGIN
-            UPDATE api_refs SET state = 'user_archived', updated_at = {_SQL_NOW}
-            WHERE task_id = NEW.id AND state = 'active';
-        END
-        """
-    )
-    conn.execute(
-        f"""
-        CREATE TRIGGER IF NOT EXISTS trg_api_refs_task_unarchive
-        AFTER UPDATE OF archived ON tracking_tasks
-        WHEN OLD.archived = 1 AND NEW.archived = 0
-        BEGIN
-            UPDATE api_refs SET state = 'active', updated_at = {_SQL_NOW}
-            WHERE task_id = NEW.id AND state IN ('user_archived', 'archived_by_api');
-        END
-        """
-    )
+    for name, sql in _API_REF_TRIGGERS.items():
+        row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?", (name,)).fetchone()
+        if row is not None and _squash_sql(row[0]) == _squash_sql(sql):
+            continue
+        conn.execute(f"DROP TRIGGER IF EXISTS {name}")
+        conn.execute(sql.strip())
 
 
 def hash_api_token(token: str) -> str:
@@ -1590,7 +1651,7 @@ def normalize_api_tracking_number(value) -> str:
 
 
 class ApiConflict(Exception):
-    """PUT 被用户的网页操作挡住：code 为 user_deleted / user_archived。"""
+    """PUT 被用户的网页操作挡住：code 为 user_deleted / user_archived（签收自动归档不算，返回 delivered）。"""
 
     def __init__(self, code: str, message: str):
         super().__init__(message)
@@ -1650,11 +1711,28 @@ def _api_upsert_ref(conn, caller_id: int, account_id: int, number: str, task_id:
     return _api_select_ref(conn, caller_id, account_id, number)
 
 
+def _api_task_delivered(conn, task_row, linked_ref_state) -> bool:
+    """已归档的任务是不是因签收被自动归档的。
+    本调用方有关联的来源记录时以它的状态为准（用户取消归档后再归档会变成 user_archived）；
+    没有关联记录（例如网页建的任务）时看这条任务本单号下最近一条事件是不是 auto_archived——
+    自动归档后任务不再轮询，不会再写别的事件。"""
+    if not task_row["archived"]:
+        return False
+    if linked_ref_state is not None:
+        return linked_ref_state == "delivered_archived"
+    last = conn.execute(
+        "SELECT kind FROM task_events WHERE task_id = ? AND tracking_number = ? ORDER BY id DESC LIMIT 1",
+        (int(task_row["id"]), task_row["tracking_number"]),
+    ).fetchone()
+    return last is not None and last["kind"] == "auto_archived"
+
+
 def api_put_tracking(caller_id: int, account_id: int, number: str, *, label: str | None = None,
                      external_ref: str | None = None, revive: bool = False):
     """PUT /api/v1/tracking/<number> 的存储侧。返回 (result, task)，result 穷举：
     created（新建任务）/ revived（从归档恢复）/ linked（关联到账号下已有的任务，或墓碑后用户自己又加回）/
-    existing（本调用方早已登记、任务在追踪）。被用户删除/归档且未带 revive 时抛 ApiConflict。
+    existing（本调用方早已登记、任务在追踪）/ delivered（签收后已自动归档，未带 revive 时原样返回、不复活）。
+    被用户删除/归档且未带 revive 时抛 ApiConflict。
 
     规则：label 只在新建任务时使用；关联或复活已有任务时不动它的 label / 间隔 / 暂停状态
     （复活会把 enabled 置 1，否则复活了也不轮询）。external_ref 给了就更新，不给保留原值。
@@ -1690,6 +1768,11 @@ def api_put_tracking(caller_id: int, account_id: int, number: str, *, label: str
             elif not task["archived"]:
                 task_id = int(task["id"])
                 result = "existing" if ref_on_task and ref_state == "active" else "linked"
+            elif not revive and _api_task_delivered(conn, task, ref_state if ref_on_task else None):
+                # 签收后自动归档：不复活，原样返回；本调用方的来源记录（没有就新建）记为 delivered_archived
+                task_id = int(task["id"])
+                ref = _api_upsert_ref(conn, caller_id, account_id, number, task_id, "delivered_archived", external_ref)
+                return "delivered", _api_view(conn, task, ref)
             else:
                 task_id = int(task["id"])
                 api_archived = ref_on_task and ref_state == "archived_by_api"
@@ -1723,7 +1806,7 @@ def api_get_tracking(caller_id: int, account_id: int, number: str):
 
 def api_archive_tracking(caller_id: int, account_id: int, number: str):
     """幂等归档。返回 (result, task)，result：archived / already_archived；任务不存在返回 (None, 墓碑状态)。
-    已归档（不论谁归档的）直接返回，不改来源状态。
+    已归档（不论谁归档的，含签收自动归档）直接返回，不改来源状态（delivered_archived 仍是 delivered_archived）。
     归档前先把引用这条任务、仍为 active 的来源记录标成 archived_by_api，触发器就不会把它们记成用户归档。"""
     with closing(_connect()) as conn:
         conn.execute("BEGIN IMMEDIATE")

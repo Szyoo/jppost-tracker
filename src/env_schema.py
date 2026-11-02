@@ -102,7 +102,7 @@ GROUPS = [
     {
         "key": "tracker",
         "title": "追踪脚本",
-        "desc": "控制台拉起的追踪脚本如何运行：随 Web 自动启动，以及请求邮政官网与 Bark 时的等待上限。",
+        "desc": "控制台拉起的追踪脚本如何运行：随 Web 自动启动、请求邮政官网与 Bark 时的等待上限，以及签收后是否自动归档。",
         "fields": [
             {
                 "key": "AUTO_START_TRACKER",
@@ -121,6 +121,14 @@ GROUPS = [
                 "min": 1,
                 "max": 120,
                 "placeholder": "15",
+                "apply": "tracker",
+            },
+            {
+                "key": "AUTO_ARCHIVE_DELIVERED",
+                "label": "签收后自动归档",
+                "desc": "物流记录出现签收状态（如「お届け先にお届け済み」）时，推送成功后自动归档该任务、停止轮询；推送失败会照常重试，成功后再归档。关闭后签收的任务照旧轮询。",
+                "type": "bool",
+                "default": "1",
                 "apply": "tracker",
             },
         ],

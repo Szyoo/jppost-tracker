@@ -1,4 +1,5 @@
 import os
+import re
 import time
 
 import requests
@@ -6,7 +7,7 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
 import bark
-from env_schema import TRACKER_ENV_KEYS
+from env_schema import BOOL_FALSE, BOOL_TRUE, ENV_FIELDS, TRACKER_ENV_KEYS
 from storage import (
     MIN_CHECK_INTERVAL,
     build_tracking_url,
@@ -14,6 +15,7 @@ from storage import (
     list_due_tasks,
     load_system_env,
     parse_bark_keys,
+    task_has_event,
     update_task_state,
 )
 
@@ -26,6 +28,17 @@ MAX_LOOP_SLEEP = 30
 IDLE_LOOP_SLEEP = 5
 # 推送失败后的首次退避秒数，之后按 2 倍递增，上限为任务自己的 check_interval
 PUSH_RETRY_BASE = 30
+
+# 认定为「已签收」的状态（履历表「配達状況」一栏）。只做整串精确匹配，
+# 「お届け先にお伺いしましたがご不在」「ご不在のため持ち戻り」「お届け予定」之类都不算：
+# - お届け先にお届け済み：日本邮政官网对送达收件人的标准写法
+# - お届け済み：同义的简写
+# - 窓口でお渡し：在邮局窗口交给收件人（局留め、不在后到窗口自取）
+DELIVERED_STATUSES = frozenset({"お届け先にお届け済み", "お届け済み", "窓口でお渡し"})
+# 记录的 info 是「日期 时间 状态」（见 parse_tracking_records），状态前的日期时间要先剥掉
+_INFO_DATETIME_PREFIX = re.compile(r"^\d{4}/\d{1,2}/\d{1,2}\s+\d{1,2}:\d{2}\s*")
+# 账号没配 Bark Keys 时照常追踪、只是不推送；这句提示留在 last_error 上，免得用户以为会收到通知
+NO_PUSH_HINT = "未配置 Bark Keys（账号设置），只记录物流状态、不推送。"
 
 load_dotenv(DOTENV_PATH)
 ensure_storage(DOTENV_PATH)
@@ -58,6 +71,30 @@ def _build_log_prefix(display_name: str, label: str, tracking_number: str) -> st
     if label:
         return f"[{display_name} · {label}({number})]"
     return f"[{display_name} · {number}]"
+
+
+def tracking_status(info) -> str:
+    """从「2026/10/27 13:50 お届け先にお届け済み」这样的记录里取出状态部分；没有日期前缀时整串即状态。"""
+    text = str(info or "").strip()
+    return _INFO_DATETIME_PREFIX.sub("", text, count=1).strip()
+
+
+def is_delivered(info) -> bool:
+    """这条物流记录是否表示已签收。纯函数，只认 DELIVERED_STATUSES 里的状态（整串精确匹配），
+    认定为签收的字样：お届け先にお届け済み、お届け済み、窓口でお渡し。
+    空串、None、不在、持ち戻り、お届け予定等一律不算。"""
+    status = tracking_status(info)
+    return bool(status) and status in DELIVERED_STATUSES
+
+
+def auto_archive_enabled(system_env: dict) -> bool:
+    """系统设置 AUTO_ARCHIVE_DELIVERED：留空或不认识的值按默认（开）。"""
+    value = str(system_env.get("AUTO_ARCHIVE_DELIVERED", "") or "").strip().lower()
+    if value in BOOL_TRUE:
+        return True
+    if value in BOOL_FALSE:
+        return False
+    return ENV_FIELDS["AUTO_ARCHIVE_DELIVERED"]["default"] == "1"
 
 
 def build_push_message(config: dict, latest_info: str) -> tuple[str, str]:
@@ -101,13 +138,12 @@ def build_runtime_config(task: dict, system_env: dict) -> dict:
 
 def validate_config(config: dict) -> list[str]:
     # 这些文案会写进 last_error 直接显示在网页上，所以用中文而不是字段名。
+    # 没配 Bark Keys 不算缺配置：照常追踪、记时间线（签收后也照常自动归档），只是不推送。
     missing = []
     if not config["tracking_number"]:
         missing.append("单号")
-    if not config["bark_server"]:
+    if config["bark_keys"] and not config["bark_server"]:
         missing.append("Bark 服务地址（系统设置）")
-    if not config["bark_keys"]:
-        missing.append("Bark Keys（账号设置）")
     return missing
 
 
@@ -243,15 +279,50 @@ def process_task(task: dict, system_env: dict) -> bool:
 
     current_info = records[-1]["info"]
     print(f"{prefix} 最新物流记录: {current_info}")
+    push_enabled = bool(config["bark_keys"])
+    ok_error = "" if push_enabled else NO_PUSH_HINT
+    auto_archive_on = auto_archive_enabled(system_env)
+
     if current_info == config["last_tracking_info"]:
         print(f"{prefix} 暂无更新。")
-        update_task_state(task_id, latest_info=current_info, error="", tracking_number=number, query_ok=True)
+        # 已签收、上轮也已推送过，但从没自动归档过（开关后来才打开、或功能上线前就签收了的任务）：
+        # 这轮补归档。自动归档过又被用户取消归档的不再归档，尊重用户的选择。
+        catch_up = (
+            auto_archive_on
+            and is_delivered(current_info)
+            and not task_has_event(task_id, number, "auto_archived")
+        )
+        update_task_state(
+            task_id, latest_info=current_info, error=ok_error, tracking_number=number, query_ok=True,
+            auto_archive=catch_up,
+        )
+        if catch_up:
+            print(f"{prefix} 已签收，自动归档，不再轮询。")
         return False
 
     new_records = records_since(records, config["last_tracking_info"])
+    delivered = auto_archive_on and (
+        is_delivered(current_info) or any(is_delivered(record["info"]) for record in new_records)
+    )
+
+    if not push_enabled:
+        update_task_state(
+            task_id,
+            latest_info=current_info,
+            error=ok_error,
+            tracking_number=number,
+            query_ok=True,
+            new_records=new_records,
+            auto_archive=delivered,
+        )
+        if delivered:
+            print(f"{prefix} 已签收（未配置推送），自动归档，不再轮询。")
+        return False
+
     title, body = build_push_message(config, current_info)
     pushed, reason = send_bark_notification(config, title, body)
     if pushed:
+        # 签收的这轮先照常推送，推送成功后在同一次回写里归档：事件顺序为 status_change → push_ok → auto_archived
         update_task_state(
             task_id,
             latest_info=current_info,
@@ -262,12 +333,16 @@ def process_task(task: dict, system_env: dict) -> bool:
             new_records=new_records,
             push_status=current_info,
             push_detail=f"已推送到 {len(config['bark_keys'])} 个设备",
+            auto_archive=delivered,
         )
+        if delivered:
+            print(f"{prefix} 已签收，推送成功后自动归档，不再轮询。")
         return False
 
     # 推送失败时刻意不写入 latest_info：写了下一轮就会判定"无更新"而不再推送，
     # 这条物流变化的通知就永久丢了。保持旧值，等重试成功再落库。
     # 状态变化事件照常记（storage 侧去重，重试时不会重复记）。
+    # 签收也一样：这轮不归档、保持启用，按退避重试推送，推送成功的那一轮再归档（签收通知不能丢）。
     update_task_state(
         task_id,
         error=f"推送失败（{reason}），稍后重试。",

@@ -185,12 +185,25 @@ def test_query_error_only_logged_on_transitions(tracker, task, monkeypatch):
 
 
 def test_missing_config_counts_as_query_error(tracker, db, owner, task, monkeypatch):
+    """配了 Bark Keys 却没有 Bark 服务地址：推不出去，算缺配置。（没配 Keys 不算，见只记录不推送的用例）"""
     Net(tracker, monkeypatch)
-    db.update_account(owner["id"], {"bark_keys": ""})
-    run_once(tracker, task["id"])
-    run_once(tracker, task["id"])
+    for _ in range(2):
+        due = next(t for t in storage.list_due_tasks() if t["id"] == task["id"])
+        tracker.process_task(due, {})
     assert [k for k, _ in kinds(task["id"])] == ["query_error"]
-    assert "Bark Keys" in storage.list_task_events(task["id"])[0][0]["detail"]
+    assert "Bark 服务地址" in storage.list_task_events(task["id"])[0][0]["detail"]
+
+
+def test_no_bark_keys_tracks_without_push(tracker, db, owner, task, monkeypatch):
+    net = Net(tracker, monkeypatch)
+    db.update_account(owner["id"], {"bark_keys": ""})
+    net.page = page_html(R1, R2)
+    assert run_once(tracker, task["id"]) is False
+    assert kinds(task["id"]) == [("status_change", info(R1)), ("status_change", info(R2))]
+    assert net.pushes == []
+    current = storage.get_task(task["id"])
+    assert current["last_tracking_info"] == info(R2)
+    assert current["last_error"] == tracker.NO_PUSH_HINT
 
 
 def test_number_changed_during_fetch_is_discarded(tracker, db, task, monkeypatch):
