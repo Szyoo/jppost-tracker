@@ -16,7 +16,8 @@
   <body>
     <div class="bg-layer"></div>
 
-    <div id="app" class="page">
+    <div class="app-frame">
+    <div id="app" class="page app-main">
       <header class="app-header page-header rise">
         <div class="app-brand">
           <span class="app-sub">Admin Control Room</span>
@@ -33,13 +34,15 @@
         {%- endif %}
       </header>
 
-      <nav class="tabs nav-bar glass rise">
-        <button type="button" :class="['tab', { active: page === 'home' }]" @click="page = 'home'">首页</button>
-        <button type="button" :class="['tab', { active: page === 'env' }]" @click="page = 'env'">系统设置</button>
-        <button type="button" :class="['tab', { active: page === 'users' }]" @click="page = 'users'">用户管理</button>
-        <button type="button" :class="['tab', { active: page === 'me' }]" @click="page = 'me'">我的设置</button>
-        <button type="button" :class="['tab', { active: page === 'logs' }]" @click="page = 'logs'">日志</button>
-      </nav>
+      <div class="nav-bar glass rise">
+        <nav class="tabs">
+          <button type="button" :class="['tab', { active: page === 'home' }]" @click="page = 'home'">首页</button>
+          <button type="button" :class="['tab', { active: page === 'env' }]" @click="page = 'env'">系统设置</button>
+          <button type="button" :class="['tab', { active: page === 'users' }]" @click="page = 'users'">用户管理</button>
+          <button type="button" :class="['tab', { active: page === 'me' }]" @click="page = 'me'">我的设置</button>
+          <button type="button" :class="['tab', { active: page === 'logs' }]" @click="page = 'logs'">日志</button>
+        </nav>
+      </div>
 
       <!-- ============ 首页：纯仪表盘，只读 ============ -->
       <section class="section" v-if="page === 'home'">
@@ -730,11 +733,13 @@
       <!-- ============ 日志 ============ -->
       <section class="section" v-if="page === 'logs'">
         <h2 class="section-name">日志</h2>
-        <nav class="tabs nav-bar log-tabs glass rise">
-          <button type="button" :class="['tab', { active: logTab === 'remote' }]" @click="logTab = 'remote'">Remote Bark</button>
-          <button type="button" :class="['tab', { active: logTab === 'tracker' }]" @click="logTab = 'tracker'">Tracker</button>
-          <button type="button" :class="['tab', { active: logTab === 'bark' }]" @click="logTab = 'bark'">Bark</button>
-        </nav>
+        <div class="nav-bar log-tabs glass rise">
+          <nav class="tabs">
+            <button type="button" :class="['tab', { active: logTab === 'remote' }]" @click="logTab = 'remote'">Remote Bark</button>
+            <button type="button" :class="['tab', { active: logTab === 'tracker' }]" @click="logTab = 'tracker'">Tracker</button>
+            <button type="button" :class="['tab', { active: logTab === 'bark' }]" @click="logTab = 'bark'">Bark</button>
+          </nav>
+        </div>
 
         <!-- 终端窗（DESIGN §9）：行内容已在 app.js 里先 HTML 转义再换行，v-html 只会渲染 <br> -->
         <div class="term rise">
@@ -749,6 +754,7 @@
           </div>
         </div>
       </section>
+    </div>
     </div>
 
     <script id="initial-env" type="application/json">{{ env_vars | tojson | safe }}</script>

@@ -16,7 +16,8 @@
 
     <!-- portal SSO 匿名访客（X-Portal-Anon: 1）：只有公开介绍，不含任何任务/设置/管理入口。
          右上角账户菜单（boot.js 挂载）显示「登录」。 -->
-    <div class="page">
+    <div class="app-frame">
+    <div class="page app-main">
       <header class="app-header page-header rise">
         <div class="app-brand">
           <span class="app-sub">JP Post Tracker</span>
@@ -36,6 +37,7 @@
           </div>
         </div>
       </div>
+    </div>
     </div>
 
     <script type="module" src="/static/boot.js"></script>

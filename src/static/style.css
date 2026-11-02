@@ -17,11 +17,7 @@ code {
 /* ---------- 页面骨架 ---------- */
 
 .page {
-  position: relative;
-  z-index: 1;
-  max-width: 1080px;
-  margin: 0 auto;
-  padding: 28px 24px 64px;
+  padding-block: 28px 64px;
 }
 
 /* ---------- 页头 ----------
@@ -43,13 +39,13 @@ code {
   color: var(--text-dim);
 }
 
-/* ---------- 页签（包的 .tabs > .tab，外面套一条玻璃底） ---------- */
+/* ---------- 页签（包的 .tabs > .tab，玻璃底在外层容器上，轨道本身不覆写） ---------- */
 
-.tabs.nav-bar {
+.nav-bar {
   padding: 6px;
 }
 
-.tabs.log-tabs {
+.log-tabs {
   margin-bottom: 16px;
 }
 
@@ -693,14 +689,6 @@ textarea.field {
   flex-wrap: wrap;
 }
 
-.auth-link-row a {
-  color: var(--accent);
-}
-
-.auth-link-row a:hover {
-  text-decoration: underline;
-}
-
 .auth-help {
   margin-top: 14px;
   font-size: 12px;
@@ -790,7 +778,7 @@ textarea.field {
 
 @media (max-width: 640px) {
   .page {
-    padding: 20px 14px 48px;
+    padding-block: 20px 48px;
   }
 
   .form-grid.two-col,
