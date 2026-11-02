@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import os
 import re
 import secrets
@@ -553,6 +555,8 @@ def ensure_storage(dotenv_path: str):
                 # 事件表必须排在 v1→v2 迁移之后：迁移会重建任务表，事件表的外键要指向定型后的表
                 _ensure_events_schema(conn)
                 _migrate_portal_sub_column(conn)
+                # 机器接口的两张表与墓碑触发器：只新建、不改动已有表
+                _ensure_api_schema(conn)
                 if conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] == 0:
                     _migrate_legacy_profiles(conn, dotenv_path)
                 _sync_admin_account(conn, admin_username, admin_password_hash)
@@ -1302,3 +1306,445 @@ def list_task_events(task_id: int, *, limit: int = 20, before: int | None = None
     events = [_row_to_event(row) for row in rows[:limit]]
     return events, len(rows) > limit
 
+
+
+# --- 机器接口（/api/v1）：调用方令牌与任务来源记录 ---
+
+# 调用方令牌：固定前缀便于在日志、密钥扫描里认出来；库里只存 SHA-256 十六进制。
+API_TOKEN_PREFIX = "jpt_"
+API_TOKEN_MAX_LENGTH = 128
+# last_used_at 节流：距上次写入超过这么多秒才再写，避免每个请求都写库
+API_LAST_USED_THROTTLE_SECONDS = 60
+
+# api_refs.state 穷举。前三种由触发器随任务变化自动维护，见 _ensure_api_schema。
+API_REF_STATES = {
+    "active": "调用方登记过、任务在追踪（含暂停）",
+    "archived_by_api": "调用方自己通过 archive 接口归档；再 PUT 视为新一轮，自动复活",
+    "user_archived": "用户在网页里归档；再 PUT 需带 revive",
+    "user_deleted": "用户在网页里删除了任务或改走了单号（墓碑，task_id 置空）；再 PUT 需带 revive",
+}
+
+# 机器接口可接受的单号：先按 _normalize_tracking_number 规整（去空白、转大写），再限制字符集与长度
+API_TRACKING_NUMBER_RE = re.compile(r"[A-Z0-9-]{6,40}")
+
+_API_REF_STATE_SQL = ", ".join(f"'{state}'" for state in API_REF_STATES)
+# 触发器里的时间与 _ts() 同格式（本地时间）
+_SQL_NOW = "strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')"
+
+
+def _ensure_api_schema(conn):
+    """api_callers：调用方令牌；api_refs：调用方登记过的单号（来源记录 + 墓碑）。
+
+    api_refs.task_id 刻意不设外键：data-model.md 里那个「RENAME 重定向外键 + 级联」的坑，
+    一旦以后重建 tracking_tasks 会把来源记录全部弄丢。墓碑由下面四个触发器维护，
+    对任何删除/归档路径（网页、管理员、账号级联、以后新增的代码）都生效：
+    - 删除任务前：引用它的记录置 task_id = NULL、state = user_deleted（BEFORE，赶在删除之前）
+    - 改单号：同上（原单号已不再由这条任务追踪）
+    - 归档（0→1）：仍为 active 的记录 → user_archived（API 自己归档时会先把状态改成 archived_by_api）
+    - 取消归档（1→0）：user_archived / archived_by_api → active"""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS api_callers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            account_id INTEGER NOT NULL,
+            token_sha256 TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL,
+            last_used_at TEXT,
+            revoked INTEGER NOT NULL DEFAULT 0,
+            revoked_at TEXT,
+            FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS api_refs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            caller_id INTEGER NOT NULL,
+            account_id INTEGER NOT NULL,
+            tracking_number TEXT NOT NULL,
+            task_id INTEGER,
+            external_ref TEXT NOT NULL DEFAULT '',
+            state TEXT NOT NULL DEFAULT 'active' CHECK(state IN ({_API_REF_STATE_SQL})),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(caller_id, tracking_number),
+            FOREIGN KEY(caller_id) REFERENCES api_callers(id) ON DELETE CASCADE,
+            FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_api_refs_task ON api_refs(task_id)")
+    conn.execute(
+        f"""
+        CREATE TRIGGER IF NOT EXISTS trg_api_refs_task_delete
+        BEFORE DELETE ON tracking_tasks
+        BEGIN
+            UPDATE api_refs SET task_id = NULL, state = 'user_deleted', updated_at = {_SQL_NOW}
+            WHERE task_id = OLD.id;
+        END
+        """
+    )
+    conn.execute(
+        f"""
+        CREATE TRIGGER IF NOT EXISTS trg_api_refs_task_renumber
+        AFTER UPDATE OF tracking_number ON tracking_tasks
+        WHEN OLD.tracking_number <> NEW.tracking_number
+        BEGIN
+            UPDATE api_refs SET task_id = NULL, state = 'user_deleted', updated_at = {_SQL_NOW}
+            WHERE task_id = NEW.id;
+        END
+        """
+    )
+    conn.execute(
+        f"""
+        CREATE TRIGGER IF NOT EXISTS trg_api_refs_task_archive
+        AFTER UPDATE OF archived ON tracking_tasks
+        WHEN OLD.archived = 0 AND NEW.archived = 1
+        BEGIN
+            UPDATE api_refs SET state = 'user_archived', updated_at = {_SQL_NOW}
+            WHERE task_id = NEW.id AND state = 'active';
+        END
+        """
+    )
+    conn.execute(
+        f"""
+        CREATE TRIGGER IF NOT EXISTS trg_api_refs_task_unarchive
+        AFTER UPDATE OF archived ON tracking_tasks
+        WHEN OLD.archived = 1 AND NEW.archived = 0
+        BEGIN
+            UPDATE api_refs SET state = 'active', updated_at = {_SQL_NOW}
+            WHERE task_id = NEW.id AND state IN ('user_archived', 'archived_by_api');
+        END
+        """
+    )
+
+
+def hash_api_token(token: str) -> str:
+    return hashlib.sha256(str(token).encode("utf-8")).hexdigest()
+
+
+def _new_api_token() -> str:
+    return API_TOKEN_PREFIX + secrets.token_urlsafe(32)
+
+
+def _normalize_caller_name(value) -> str:
+    name = str(value or "").strip().lower()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{1,63}", name):
+        raise ValueError("调用方名称只能包含小写字母、数字、点、下划线和短横线，长度 2-64。")
+    return name
+
+
+def _row_to_caller(row):
+    if row is None:
+        return None
+    caller = dict(row)
+    caller.pop("token_sha256", None)
+    caller["revoked"] = bool(caller.get("revoked"))
+    return caller
+
+
+def _select_caller(conn, name: str):
+    return conn.execute(
+        """
+        SELECT c.*, a.username AS account_username
+        FROM api_callers c JOIN accounts a ON a.id = c.account_id
+        WHERE c.name = ?
+        """,
+        (name,),
+    ).fetchone()
+
+
+def issue_api_caller(name: str, username: str):
+    """签发调用方令牌，返回 (caller, 明文令牌)。明文只在这里出现一次，库里只存哈希。
+    同名调用方未吊销时拒绝；已吊销的同名调用方可重新签发（沿用原记录与来源记录），
+    但必须绑定同一个账号——换账号请换名字，免得旧账号下的来源记录挂到新账号上。"""
+    name = _normalize_caller_name(name)
+    token = _new_api_token()
+    now = _ts()
+    with closing(_connect()) as conn:
+        with conn:
+            account = conn.execute(
+                "SELECT id FROM accounts WHERE username = ?", (str(username or "").strip().lower(),)
+            ).fetchone()
+            if account is None:
+                raise ValueError(f"账号不存在：{username}")
+            existing = conn.execute("SELECT * FROM api_callers WHERE name = ?", (name,)).fetchone()
+            if existing is not None:
+                if not existing["revoked"]:
+                    raise ValueError(f"调用方 {name} 已存在且有效；要换令牌请用 rotate-caller。")
+                if int(existing["account_id"]) != int(account["id"]):
+                    raise ValueError(f"已吊销的调用方 {name} 绑定的是另一个账号，请换一个名称。")
+                conn.execute(
+                    """
+                    UPDATE api_callers
+                    SET token_sha256 = ?, revoked = 0, revoked_at = NULL, created_at = ?, last_used_at = NULL
+                    WHERE id = ?
+                    """,
+                    (hash_api_token(token), now, existing["id"]),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO api_callers (name, account_id, token_sha256, created_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (name, int(account["id"]), hash_api_token(token), now),
+                )
+            caller = _row_to_caller(_select_caller(conn, name))
+    return caller, token
+
+
+def rotate_api_caller(name: str):
+    """换新令牌，旧令牌立即失效。返回 (caller, 新明文令牌)。已吊销的调用方不能轮换。"""
+    name = _normalize_caller_name(name)
+    token = _new_api_token()
+    with closing(_connect()) as conn:
+        with conn:
+            existing = conn.execute("SELECT * FROM api_callers WHERE name = ?", (name,)).fetchone()
+            if existing is None:
+                raise ValueError(f"调用方不存在：{name}")
+            if existing["revoked"]:
+                raise ValueError(f"调用方 {name} 已吊销；要恢复请用 issue-caller 重新签发。")
+            conn.execute(
+                "UPDATE api_callers SET token_sha256 = ?, last_used_at = NULL WHERE id = ?",
+                (hash_api_token(token), existing["id"]),
+            )
+            caller = _row_to_caller(_select_caller(conn, name))
+    return caller, token
+
+
+def revoke_api_caller(name: str):
+    """吊销调用方，令牌立即失效。返回 (caller, 本次是否真的改了状态)。"""
+    name = _normalize_caller_name(name)
+    with closing(_connect()) as conn:
+        with conn:
+            existing = conn.execute("SELECT * FROM api_callers WHERE name = ?", (name,)).fetchone()
+            if existing is None:
+                raise ValueError(f"调用方不存在：{name}")
+            changed = not existing["revoked"]
+            if changed:
+                conn.execute(
+                    "UPDATE api_callers SET revoked = 1, revoked_at = ? WHERE id = ?",
+                    (_ts(), existing["id"]),
+                )
+            caller = _row_to_caller(_select_caller(conn, name))
+    return caller, changed
+
+
+def list_api_callers():
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            """
+            SELECT c.*, a.username AS account_username
+            FROM api_callers c JOIN accounts a ON a.id = c.account_id
+            ORDER BY c.id
+            """
+        ).fetchall()
+    return [_row_to_caller(row) for row in rows]
+
+
+def authenticate_api_caller(token):
+    """按令牌找有效调用方：算 SHA-256 后按哈希查行，再用常量时间比较确认；吊销的返回 None。
+    命中时按节流更新 last_used_at。"""
+    if not isinstance(token, str) or not token.startswith(API_TOKEN_PREFIX):
+        return None
+    if len(token) > API_TOKEN_MAX_LENGTH:
+        return None
+    digest = hash_api_token(token)
+    with closing(_connect()) as conn:
+        row = conn.execute(
+            """
+            SELECT c.*, a.username AS account_username
+            FROM api_callers c JOIN accounts a ON a.id = c.account_id
+            WHERE c.token_sha256 = ?
+            """,
+            (digest,),
+        ).fetchone()
+        if row is None or not hmac.compare_digest(str(row["token_sha256"]), digest):
+            return None
+        if row["revoked"]:
+            return None
+        now = _ts()
+        cutoff = time.strftime(
+            "%Y-%m-%d %H:%M:%S", time.localtime(time.time() - API_LAST_USED_THROTTLE_SECONDS)
+        )
+        with conn:
+            conn.execute(
+                """
+                UPDATE api_callers SET last_used_at = ?
+                WHERE id = ? AND revoked = 0 AND (last_used_at IS NULL OR last_used_at < ?)
+                """,
+                (now, row["id"], cutoff),
+            )
+    return _row_to_caller(row)
+
+
+def normalize_api_tracking_number(value) -> str:
+    """机器接口用：规整后不合法抛 ValueError。"""
+    number = _normalize_tracking_number(value)
+    if not API_TRACKING_NUMBER_RE.fullmatch(number):
+        raise ValueError("单号格式不正确：只允许字母、数字和短横线，长度 6-40。")
+    return number
+
+
+class ApiConflict(Exception):
+    """PUT 被用户的网页操作挡住：code 为 user_deleted / user_archived。"""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def _api_view(conn, task_row, ref_row):
+    task = _row_to_task(task_row)
+    linked = ref_row is not None and ref_row["task_id"] is not None and int(ref_row["task_id"]) == int(task["id"])
+    task["api_ref"] = dict(ref_row) if linked else None
+    return task
+
+
+def _api_select_ref(conn, caller_id: int, account_id: int, number: str):
+    return conn.execute(
+        "SELECT * FROM api_refs WHERE caller_id = ? AND account_id = ? AND tracking_number = ?",
+        (int(caller_id), int(account_id), number),
+    ).fetchone()
+
+
+def _api_select_task(conn, account_id: int, number: str):
+    return conn.execute(
+        "SELECT * FROM tracking_tasks WHERE account_id = ? AND tracking_number = ?",
+        (int(account_id), number),
+    ).fetchone()
+
+
+def _api_upsert_ref(conn, caller_id: int, account_id: int, number: str, task_id: int, state: str,
+                    external_ref: str | None):
+    if state not in API_REF_STATES:
+        raise ValueError(f"未定义的来源状态：{state}")
+    now = _ts()
+    existing = _api_select_ref(conn, caller_id, account_id, number)
+    if existing is None:
+        conn.execute(
+            """
+            INSERT INTO api_refs (caller_id, account_id, tracking_number, task_id, external_ref, state, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (int(caller_id), int(account_id), number, int(task_id), external_ref or "", state, now, now),
+        )
+    else:
+        conn.execute(
+            """
+            UPDATE api_refs SET task_id = ?, state = ?, external_ref = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                int(task_id),
+                state,
+                existing["external_ref"] if external_ref is None else external_ref,
+                now,
+                existing["id"],
+            ),
+        )
+    return _api_select_ref(conn, caller_id, account_id, number)
+
+
+def api_put_tracking(caller_id: int, account_id: int, number: str, *, label: str | None = None,
+                     external_ref: str | None = None, revive: bool = False):
+    """PUT /api/v1/tracking/<number> 的存储侧。返回 (result, task)，result 穷举：
+    created（新建任务）/ revived（从归档恢复）/ linked（关联到账号下已有的任务，或墓碑后用户自己又加回）/
+    existing（本调用方早已登记、任务在追踪）。被用户删除/归档且未带 revive 时抛 ApiConflict。
+
+    规则：label 只在新建任务时使用；关联或复活已有任务时不动它的 label / 间隔 / 暂停状态
+    （复活会把 enabled 置 1，否则复活了也不轮询）。external_ref 给了就更新，不给保留原值。
+    不走 _insert_task：网页侧那条「已归档就复活并覆盖备注和间隔」的语义不适合这里。"""
+    with closing(_connect()) as conn:
+        # IMMEDIATE：同一单号的并发 PUT 串行执行，不会因为唯一约束互相撞
+        conn.execute("BEGIN IMMEDIATE")
+        with conn:
+            ref = _api_select_ref(conn, caller_id, account_id, number)
+            task = _api_select_task(conn, account_id, number)
+            ref_state = ref["state"] if ref is not None else None
+            if ref is not None and ref["task_id"] is not None and (task is None or int(task["id"]) != int(ref["task_id"])):
+                # 防御：触发器之外的方式改动过任务表，按墓碑处理
+                ref_state = "user_deleted"
+            ref_on_task = ref is not None and task is not None and ref["task_id"] is not None \
+                and int(ref["task_id"]) == int(task["id"])
+            now = _ts()
+
+            if task is None:
+                if ref_state == "user_deleted" and not revive:
+                    raise ApiConflict("user_deleted", "该单号的任务已被用户在网页里删除；如需重新追踪请带 revive: true。")
+                cursor = conn.execute(
+                    """
+                    INSERT INTO tracking_tasks (
+                        account_id, tracking_number, label, check_interval, enabled, archived,
+                        first_seen_at, seen_count, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, 1, 0, ?, 1, ?, ?)
+                    """,
+                    (int(account_id), number, str(label or ""), PROFILE_DEFAULTS["check_interval"], now, now, now),
+                )
+                task_id = int(cursor.lastrowid)
+                result = "created"
+            elif not task["archived"]:
+                task_id = int(task["id"])
+                result = "existing" if ref_on_task and ref_state == "active" else "linked"
+            else:
+                task_id = int(task["id"])
+                api_archived = ref_on_task and ref_state == "archived_by_api"
+                if not api_archived and not revive:
+                    raise ApiConflict("user_archived", "该单号的任务已被用户在网页里归档；如需恢复追踪请带 revive: true。")
+                conn.execute(
+                    """
+                    UPDATE tracking_tasks
+                    SET archived = 0, enabled = 1, seen_count = seen_count + 1, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (now, task_id),
+                )
+                result = "revived"
+
+            ref = _api_upsert_ref(conn, caller_id, account_id, number, task_id, "active", external_ref)
+            task_row = conn.execute("SELECT * FROM tracking_tasks WHERE id = ?", (task_id,)).fetchone()
+            view = _api_view(conn, task_row, ref)
+    return result, view
+
+
+def api_get_tracking(caller_id: int, account_id: int, number: str):
+    """返回 (task 或 None, 墓碑状态)。task 为 None 时第二项是 user_deleted（本调用方登记过、已被删）或 None。"""
+    with closing(_connect()) as conn:
+        task = _api_select_task(conn, account_id, number)
+        ref = _api_select_ref(conn, caller_id, account_id, number)
+        if task is None:
+            return None, ("user_deleted" if ref is not None else None)
+        return _api_view(conn, task, ref), None
+
+
+def api_archive_tracking(caller_id: int, account_id: int, number: str):
+    """幂等归档。返回 (result, task)，result：archived / already_archived；任务不存在返回 (None, 墓碑状态)。
+    已归档（不论谁归档的）直接返回，不改来源状态。
+    归档前先把引用这条任务、仍为 active 的来源记录标成 archived_by_api，触发器就不会把它们记成用户归档。"""
+    with closing(_connect()) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        with conn:
+            task = _api_select_task(conn, account_id, number)
+            ref = _api_select_ref(conn, caller_id, account_id, number)
+            if task is None:
+                return None, ("user_deleted" if ref is not None else None)
+            if task["archived"]:
+                return "already_archived", _api_view(conn, task, ref)
+            task_id = int(task["id"])
+            now = _ts()
+            conn.execute(
+                "UPDATE api_refs SET state = 'archived_by_api', updated_at = ? WHERE task_id = ? AND state = 'active'",
+                (now, task_id),
+            )
+            ref = _api_upsert_ref(conn, caller_id, account_id, number, task_id, "archived_by_api", None)
+            conn.execute(
+                "UPDATE tracking_tasks SET archived = 1, enabled = 0, updated_at = ? WHERE id = ?",
+                (now, task_id),
+            )
+            task_row = conn.execute("SELECT * FROM tracking_tasks WHERE id = ?", (task_id,)).fetchone()
+            view = _api_view(conn, task_row, ref)
+    return "archived", view

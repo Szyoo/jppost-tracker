@@ -95,7 +95,81 @@ bash install_bark.sh
 | GET/PUT | `/api/me` | 登录 | 查看 / 修改自己的资料与 Bark 设置 |
 | POST | `/me/update`、`/me/tasks`、`/me/tasks/<id>/update`、`/me/tasks/<id>/archive`、`/me/tasks/<id>/delete`、`/me/test-push` | 登录 | 个人页的表单提交版本 |
 
-JSON 接口统一返回 `{"status": "success" | "error", "message": …}`，未登录返回 401。
+JSON 接口统一返回 `{"status": "success" | "error", "message": …}`，未登录返回 401。以上接口靠登录会话或统一登录鉴权；机器接口 `/api/v1` 见下节。
+
+### 机器接口（/api/v1）
+
+给外部调用方（脚本、其他服务）用的令牌鉴权接口，只能操作令牌所绑定账号下的追踪任务。
+
+**签发令牌**（在仓库根目录；Docker 部署在容器里 `/app` 下执行同样的命令）：
+
+```bash
+python src/manage.py issue-caller <调用方名称> <本地账号用户名>   # 明文令牌只打印这一次
+python src/manage.py rotate-caller <调用方名称>                 # 换新令牌，旧令牌立即失效
+python src/manage.py revoke-caller <调用方名称>
+python src/manage.py list-callers                              # 不显示令牌
+```
+
+令牌形如 `jpt_…`，库里只存 SHA-256。已吊销的调用方可以用 `issue-caller` 以同名、同账号重新签发；换账号请换名称。
+
+**鉴权**：每个请求带 `Authorization: Bearer <令牌>`。`/api/v1` 只认令牌，不看会话 cookie，也不看统一登录的身份头；
+缺少、错误、已轮换或已吊销的令牌一律 401。所有响应都是 JSON，带 `Cache-Control: no-store`。
+
+**接口**
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/v1/ping` | 自检：返回 `{"caller": 调用方名称, "account": 绑定的账号用户名}` |
+| PUT | `/api/v1/tracking/<单号>` | 幂等登记：没有就新建（201），已有就关联或返回现状（200） |
+| GET | `/api/v1/tracking/<单号>?events=20` | 任务状态 + 最近 N 条时间线事件（默认 20，0–100） |
+| POST | `/api/v1/tracking/<单号>/archive` | 幂等归档（已归档也返回 200） |
+
+单号先去空白、转大写，再要求只含字母、数字、短横线，长度 6–40，否则 400。
+
+PUT 请求体可省略；给了必须是 JSON 对象，只接受下列字段（`null` 视为未给，多余字段 400）：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `label` | 字符串，≤100 | 备注，**只在新建任务时使用**；关联或恢复已有任务时不改它的备注、查询间隔、暂停状态 |
+| `external_ref` | 字符串，≤200 | 调用方自己的关联编号；给了就更新，不给保留原值 |
+| `revive` | 布尔 | 任务被用户在网页里删除或归档后，是否仍要重新追踪（见下） |
+
+PUT 响应 `{"result": …, "tracking": {…}}`，`result` 取值：`created`（新建，201）、`existing`（本调用方已登记且在追踪）、
+`linked`（关联到账号下已有的任务）、`revived`（从归档恢复）。
+
+`tracking` 对象字段：`tracking_number`、`label`、`external_ref`、`source_state`（本调用方的来源状态，未登记为 `null`）、
+`enabled`、`archived`、`last_tracking_info`、`last_checked_at`、`last_error`、`last_push_at`、`tracking_url`、`created_at`、`updated_at`。
+没有值的 `last_*` 与 `external_ref` 为 `null`；时间格式 `YYYY-MM-DD HH:MM:SS`（日本时间）。
+
+GET 响应 `{"tracking": {…}, "events": [{"id", "kind", "status", "detail", "tracking_number", "created_at"}, …]}`，事件按时间倒序，
+`kind` 取值同网页时间线：`status_change`、`push_ok`、`push_fail`、`query_error`、`query_recovered`。
+
+archive 响应 `{"result": "archived" | "already_archived", "tracking": {…}}`。
+
+**错误**统一为 `{"error": {"code": …, "message": …}}`：
+
+| HTTP | code | 场景 |
+|---|---|---|
+| 400 | `invalid_tracking_number` | 单号格式不合法 |
+| 400 | `invalid_body` | 请求体不是 JSON 对象、字段类型不对、超长、有未知字段 |
+| 400 | `invalid_query` | `events` 不是 0–100 的整数 |
+| 401 | `unauthorized` | 缺少令牌、令牌无效或已吊销 |
+| 404 | `not_found` | 本账号下没有这个单号，或接口不存在 |
+| 404 | `user_deleted` | GET / archive 时：本调用方登记过的任务已被用户删除 |
+| 405 | `method_not_allowed` | 请求方法不对 |
+| 409 | `user_deleted` | PUT 时：任务已被用户在网页里删除（或改成了别的单号），且未带 `revive: true` |
+| 409 | `user_archived` | PUT 时：任务已被用户在网页里归档，且未带 `revive: true` |
+
+**来源与墓碑语义**
+
+- 每个调用方登记过的单号都有一条来源记录。用户在网页里**删除**任务（或把它改成别的单号）后，记录保留为墓碑；
+  调用方再 PUT 同单号得到 409 `user_deleted`，不会自动建回。带 `revive: true` 才重新建任务（201，`label` 生效）。
+  如果用户自己又在网页里加回了这个单号，PUT 直接关联（200 `linked`）。
+- 用户在网页里**归档**的任务，PUT 得到 409 `user_archived`；带 `revive: true` 恢复追踪（200 `revived`），不改用户的备注与间隔。
+  用户在网页里自己取消归档后，PUT 照常返回 200。
+- 调用方**自己**用 archive 接口归档的任务，再 PUT 视为新一轮，不需要 `revive` 就会恢复追踪（200 `revived`）。
+- 账号下已有用户手动添加的同单号任务时，PUT 只做关联，不改它的备注、间隔、暂停状态，也不报错。
+- archive 对任何人归档的任务都幂等返回 200，但不会把「用户归档」改记成「调用方归档」。
 
 ### Socket.IO（仅管理员可连接）
 
@@ -141,7 +215,7 @@ JSON 接口统一返回 `{"status": "success" | "error", "message": …}`，未�
 
 日志写在 `logs/tracker.log`、`logs/bark.log`、`logs/remote_bark.log`，单个文件超过 2 MB 自动轮转，保留 `.1`～`.3` 三份旧文件。
 
-单号、检查间隔（30 秒～7 天）、Bark Keys 等按账号保存在 SQLite（`data/app.db`，表结构见 [docs/data-model.md](docs/data-model.md)），不在 `.env` 里。账号映射也可用命令行维护：`python src/manage.py list-accounts | map-account | unmap-account`。备份请一并保存 `.env`、`data/`、`bark-data/`。
+单号、检查间隔（30 秒～7 天）、Bark Keys 等按账号保存在 SQLite（`data/app.db`，表结构见 [docs/data-model.md](docs/data-model.md)），不在 `.env` 里。账号映射也可用命令行维护：`python src/manage.py list-accounts | map-account | unmap-account`；机器接口的调用方令牌见上文「机器接口」。备份请一并保存 `.env`、`data/`、`bark-data/`。
 
 ## 许可
 

@@ -26,6 +26,7 @@ import requests
 from szyyw_auth import login_url, sso_enabled
 from szyyw_auth.flask import current_identity, is_anonymous
 
+import api_v1
 import bark
 import env_schema
 from storage import (
@@ -516,6 +517,10 @@ def require_auth():
         return None
     if request.path.startswith('/socket.io'):
         return None
+    if api_v1.is_api_v1_path(request.path):
+        # 机器接口只认 Bearer 令牌，由 api_v1.authenticate_request 校验；
+        # 这里放行是为了不让会话 cookie / 门户身份头参与判断，不是免鉴权
+        return None
     if not is_authenticated():
         if request.endpoint in ANON_PAGE_ENDPOINTS and request.method in ('GET', 'HEAD') and is_anonymous_visitor():
             return None
@@ -530,6 +535,9 @@ def add_security_headers(response):
     if request.path in {'/', '/login', '/register', '/logout', '/update_env', '/remote_bark_status'}:
         response.headers["Cache-Control"] = "no-store"
     return response
+
+# 机器接口：令牌校验、统一 JSON 错误、no-store，都在 api_v1 里注册
+api_v1.register(app)
 
 @app.context_processor
 def inject_sso_flags():

@@ -70,6 +70,57 @@ task_events —— 发生过什么（一个任务 N 条）
 建表在 `ensure_storage` 里排在 v1→v2 迁移之后（`CREATE TABLE IF NOT EXISTS`，已有库启动时自动补表）。
 以后若要重建 `tracking_tasks`，下面那个外键坑同样适用于 `task_events`。
 
+## 机器接口：api_callers 与 api_refs
+
+```
+api_callers —— 谁在调（外部调用方，一个令牌一行）
+  id, name UNIQUE, account_id →accounts.id (ON DELETE CASCADE),
+  token_sha256 UNIQUE,            -- 只存令牌的 SHA-256 十六进制，不存明文
+  created_at, last_used_at,       -- last_used_at 节流写入（距上次超过 60 秒才写）
+  revoked (0/1), revoked_at
+
+api_refs —— 调用方登记过哪些单号（来源记录 + 墓碑）
+  id, caller_id →api_callers.id (ON DELETE CASCADE), account_id →accounts.id (ON DELETE CASCADE),
+  tracking_number, task_id（可空，无外键）, external_ref,
+  state CHECK IN (active, archived_by_api, user_archived, user_deleted),
+  created_at, updated_at
+  UNIQUE(caller_id, tracking_number), INDEX(task_id)
+```
+
+令牌绑定一个账号，接口只能碰这个账号下的任务；同名调用方只能以同一账号重新签发，所以 `caller_id` 对应的账号不会变。
+
+**为什么是新表而不是给 `tracking_tasks` 加列**：一条任务可以被多个调用方登记，各自有 `external_ref`；
+更关键的是任务被删除后来源信息还要留下来当墓碑，挂在任务行上的列会随行一起消失。新表也不需要重建 `tracking_tasks`。
+
+### state 穷举
+
+| state | 含义 | 再 PUT 同单号 |
+|---|---|---|
+| `active` | 已登记，任务在追踪（含暂停） | 200 `existing` |
+| `archived_by_api` | 调用方用 archive 接口归档 | 视为新一轮，直接恢复（200 `revived`） |
+| `user_archived` | 用户在网页里归档 | 409，带 `revive` 才恢复 |
+| `user_deleted` | 用户删除了任务或改走了单号；`task_id` 已置空（墓碑） | 409，带 `revive` 才重建；用户自己加回了就直接关联 |
+
+### 墓碑由触发器维护
+
+`task_id` 刻意不设外键（上面那个「RENAME 重定向外键 + DROP 级联」的坑会把来源记录一起弄丢），
+状态由建在 `tracking_tasks` 上的四个触发器维护，对任何删除/归档路径（网页、管理员、账号级联删除、以后新增的代码）都生效：
+
+- `trg_api_refs_task_delete`（BEFORE DELETE）：引用该任务的记录 → `task_id = NULL`、`user_deleted`。必须是 BEFORE，删除后就找不到引用了。
+- `trg_api_refs_task_renumber`（改 `tracking_number`）：同上——原单号已不由这条任务追踪。
+- `trg_api_refs_task_archive`（`archived` 0→1）：仍为 `active` 的记录 → `user_archived`。
+  接口自己归档时先把记录改成 `archived_by_api` 再归档任务，触发器就不会误记成用户归档。
+- `trg_api_refs_task_unarchive`（`archived` 1→0）：`user_archived` / `archived_by_api` → `active`（不论谁取消的归档）。
+
+读取时另有一层防御：记录的 `task_id` 指向的任务不存在或单号对不上，按 `user_deleted` 处理。
+
+接口的写入不走 `_insert_task`：网页侧「已归档就复活并覆盖备注、间隔」的语义不适合调用方；
+接口新建任务只用 `label`，关联或恢复已有任务时不改备注、间隔、暂停状态（恢复会把 `enabled` 置 1）。
+写入用 `BEGIN IMMEDIATE`，同单号的并发 PUT 串行执行。
+
+两张表在 `ensure_storage` 里排在最后建（`CREATE TABLE / TRIGGER IF NOT EXISTS`），已有库启动时自动补上，不动已有数据。
+以后若要重建 `tracking_tasks`，触发器会随旧表一起被删，重建后需重新创建（再跑一次 `ensure_storage` 即可）。
+
 ## v1 → v2 迁移
 
 `ensure_storage()` 启动时自动跑，幂等（判据：`accounts` 是否还有 `tracking_number` 列）。
