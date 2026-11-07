@@ -14,41 +14,36 @@
   <body>
     <div class="bg-layer"></div>
 
-    <div class="auth-shell">
-      <div class="auth-card glass rise{% if error %} shake{% endif %}">
-        <div class="auth-eyebrow">JP Post Tracker</div>
-        <h1 class="app-title auth-heading">登录</h1>
-        <p class="auth-subtitle">输入用户名和密码后，系统会按你的角色进入管理员后台或个人门户。</p>
+    <div class="app-frame">
+      <main class="app-main auth-shell">
+        <div class="glass auth-card rise{% if error %} shake{% endif %}">
+          <p class="app-sub">JP Post Tracker</p>
+          <h1 class="app-title">登录</h1>
+          <p class="auth-sub">输入用户名和密码后，系统会按你的角色进入管理员后台或个人门户。</p>
 
-        {% if error %}
-        <div class="message err-text">{{ error }}</div>
-        {% endif %}
+          <form method="post" class="stack">
+            {%- if error %}
+            <p class="callout err" role="alert">{{ error }}</p>
+            {%- endif %}
+            <input type="hidden" name="next" value="{{ next_target }}" />
 
-        <form method="post" class="auth-form stack">
-          <input type="hidden" name="next" value="{{ next_target }}" />
+            <div class="form-row">
+              <label for="username">用户名</label>
+              <input id="username" name="username" type="text" class="field" autocomplete="username" placeholder="输入用户名" required />
+            </div>
 
-          <div>
-            <label for="username">用户名</label>
-            <input id="username" name="username" type="text" class="field" autocomplete="username" placeholder="输入用户名" required />
-          </div>
+            <div class="form-row">
+              <label for="password">密码</label>
+              <input id="password" name="password" type="password" class="field" autocomplete="current-password" placeholder="输入密码" required />
+            </div>
 
-          <div>
-            <label for="password">密码</label>
-            <input id="password" name="password" type="password" class="field" autocomplete="current-password" placeholder="输入密码" required />
-          </div>
+            <button type="submit" class="btn">进入</button>
+          </form>
 
-          <button type="submit" class="btn">进入</button>
-        </form>
-
-        <div class="auth-link-row">
-          <span>还没有普通用户账号？</span>
-          <a class="link" href="{{ url_for('register', next=next_target) }}">去注册</a>
+          <p class="auth-foot">还没有普通用户账号？<a class="link" href="{{ url_for('register', next=next_target) }}">去注册</a></p>
+          <p class="auth-foot">当前管理员引导用户名：<code>{{ admin_username }}</code></p>
         </div>
-
-        <div class="auth-help">
-          当前管理员引导用户名：<code>{{ admin_username }}</code>
-        </div>
-      </div>
+      </main>
     </div>
 
     <script type="module" src="/static/boot.js"></script>

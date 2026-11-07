@@ -83,10 +83,11 @@
                 v-for="item in overviewFilters"
                 :key="item.key"
                 type="button"
-                :class="['chip', { active: overviewFilter === item.key }]"
+                class="chip"
+                :aria-pressed="overviewFilter === item.key"
                 @click="overviewFilter = item.key"
               >
-                [[ item.label ]] [[ item.count ]]
+                [[ item.label ]]<span class="count">[[ item.count ]]</span>
               </button>
             </div>
 
@@ -145,8 +146,8 @@
               <div class="service-card inner">
                 <div class="service-card-head">
                   <h3>追踪脚本</h3>
-                  <span class="status-line">
-                    <span :class="['status-dot', script.running ? 'on' : 'off']"></span>
+                  <span class="dot-label">
+                    <span :class="['dot', script.running ? 'ok' : 'idle']"></span>
                     [[ script.running ? '运行中' : '未启动' ]]
                   </span>
                 </div>
@@ -161,8 +162,8 @@
               <div class="service-card inner" v-if="barkHelp.local_bark_enabled">
                 <div class="service-card-head">
                   <h3>Bark 服务</h3>
-                  <span class="status-line">
-                    <span :class="['status-dot', bark.running ? 'on' : 'off']"></span>
+                  <span class="dot-label">
+                    <span :class="['dot', bark.running ? 'ok' : 'idle']"></span>
                     [[ bark.running ? '运行中' : '未启动' ]]
                   </span>
                 </div>
@@ -201,10 +202,10 @@
           <div class="env-intro">
             <p class="hint">这里编辑的是全局 <code>.env</code>。用户自己的单号、Bark Keys 和推送参数不在这里改。</p>
             <p class="hint">
-              字段右上角标着生效时机：<span class="pill green">即时生效</span> 保存即可，
+              字段右上角标着生效时机：<span class="pill ok">即时生效</span> 保存即可，
               <span class="pill cyan">脚本下次查询时生效</span> 控制台保存即生效、追踪脚本在下次查询前重读，
               <span class="pill violet">下次启动 Bark 时生效</span> 要等本地 Bark 重新启动，
-              <span class="pill amber">需重启 Web</span> 要重启控制台进程才会被读到。
+              <span class="pill warn">需重启 Web</span> 要重启控制台进程才会被读到。
             </p>
           </div>
           <form @submit.prevent="saveEnv">
@@ -212,7 +213,7 @@
               <section v-for="group in envGroups" :key="group.key" class="env-group inner">
                 <div class="env-group-head">
                   <h3 class="env-group-title">[[ group.title ]]</h3>
-                  <span v-if="group.badge" :class="['pill', group.badge_tone || 'amber']">[[ group.badge ]]</span>
+                  <span v-if="group.badge" :class="['pill', group.badge_tone || 'warn']">[[ group.badge ]]</span>
                 </div>
                 <p class="env-group-desc">[[ group.desc ]]</p>
 
@@ -305,24 +306,24 @@
               <p class="hint">账号建好后在下面的"追踪任务"里添加单号。</p>
             </div>
 
-            <div class="user-list stagger">
+            <div class="list gap stagger">
               <button
                 v-for="user in users"
                 :key="user.id"
                 type="button"
-                :class="['user-item', { active: selectedUserId === user.id }]"
+                :class="['list-row', { selected: selectedUserId === user.id }]"
                 @click="selectUser(user.id)"
               >
-                <div class="user-item-top">
-                  <strong>[[ user.display_name ]]</strong>
-                  <span :class="['pill', user.role === 'admin' ? 'cyan' : 'violet']">[[ user.role ]]</span>
-                </div>
-                <div class="user-item-line">用户名 [[ user.username ]]</div>
-                <div class="user-item-line">任务 启用 [[ user.active_task_count || 0 ]] / 全部 [[ user.task_count || 0 ]] · 登录 [[ user.login_enabled ? '开' : '关' ]]</div>
-                <div class="user-item-line">归档 [[ (user.archived_tasks || []).length ]] 个 · Keys [[ user.bark_keys_masked || '未设置' ]]</div>
-                {%- if sso_on %}
-                <div class="user-item-line">门户 ID [[ user.portal_sub || '未映射' ]]</div>
-                {%- endif %}
+                <span class="row-main">
+                  <span class="row-title">[[ user.display_name ]]</span>
+                  <span class="row-sub">用户名 [[ user.username ]]</span>
+                  <span class="row-sub">任务 启用 [[ user.active_task_count || 0 ]] / 全部 [[ user.task_count || 0 ]] · 登录 [[ user.login_enabled ? '开' : '关' ]]</span>
+                  <span class="row-sub">归档 [[ (user.archived_tasks || []).length ]] 个 · Keys [[ user.bark_keys_masked || '未设置' ]]</span>
+                  {%- if sso_on %}
+                  <span class="row-sub">门户 ID [[ user.portal_sub || '未映射' ]]</span>
+                  {%- endif %}
+                </span>
+                <span class="row-end"><span :class="['pill', user.role === 'admin' ? 'cyan' : 'violet']">[[ user.role ]]</span></span>
               </button>
             </div>
           </div>

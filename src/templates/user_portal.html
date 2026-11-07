@@ -15,8 +15,9 @@
     {#- 任务时间线：先渲染最近几条，更多的由 /static/timeline.js 调 /api/tasks/<id>/events 追加（行结构与 timeline.js 的 buildRow 一致） #}
     {%- macro task_timeline(task) %}
     {%- set page = task_events[task.id] %}
-    <details class="task-timeline" data-task-timeline="{{ task.id }}" data-number="{{ task.tracking_number }}"{% if page.has_more %} data-next-before="{{ page.events[-1].id }}"{% endif %}>
+    <details class="disclosure flush task-timeline" data-task-timeline="{{ task.id }}" data-number="{{ task.tracking_number }}"{% if page.has_more %} data-next-before="{{ page.events[-1].id }}"{% endif %}>
       <summary>时间线</summary>
+      <div class="disclosure-body">
       {%- if page.events %}
       <ol class="timeline-list">
         {%- for ev in page.events %}
@@ -39,6 +40,7 @@
       {%- else %}
       <div class="empty">还没有记录。物流状态变化、推送结果和查询出错都会记在这里。</div>
       {%- endif %}
+      </div>
     </details>
     {%- endmacro %}
     <div class="bg-layer"></div>
@@ -84,7 +86,7 @@
         <div class="panel glass rise">
           <div class="panel-head">
             <h2 class="panel-title">我的追踪任务</h2>
-            <span class="pill {{ 'green' if account.active_task_count else '' }}">
+            <span class="pill {{ 'ok' if account.active_task_count else '' }}">
               {{ '启用中 %d 个' % account.active_task_count if account.active_task_count else '暂无启用任务' }}
             </span>
           </div>
@@ -95,7 +97,7 @@
             <form method="post" action="/me/tasks/{{ task.id }}/update" class="task-item inner">
               <div class="task-item-head">
                 <strong>{{ task.tracking_number }}</strong>
-                <span class="pill {% if not task.enabled %}{% elif task.last_error %}red{% else %}green{% endif %}">
+                <span class="pill {% if not task.enabled %}{% elif task.last_error %}err{% else %}ok{% endif %}">
                   {% if not task.enabled %}已停用{% elif task.last_error %}轮询异常{% else %}追踪中{% endif %}
                 </span>
               </div>

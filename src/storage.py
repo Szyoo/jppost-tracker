@@ -23,11 +23,11 @@ MAX_CHECK_INTERVAL = 7 * 24 * 3600
 # 任务事件（时间线）的类型穷举：写入时校验，前端文案/配色映射与之一一对应（测试会比对两边）。
 EVENT_KIND_META = {
     "status_change": {"label": "状态变化", "tone": "violet"},
-    "push_ok": {"label": "推送成功", "tone": "green"},
-    "push_fail": {"label": "推送失败", "tone": "red"},
-    "query_error": {"label": "查询出错", "tone": "amber"},
+    "push_ok": {"label": "推送成功", "tone": "ok"},
+    "push_fail": {"label": "推送失败", "tone": "err"},
+    "query_error": {"label": "查询出错", "tone": "warn"},
     "query_recovered": {"label": "查询恢复", "tone": "cyan"},
-    "auto_archived": {"label": "签收自动归档", "tone": "green"},
+    "auto_archived": {"label": "签收自动归档", "tone": "ok"},
 }
 EVENT_KINDS = frozenset(EVENT_KIND_META)
 

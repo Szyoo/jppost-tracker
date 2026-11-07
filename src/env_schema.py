@@ -11,7 +11,7 @@ import urllib.parse
 APPLY_META = {
     "live": {
         "label": "即时生效",
-        "tone": "green",
+        "tone": "ok",
         "note": "已即时生效：",
     },
     "tracker": {
@@ -26,7 +26,7 @@ APPLY_META = {
     },
     "restart": {
         "label": "需重启 Web",
-        "tone": "amber",
+        "tone": "warn",
         "note": "需重启 Web 服务后生效：",
     },
 }
@@ -137,7 +137,7 @@ GROUPS = [
         "key": "local_bark",
         "title": "本地 Bark 服务",
         "badge": "仅控制台托管 Bark 时有效",
-        "badge_tone": "amber",
+        "badge_tone": "warn",
         "desc": "只有让控制台自己以子进程方式跑 Bark Server 时，这一组才有意义。线上 VPS 用的是独立 Bark 容器，整组保持关闭即可。",
         "fields": [
             {

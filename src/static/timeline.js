@@ -5,11 +5,11 @@
 // 后端新增类型时这里必须同步补上，漏了就在控制台报错而不是悄悄显示原值。
 export const EVENT_KIND_META = Object.freeze({
     status_change: { label: '状态变化', tone: 'violet' },
-    push_ok: { label: '推送成功', tone: 'green' },
-    push_fail: { label: '推送失败', tone: 'red' },
-    query_error: { label: '查询出错', tone: 'amber' },
+    push_ok: { label: '推送成功', tone: 'ok' },
+    push_fail: { label: '推送失败', tone: 'err' },
+    query_error: { label: '查询出错', tone: 'warn' },
     query_recovered: { label: '查询恢复', tone: 'cyan' },
-    auto_archived: { label: '签收自动归档', tone: 'green' },
+    auto_archived: { label: '签收自动归档', tone: 'ok' },
 });
 
 export const eventKindMeta = (kind) => {

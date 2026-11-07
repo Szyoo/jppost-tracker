@@ -6,6 +6,8 @@ const MAX_LOG_LINES = 500;
 const toastReady = import('@szyyw/design/toast.js');
 // 时间线的事件类型映射与分页拉取和门户页共用一份（/static/timeline.js，ES module）
 const timelineReady = import('/static/timeline.js');
+// 删除确认用包的对话框（danger 样式）
+const confirmReady = import('@szyyw/design/confirm.js');
 
 // 日志行用 v-html 渲染（要保留换行），内容来自子进程输出与公网 Bark 日志，可能含任意文本：
 // 必须先整行 HTML 转义，再把换行换成 <br>，否则日志里的标签会被当成 HTML 执行（XSS）
@@ -219,15 +221,15 @@ const app = createApp({
                 return { tone: '', label: emptyLabel };
             }
             if (errors) {
-                return { tone: 'red', label: `${errors} 个任务异常` };
+                return { tone: 'err', label: `${errors} 个任务异常` };
             }
             if (!active) {
                 return { tone: '', label: '任务全部停用' };
             }
             if (!script.value.running) {
-                return { tone: 'amber', label: '追踪脚本未运行' };
+                return { tone: 'warn', label: '追踪脚本未运行' };
             }
-            return { tone: 'green', label: `${okLabel} ${active} 个` };
+            return { tone: 'ok', label: `${okLabel} ${active} 个` };
         };
         const countErrorTasks = (tasks) => tasks.filter((task) => taskState(task).key === 'error').length;
 
@@ -254,15 +256,15 @@ const app = createApp({
                 return { key: 'paused', tone: '', label: '已停用', weight: 4 };
             }
             if (task.last_error) {
-                return { key: 'error', tone: 'red', label: '轮询异常', weight: 0 };
+                return { key: 'error', tone: 'err', label: '轮询异常', weight: 0 };
             }
             if (!script.value.running) {
-                return { key: 'idle', tone: 'amber', label: '待启动脚本', weight: 1 };
+                return { key: 'idle', tone: 'warn', label: '待启动脚本', weight: 1 };
             }
             if (!task.last_checked_at) {
-                return { key: 'fresh', tone: 'amber', label: '尚未检查', weight: 2 };
+                return { key: 'fresh', tone: 'warn', label: '尚未检查', weight: 2 };
             }
-            return { key: 'ok', tone: 'green', label: '追踪中', weight: 3 };
+            return { key: 'ok', tone: 'ok', label: '追踪中', weight: 3 };
         };
 
         const taskTone = (task) => taskState(task).tone;
@@ -705,8 +707,15 @@ const app = createApp({
             );
         };
 
-        const deleteTask = (task, scope = 'user') => {
-            if (!window.confirm(`确认删除单号 ${task.tracking_number} 的追踪任务？删除后档案也会一起消失。`)) return;
+        const deleteTask = async (task, scope = 'user') => {
+            const { confirm } = await confirmReady;
+            const confirmed = await confirm({
+                title: '删除追踪任务',
+                message: `确认删除单号 ${task.tracking_number} 的追踪任务？删除后档案也会一起消失。`,
+                confirmLabel: '删除',
+                danger: true,
+            });
+            if (!confirmed) return;
             return sendTaskRequest(`/api/tasks/${task.id}`, 'DELETE', undefined, '删除追踪任务时发生错误。', scope);
         };
 
@@ -920,8 +929,9 @@ app.component('task-timeline', {
         return { events, loading, loaded, failed, nextBefore, load, onToggle, extraText };
     },
     template: `
-        <details class="task-timeline" @toggle="onToggle">
+        <details class="disclosure flush task-timeline" @toggle="onToggle">
             <summary>时间线</summary>
+            <div class="disclosure-body">
             <p v-if="loading && !events.length" class="hint">加载中…</p>
             <div v-else-if="failed && !events.length" class="empty">[[ failed ]]</div>
             <div v-else-if="loaded && !events.length" class="empty">还没有记录。物流状态变化、推送结果和查询出错都会记在这里。</div>
@@ -937,6 +947,7 @@ app.component('task-timeline', {
             </ol>
             <p v-if="failed && events.length" class="hint">[[ failed ]]</p>
             <button v-if="nextBefore" type="button" class="btn-ghost btn-small" :disabled="loading" @click="load(true)">加载更多</button>
+            </div>
         </details>
     `,
 });
