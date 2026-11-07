@@ -1,6 +1,6 @@
 /* ============================================================
    jppost-tracker 应用层样式
-   基础层来自 vendor 的 @szyyw/design（tokens.css + components.css），
+   基础层来自 CDN 的 @szyyw/design（tokens.css + components.css），
    这里只放本项目特有的组件；颜色一律引用 token，禁止硬编码
    （否则浅色模式/换配色会漏色，见上游 DESIGN.md §2）。
    ============================================================ */
@@ -9,15 +9,15 @@ code {
   color: var(--accent);
   background: var(--inner-bg);
   border: 1px solid var(--glass-border);
-  border-radius: 6px;
-  padding: 1px 6px;
+  border-radius: var(--r-xs);
+  padding: 1px var(--sp-2);
   word-break: break-all;
 }
 
 /* ---------- 页面骨架 ---------- */
 
 .page {
-  padding-block: 28px 64px;
+  padding-block: var(--sp-5) 64px;
 }
 
 /* ---------- 页头 ----------
@@ -27,7 +27,7 @@ code {
   padding-top: 0;
   padding-left: 0;
   min-height: 0;
-  margin-bottom: 26px;
+  margin-bottom: var(--sp-5);
 }
 
 .app-header.page-header .app-actions {
@@ -35,50 +35,49 @@ code {
 }
 
 .current-user {
-  font-size: 13px;
+  font-size: var(--fs-md);
   color: var(--text-dim);
 }
 
 /* ---------- 页签（包的 .tabs > .tab，玻璃底在外层容器上，轨道本身不覆写） ---------- */
 
 .nav-bar {
-  padding: 6px;
+  padding: var(--sp-2);
 }
 
 .log-tabs {
-  margin-bottom: 16px;
+  margin-bottom: var(--sp-4);
 }
 
 /* ---------- 表单补充 ---------- */
 
-/* 等宽字体来自包的 .mono，这里只管高度与拖拽方向 */
+/* 等宽字体来自包的 .mono，这里只管拖拽方向 */
 textarea.field {
   resize: vertical;
-  min-height: 90px;
 }
 
 /* 本项目表单用固定两列 + .full 跨行（包的 .form-grid 是 auto-fit，用修饰类而不是改写它） */
 .form-grid.two-col {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: var(--sp-4);
 }
 
 .form-grid.two-col > .full {
   grid-column: 1 / -1;
 }
 
-/* 面板开头的说明行：包的 .hint 是「字段下方提示」（上边距 6px），放在段首时改成下边距 */
+/* 面板开头的说明行：包的 .hint 是「字段下方提示」（上边距 --sp-1），放在段首时改成下边距 */
 .hint.lead {
-  margin: 0 0 14px;
+  margin: 0 0 var(--sp-4);
 }
 
 /* 面板里的次级卡片（Bark 预览、新增账号） */
 .sub-card {
-  padding: 14px;
+  padding: var(--sp-4);
 }
 
 .sub-card.create-user {
-  margin-bottom: 14px;
+  margin-bottom: var(--sp-4);
 }
 
 /* ---------- 开关 ---------- */
@@ -86,8 +85,8 @@ textarea.field {
 .switch-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 14px;
+  gap: var(--sp-3);
+  font-size: var(--fs-base);
   color: var(--text);
   margin: 0;
   cursor: pointer;
@@ -96,7 +95,7 @@ textarea.field {
 
 .switch-group {
   display: flex;
-  gap: 22px;
+  gap: var(--sp-5);
   flex-wrap: wrap;
 }
 
@@ -108,40 +107,6 @@ textarea.field {
 
 .switch-row.is-locked .switch {
   cursor: not-allowed;
-}
-
-/* ---------- 表单旁常驻的错误提示（颜色用包的 .err-text，这里只管位置）；瞬时反馈走 toast() ---------- */
-
-.message {
-  margin-top: 12px;
-}
-
-/* ---------- 状态点 ---------- */
-
-.status-line {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--text-dim);
-}
-
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--text-dim) 50%, transparent);
-  flex: none;
-}
-
-.status-dot.on {
-  background: var(--ok);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--ok) 60%, transparent);
-}
-
-.status-dot.err {
-  background: var(--err);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--err) 60%, transparent);
 }
 
 /* ---------- 指标卡（包的 .stat-*）：有异常时整块跳出来，不用用户去数 ---------- */
@@ -156,18 +121,18 @@ textarea.field {
 }
 
 .stat-grid.detail-stats {
-  margin-bottom: 18px;
+  margin-bottom: var(--sp-4);
 }
 
 .overview-filters {
-  margin-bottom: 14px;
+  margin-bottom: var(--sp-4);
 }
 
 /* ---------- 首页任务总览（跨账号一行一个任务） ---------- */
 
 .overview-table {
   display: grid;
-  gap: 10px;
+  gap: var(--sp-3);
 }
 
 /* 桌面像表格，窄屏塌成卡片。末列写死宽度而不用 auto：
@@ -176,14 +141,14 @@ textarea.field {
 .overview-row {
   display: grid;
   grid-template-columns: 92px minmax(0, 1.1fr) minmax(0, 0.9fr) minmax(0, 1.8fr) 84px;
-  gap: 12px;
+  gap: var(--sp-3);
   align-items: center;
 }
 
 .overview-head {
   /* 左边多 3px 补数据行的状态色条，表头才和单元格对齐 */
-  padding: 0 14px 0 17px;
-  font-size: 11px;
+  padding: 0 var(--sp-4) 0 calc(var(--sp-4) + 3px);
+  font-size: var(--fs-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -191,9 +156,9 @@ textarea.field {
 }
 
 .overview-row {
-  padding: 12px 14px;
+  padding: var(--sp-3) var(--sp-4);
   border-left: 3px solid color-mix(in srgb, var(--text-dim) 30%, transparent);
-  transition: border-color 0.2s var(--ease), background 0.2s var(--ease);
+  transition: border-color var(--dur-base) var(--ease), background var(--dur-base) var(--ease);
 }
 
 .overview-row:hover {
@@ -228,26 +193,26 @@ textarea.field {
 }
 
 .overview-number {
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.03em;
   overflow-wrap: anywhere;
 }
 
 .overview-owner {
-  font-size: 13px;
+  font-size: var(--fs-md);
   color: var(--text);
   overflow-wrap: anywhere;
 }
 
 .overview-sub {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-dim);
   overflow-wrap: anywhere;
 }
 
 .overview-result {
-  font-size: 13px;
+  font-size: var(--fs-md);
   color: var(--text);
   overflow-wrap: anywhere;
 }
@@ -265,38 +230,38 @@ textarea.field {
 .layout-main-side {
   display: grid;
   grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
-  gap: 16px;
+  gap: var(--sp-4);
   align-items: start;
 }
 
 .side-stack {
   display: grid;
-  gap: 16px;
+  gap: var(--sp-4);
 }
 
 /* ---------- 追踪任务 ---------- */
 
 .task-list {
   display: grid;
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-4);
 }
 
 .task-item {
-  padding: 14px 16px;
+  padding: var(--sp-4);
   display: grid;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 
 .task-item-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--sp-3);
 }
 
 .task-item-head strong {
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.03em;
   overflow-wrap: anywhere;
@@ -306,56 +271,42 @@ textarea.field {
 .task-fields {
   display: grid;
   grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 0.8fr);
-  gap: 12px;
+  gap: var(--sp-3);
 }
 
 .task-field {
   display: grid;
-  gap: 6px;
+  gap: var(--sp-2);
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-dim);
   cursor: text;
 }
 
 .task-meta {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-dim);
   overflow-wrap: anywhere;
 }
 
 .task-create {
-  padding: 14px 16px;
+  padding: var(--sp-4);
 }
 
 .task-create .switch-row {
-  margin-top: 12px;
+  margin-top: var(--sp-3);
 }
 
 .task-create + .task-list {
-  margin-top: 16px;
+  margin-top: var(--sp-4);
 }
 
 .task-item .actions {
-  margin-top: 4px;
+  margin-top: var(--sp-1);
 }
 
 /* ---------- 任务时间线（状态变化 / 推送 / 查询出错） ---------- */
-
-.task-timeline {
-  font-size: 12px;
-}
-
-.task-timeline > summary {
-  cursor: pointer;
-  color: var(--text-dim);
-  width: fit-content;
-}
-
-.task-timeline[open] > summary {
-  margin-bottom: 8px;
-}
 
 /* 首页总览的时间线占满整行，不挤进某一列 */
 .overview-row > .overview-timeline {
@@ -364,18 +315,18 @@ textarea.field {
 
 .timeline-list {
   list-style: none;
-  margin: 0 0 8px;
+  margin: 0 0 var(--sp-2);
   padding: 0;
   display: grid;
-  gap: 6px;
+  gap: var(--sp-2);
 }
 
 .timeline-row {
   display: grid;
   grid-template-columns: 136px 72px minmax(0, 1fr);
-  gap: 10px;
+  gap: var(--sp-3);
   align-items: start;
-  padding: 6px 0;
+  padding: var(--sp-2) 0;
   border-top: 1px solid color-mix(in srgb, var(--text-dim) 15%, transparent);
 }
 
@@ -418,28 +369,28 @@ textarea.field {
 
 .history-list {
   display: grid;
-  gap: 10px;
+  gap: var(--sp-3);
 }
 
 .history-item {
-  padding: 10px 14px;
+  padding: var(--sp-3) var(--sp-4);
   display: grid;
   gap: 2px;
 }
 
 .history-item strong {
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.03em;
 }
 
 .history-item span {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-dim);
 }
 
 .history-item .actions {
-  margin-top: 8px;
+  margin-top: var(--sp-2);
 }
 
 /* ---------- 用户管理 ---------- */
@@ -447,72 +398,27 @@ textarea.field {
 .users-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.7fr);
-  gap: 16px;
+  gap: var(--sp-4);
   align-items: start;
-}
-
-.user-list {
-  display: grid;
-  gap: 10px;
-}
-
-.user-item {
-  appearance: none;
-  font: inherit;
-  text-align: left;
-  color: var(--text);
-  padding: 12px 14px;
-  cursor: pointer;
-  width: 100%;
-  background: var(--inner-bg);
-  border: 1px solid var(--glass-border);
-  border-radius: 10px;
-  transition: border-color 0.2s var(--ease), background 0.2s var(--ease);
-}
-
-.user-item:hover {
-  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
-}
-
-.user-item.active {
-  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
-  background: color-mix(in srgb, var(--accent) 9%, transparent);
-}
-
-.user-item-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 4px;
-}
-
-.user-item-top strong {
-  font-size: 14px;
-}
-
-.user-item-line {
-  font-size: 12px;
-  color: var(--text-dim);
 }
 
 /* ---------- 手顺步骤 ---------- */
 
 .guide-steps {
   display: grid;
-  gap: 14px;
+  gap: var(--sp-4);
 }
 
 .guide-step {
   display: flex;
-  gap: 12px;
+  gap: var(--sp-3);
   align-items: flex-start;
 }
 
 /* 渐变字来自包的 .grad-text */
 .guide-step-no {
   flex: none;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   padding-top: 2px;
@@ -520,13 +426,13 @@ textarea.field {
 
 .guide-step strong {
   display: block;
-  font-size: 14px;
+  font-size: var(--fs-base);
   margin-bottom: 2px;
 }
 
 .guide-step p {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-md);
   color: var(--text-dim);
 }
 
@@ -535,7 +441,7 @@ textarea.field {
 .term-body.log-body {
   height: 460px;
   max-height: none;
-  padding: 12px 14px;
+  padding: var(--sp-3) var(--sp-4);
 }
 
 /* 空行也占一行高，日志段落才不会挤在一起 */
@@ -547,36 +453,36 @@ textarea.field {
 
 .env-intro {
   display: grid;
-  gap: 6px;
-  margin-bottom: 16px;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-4);
 }
 
 .env-groups {
   display: grid;
-  gap: 14px;
+  gap: var(--sp-4);
 }
 
 .env-group {
-  padding: 16px 18px;
+  padding: var(--sp-4);
 }
 
 .env-group-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-3);
   flex-wrap: wrap;
-  margin-bottom: 4px;
+  margin-bottom: var(--sp-1);
 }
 
 .env-group-title {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--fs-body);
   font-weight: 600;
 }
 
 .env-group-desc {
-  margin: 0 0 14px;
-  font-size: 12px;
+  margin: 0 0 var(--sp-4);
+  font-size: var(--fs-sm);
   line-height: 1.6;
   color: var(--text-dim);
 }
@@ -584,7 +490,7 @@ textarea.field {
 .env-fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: var(--sp-4);
 }
 
 .env-field {
@@ -600,99 +506,42 @@ textarea.field {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 6px;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-2);
 }
 
 .env-field-label {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-md);
   font-weight: 500;
   color: var(--text);
   display: inline-flex;
   align-items: baseline;
-  gap: 6px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
 }
 
 .env-field-desc {
-  margin: 6px 0 0;
-  font-size: 12px;
+  margin: var(--sp-2) 0 0;
+  font-size: var(--fs-sm);
   line-height: 1.6;
   color: var(--text-dim);
 }
 
 /* 样子来自包的 .callout.info */
 .env-apply-note {
-  margin: 12px 0 0;
+  margin: var(--sp-3) 0 0;
 }
 
 /* 变量名是运维改 .env 时的索引，保留但压成次要信息 */
 .env-key {
   display: inline-block;
-  margin-top: 6px;
-  font-size: 11px;
+  margin-top: var(--sp-2);
+  font-size: var(--fs-xs);
   letter-spacing: 0.02em;
   color: var(--text-dim);
   background: color-mix(in srgb, var(--text-dim) 10%, transparent);
   border-color: color-mix(in srgb, var(--glass-border) 60%, transparent);
-}
-
-/* ---------- 认证页 ---------- */
-
-.auth-shell {
-  position: relative;
-  z-index: 1;
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-}
-
-.auth-card {
-  width: min(400px, 100%);
-  padding: 32px 30px;
-}
-
-.auth-eyebrow {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
-  color: var(--text-dim);
-  margin-bottom: 8px;
-}
-
-/* 标题字样来自包的 .app-title，这里只管与下方的间距 */
-.auth-heading {
-  margin: 0 0 8px;
-}
-
-.auth-subtitle {
-  margin: 0 0 20px;
-  font-size: 13px;
-  color: var(--text-dim);
-}
-
-/* 表单本身是包的 .stack（字段之间的间距由 gap 给）；提交按钮单独再隔开一点 */
-.auth-form > .btn {
-  margin-top: 4px;
-}
-
-.auth-link-row {
-  margin-top: 18px;
-  font-size: 13px;
-  color: var(--text-dim);
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.auth-help {
-  margin-top: 14px;
-  font-size: 12px;
-  color: var(--text-dim);
 }
 
 /* ---------- 服务控制 ---------- */
@@ -701,34 +550,34 @@ textarea.field {
 .service-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 14px;
+  gap: var(--sp-4);
   align-items: start;
 }
 
 .service-card {
-  padding: 14px 16px;
+  padding: var(--sp-4);
 }
 
 .service-card-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 10px;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-3);
 }
 
 .service-card-head h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-weight: 600;
 }
 
 .remote-line {
   display: flex;
-  gap: 8px;
-  font-size: 12px;
+  gap: var(--sp-2);
+  font-size: var(--fs-sm);
   color: var(--text-dim);
-  margin-top: 4px;
+  margin-top: var(--sp-1);
   overflow-wrap: anywhere;
 }
 
@@ -746,7 +595,7 @@ textarea.field {
 
 ::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--text-dim) 30%, transparent);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -768,7 +617,7 @@ textarea.field {
 
   .overview-row {
     grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
+    gap: var(--sp-2);
   }
 
   .overview-action {
@@ -778,7 +627,7 @@ textarea.field {
 
 @media (max-width: 640px) {
   .page {
-    padding-block: 20px 48px;
+    padding-block: var(--sp-4) 48px;
   }
 
   .form-grid.two-col,
@@ -788,14 +637,14 @@ textarea.field {
   }
 
   .env-group {
-    padding: 14px;
+    padding: var(--sp-4);
   }
 
   /* 窄屏字段名容易被挤断，胶囊换到下一行 */
   .env-field-head {
     flex-direction: column;
     align-items: flex-start;
-    gap: 4px;
+    gap: var(--sp-1);
   }
 
   .term-body.log-body {
