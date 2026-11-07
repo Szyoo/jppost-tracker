@@ -1,15 +1,15 @@
-// 任务时间线：事件类型的文案/配色映射 + 分页拉取 + 门户页（服务端渲染）的「加载更多」。
+// 任务时间线：事件类型的文案/配色/圆点映射 + 分页拉取 + 门户页（服务端渲染）的「加载更多」。
 // 管理后台（app.js，Vue）动态 import 本文件复用映射与拉取；门户页直接以 module 引入。
 
 // 与 storage.EVENT_KIND_META 一一对应（tests 会比对两边），不提供「未知类型」兜底：
 // 后端新增类型时这里必须同步补上，漏了就在控制台报错而不是悄悄显示原值。
 export const EVENT_KIND_META = Object.freeze({
-    status_change: { label: '状态变化', tone: 'violet' },
-    push_ok: { label: '推送成功', tone: 'ok' },
-    push_fail: { label: '推送失败', tone: 'err' },
-    query_error: { label: '查询出错', tone: 'warn' },
-    query_recovered: { label: '查询恢复', tone: 'cyan' },
-    auto_archived: { label: '签收自动归档', tone: 'ok' },
+    status_change: { label: '状态变化', tone: 'violet', dot: 'info' },
+    push_ok: { label: '推送成功', tone: 'ok', dot: 'ok' },
+    push_fail: { label: '推送失败', tone: 'err', dot: 'err' },
+    query_error: { label: '查询出错', tone: 'warn', dot: 'warn' },
+    query_recovered: { label: '查询恢复', tone: 'cyan', dot: 'info' },
+    auto_archived: { label: '签收自动归档', tone: 'ok', dot: 'ok' },
 });
 
 export const eventKindMeta = (kind) => {
@@ -42,43 +42,48 @@ export const fetchTaskEvents = async (taskId, { before = null, limit = EVENTS_PA
     return result;
 };
 
-// 门户页的一行，结构与 user_portal.html 里服务端渲染的那一行保持一致；全部用 textContent，不拼 HTML
+// 门户页的一条，结构与 user_portal.html 里服务端渲染的那一行保持一致；全部用 textContent，不拼 HTML
 const buildRow = (event, currentNumber) => {
     const meta = eventKindMeta(event.kind);
-    const row = document.createElement('li');
-    row.className = event.kind === 'push_fail' ? 'timeline-row is-fail' : 'timeline-row';
+    const item = document.createElement('li');
+    item.className = event.kind === 'push_fail' ? 'timeline-item err' : 'timeline-item';
 
-    const time = document.createElement('time');
-    time.className = 'timeline-time';
-    time.textContent = event.created_at;
+    const dot = document.createElement('span');
+    dot.className = `dot ${meta.dot}`;
 
+    const main = document.createElement('div');
+    main.className = 'timeline-main';
+    const head = document.createElement('div');
+    head.className = 'timeline-head';
     const pill = document.createElement('span');
     pill.className = `pill ${meta.tone}`;
     pill.textContent = meta.label;
+    const title = document.createElement('span');
+    title.className = 'timeline-title';
+    title.textContent = event.status || '—';
+    const time = document.createElement('time');
+    time.className = 'timeline-time';
+    time.textContent = event.created_at;
+    head.append(pill, title, time);
+    main.append(head);
 
-    const body = document.createElement('div');
-    body.className = 'timeline-body';
-    const status = document.createElement('span');
-    status.className = 'timeline-status';
-    status.textContent = event.status || '—';
-    body.append(status);
     const extra = [event.detail, event.tracking_number && event.tracking_number !== currentNumber ? `旧单号 ${event.tracking_number}` : '']
         .filter(Boolean)
         .join(' · ');
     if (extra) {
-        const detail = document.createElement('span');
-        detail.className = 'timeline-detail';
-        detail.textContent = extra;
-        body.append(detail);
+        const desc = document.createElement('p');
+        desc.className = 'timeline-desc';
+        desc.textContent = extra;
+        main.append(desc);
     }
 
-    row.append(time, pill, body);
-    return row;
+    item.append(dot, main);
+    return item;
 };
 
 const bindPortalTimeline = (root) => {
     const button = root.querySelector('[data-timeline-more]');
-    const list = root.querySelector('.timeline-list');
+    const list = root.querySelector('.timeline');
     if (!button || !list) return;
     const taskId = root.dataset.taskTimeline;
     const currentNumber = root.dataset.number || '';

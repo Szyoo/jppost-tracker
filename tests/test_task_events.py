@@ -338,8 +338,8 @@ def test_portal_renders_recent_events_with_load_more(client, db, task):
     login(client, "ella", "pw-ella")
     html = client.get("/").data.decode()
     assert f'data-task-timeline="{task["id"]}"' in html
-    assert html.count('class="timeline-row') == 5  # 只渲染最近几条
-    assert "timeline-row is-fail" in html and "推送失败" in html
+    assert html.count('class="timeline-item') == 5  # 只渲染最近几条
+    assert "timeline-item err" in html and "推送失败" in html
     assert "data-timeline-more" in html and "/static/timeline.js" in html
 
 
@@ -361,8 +361,8 @@ def test_js_kind_map_matches_python():
     source = open(path, encoding="utf-8").read()
     block = re.search(r"EVENT_KIND_META = Object\.freeze\(\{(.*?)\}\);", source, re.S).group(1)
     js_map = {
-        kind: {"label": label, "tone": tone}
-        for kind, label, tone in re.findall(r"(\w+): \{ label: '([^']+)', tone: '(\w+)' \}", block)
+        kind: {"label": label, "tone": tone, "dot": dot}
+        for kind, label, tone, dot in re.findall(r"(\w+): \{ label: '([^']+)', tone: '(\w+)', dot: '(\w+)' \}", block)
     }
     assert js_map == storage.EVENT_KIND_META
     assert storage.EVENT_KINDS == frozenset(js_map)

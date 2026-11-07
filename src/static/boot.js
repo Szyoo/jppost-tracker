@@ -1,8 +1,12 @@
 // 设计包初始化入口：mountChrome 一次挂齐右上角工具位（切换器 · 账户 · 🌗 · 外观）+ 点阵背景 + hover 光斑。
 // 依赖 @szyyw/design（CDN，版本见 app.py 的 DESIGN_VERSION，由模板 _design_head.html 的 import map 解析）；工具位文案由包按 locale 内置，这里不再抄。
 import { mountChrome } from '@szyyw/design/chrome.js';
+import { enhanceIcons } from '@szyyw/design/icons.js';
 
 const root = document.documentElement;
+
+// 页面里的 <i data-icon> 占位（如匿名页的空状态图标）换成 SVG
+enhanceIcons();
 
 // 应用切换器 + 账户菜单只在 portal SSO 开启时挂（服务端按 SZYYW_SSO 在 <html> 上标 data-sso / data-portal）；
 // 账户菜单自己向 portal 查身份：未登录显示「登录」（弹 portal 登录小窗），已登录显示头像 / 登出。

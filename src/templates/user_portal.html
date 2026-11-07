@@ -19,16 +19,19 @@
       <summary>时间线</summary>
       <div class="disclosure-body">
       {%- if page.events %}
-      <ol class="timeline-list">
+      <ol class="timeline">
         {%- for ev in page.events %}
-        <li class="timeline-row{% if ev.kind == 'push_fail' %} is-fail{% endif %}">
-          <time class="timeline-time">{{ ev.created_at }}</time>
-          <span class="pill {{ ev.kind_tone }}">{{ ev.kind_label }}</span>
-          <div class="timeline-body">
-            <span class="timeline-status">{{ ev.status or '—' }}</span>
+        <li class="timeline-item{% if ev.kind == 'push_fail' %} err{% endif %}">
+          <span class="dot {{ ev.kind_dot }}"></span>
+          <div class="timeline-main">
+            <div class="timeline-head">
+              <span class="pill {{ ev.kind_tone }}">{{ ev.kind_label }}</span>
+              <span class="timeline-title">{{ ev.status or '—' }}</span>
+              <time class="timeline-time">{{ ev.created_at }}</time>
+            </div>
             {%- set extra = [ev.detail, ('旧单号 ' ~ ev.tracking_number) if ev.tracking_number and ev.tracking_number != task.tracking_number else ''] | select | join(' · ') %}
             {%- if extra %}
-            <span class="timeline-detail">{{ extra }}</span>
+            <p class="timeline-desc">{{ extra }}</p>
             {%- endif %}
           </div>
         </li>
@@ -272,36 +275,12 @@
             <div class="panel-head">
               <h2 class="panel-title">Bark 设置手顺</h2>
             </div>
-            <div class="guide-steps stagger">
-              <div class="guide-step">
-                <span class="guide-step-no grad-text">01</span>
-                <div>
-                  <strong>配置服务器地址</strong>
-                  <p>在 iPhone / iPad 上安装 Bark，把服务器地址设为 <code>{{ bark_help.public_url or bark_help.internal_url or '未配置' }}</code>。</p>
-                </div>
-              </div>
-              <div class="guide-step">
-                <span class="guide-step-no grad-text">02</span>
-                <div>
-                  <strong>复制推送 URL 或 key</strong>
-                  <p>打开 Bark 后复制测试推送 URL，整条粘贴进 Bark Keys 即可，系统会自动提取 key。</p>
-                </div>
-              </div>
-              <div class="guide-step">
-                <span class="guide-step-no grad-text">03</span>
-                <div>
-                  <strong>需要多端时逐个登记</strong>
-                  <p>每个设备都有自己的 key。想让同一条消息推送到多个终端，就一行一个填进去。</p>
-                </div>
-              </div>
-              <div class="guide-step">
-                <span class="guide-step-no grad-text">04</span>
-                <div>
-                  <strong>保存并测试</strong>
-                  <p>点“发送 Bark 测试”预览实际效果。想确认服务在线，可访问 <code>{{ bark_help.public_url }}{{ bark_help.health_path }}</code>。</p>
-                </div>
-              </div>
-            </div>
+            <ol class="steps vertical stagger">
+              <li class="step"><span class="step-marker"></span><span class="step-body"><span class="step-title">配置服务器地址</span><span class="step-desc">在 iPhone / iPad 上安装 Bark，把服务器地址设为 <code>{{ bark_help.public_url or bark_help.internal_url or '未配置' }}</code>。</span></span></li>
+              <li class="step"><span class="step-marker"></span><span class="step-body"><span class="step-title">复制推送 URL 或 key</span><span class="step-desc">打开 Bark 后复制测试推送 URL，整条粘贴进 Bark Keys 即可，系统会自动提取 key。</span></span></li>
+              <li class="step"><span class="step-marker"></span><span class="step-body"><span class="step-title">需要多端时逐个登记</span><span class="step-desc">每个设备都有自己的 key。想让同一条消息推送到多个终端，就一行一个填进去。</span></span></li>
+              <li class="step"><span class="step-marker"></span><span class="step-body"><span class="step-title">保存并测试</span><span class="step-desc">点“发送 Bark 测试”预览实际效果。想确认服务在线，可访问 <code>{{ bark_help.public_url }}{{ bark_help.health_path }}</code>。</span></span></li>
+            </ol>
             <p class="hint">
               注意：一个 Bark key 对应一个已注册设备，多端推送需要把每个设备的 key 都填进来。
             </p>

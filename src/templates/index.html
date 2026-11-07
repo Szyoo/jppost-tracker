@@ -48,7 +48,7 @@
       <section class="section" v-if="page === 'home'">
         <h2 class="section-name">全局概览</h2>
         <div class="stat-grid stagger">
-          <div :class="['stat-card', 'glass', 'lift', 'spot', { alert: globalErrorTaskCount > 0 }]">
+          <div :class="['stat-card', 'stat', 'glass', 'lift', 'spot', { err: globalErrorTaskCount > 0 }]">
             <div class="stat-label">异常任务</div>
             <div class="stat-value num">[[ globalErrorTaskCount ]]</div>
           </div>
@@ -91,44 +91,56 @@
               </button>
             </div>
 
-            <div class="overview-table" v-if="overviewTasks.length">
-              <div class="overview-head">
-                <span>状态</span>
-                <span>单号 / 备注</span>
-                <span>归属账号</span>
-                <span>最近物流结果</span>
-                <span></span>
-              </div>
-              <div
-                v-for="task in overviewTasks"
-                :key="task.id"
-                :class="['overview-row', 'inner', 'state-' + taskState(task).key]"
-              >
-                <div class="overview-cell">
-                  <span :class="['pill', taskState(task).tone]">[[ taskState(task).label ]]</span>
-                </div>
-                <div class="overview-cell">
-                  <strong class="overview-number">[[ task.tracking_number ]]</strong>
-                  <span class="overview-sub">[[ task.label || '无备注' ]]</span>
-                </div>
-                <div class="overview-cell">
-                  <span class="overview-owner">[[ task.account_display_name ]]</span>
-                  <span class="overview-sub">[[ task.account_username ]]</span>
-                </div>
-                <div class="overview-cell">
-                  <span :class="['overview-result', { bad: task.last_error }]">
-                    [[ task.last_error || task.last_tracking_info || '暂无物流记录' ]]
-                  </span>
-                  <span class="overview-sub">
-                    检查 [[ task.last_checked_at || '从未' ]] · 推送 [[ task.last_push_at || '从未' ]] · 间隔 [[ task.check_interval ]]s
-                  </span>
-                </div>
-                <div class="overview-cell overview-action">
-                  <button type="button" class="btn-ghost btn-small" @click="openTaskEditor(task)">去编辑</button>
-                </div>
-                <!-- 时间线占满整行，展开后才拉取 -->
-                <task-timeline class="overview-timeline" :task-id="task.id" :number="task.tracking_number"></task-timeline>
-              </div>
+            <div class="table-wrap bleed" v-if="overviewTasks.length">
+              <table class="tbl reflow">
+                <thead>
+                  <tr>
+                    <th>状态</th>
+                    <th>单号 / 备注</th>
+                    <th>归属账号</th>
+                    <th>最近物流结果</th>
+                    <th class="col-actions" aria-label="操作"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template v-for="task in overviewTasks" :key="task.id">
+                    <tr :class="overviewRowTone(task)">
+                      <td><span :class="['pill', taskState(task).tone]">[[ taskState(task).label ]]</span></td>
+                      <td data-label="单号 / 备注">
+                        <div>
+                          <strong class="num">[[ task.tracking_number ]]</strong>
+                          <div class="hint">[[ task.label || '无备注' ]]</div>
+                        </div>
+                      </td>
+                      <td data-label="归属账号">
+                        <div>
+                          <div>[[ task.account_display_name ]]</div>
+                          <div class="hint">[[ task.account_username ]]</div>
+                        </div>
+                      </td>
+                      <td data-label="最近物流结果">
+                        <div>
+                          <div :class="{ 'err-text': task.last_error }">
+                            [[ task.last_error || task.last_tracking_info || '暂无物流记录' ]]
+                          </div>
+                          <div class="hint">
+                            检查 [[ task.last_checked_at || '从未' ]] · 推送 [[ task.last_push_at || '从未' ]] · 间隔 [[ task.check_interval ]]s
+                          </div>
+                        </div>
+                      </td>
+                      <td class="col-actions">
+                        <button type="button" class="btn-ghost btn-small" @click="openTaskEditor(task)">去编辑</button>
+                      </td>
+                    </tr>
+                    <!-- 时间线占满整行，展开后才拉取 -->
+                    <tr class="overview-timeline-row">
+                      <td colspan="5">
+                        <task-timeline :task-id="task.id" :number="task.tracking_number"></task-timeline>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
             </div>
             <div v-else class="empty">
               [[ totalTaskCount ? '当前筛选下没有任务，换一个筛选看看。' : '还没有任何追踪任务，到「用户管理」或「我的设置」里添加第一个单号。' ]]
@@ -555,7 +567,7 @@
             <div class="stat-label">归档任务</div>
             <div class="stat-value num">[[ meArchivedTasks.length ]]</div>
           </div>
-          <div :class="['stat-card', 'glass', 'lift', 'spot', { alert: meErrorTaskCount > 0 }]">
+          <div :class="['stat-card', 'stat', 'glass', 'lift', 'spot', { err: meErrorTaskCount > 0 }]">
             <div class="stat-label">异常任务</div>
             <div class="stat-value num">[[ meErrorTaskCount ]]</div>
           </div>

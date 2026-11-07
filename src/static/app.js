@@ -267,6 +267,10 @@ const app = createApp({
             return { key: 'ok', tone: 'ok', label: '追踪中', weight: 3 };
         };
 
+        // 首页总览行的状态色条（包的 tr.ok/.warn/.err/.idle），与 taskState 的 key 一一对应；未列出的 key 取不到值，会在渲染时暴露
+        const OVERVIEW_ROW_TONE = { error: 'err', idle: 'warn', fresh: 'warn', ok: 'ok', archived: 'idle', paused: 'idle' };
+        const overviewRowTone = (task) => OVERVIEW_ROW_TONE[taskState(task).key];
+
         const taskTone = (task) => taskState(task).tone;
         const taskStateLabel = (task) => taskState(task).label;
 
@@ -823,6 +827,7 @@ const app = createApp({
             selectedUserTrackingState,
             taskState,
             taskTone,
+            overviewRowTone,
             taskStateLabel,
             taskDrafts,
             newTaskForm,
@@ -935,13 +940,16 @@ app.component('task-timeline', {
             <p v-if="loading && !events.length" class="hint">加载中…</p>
             <div v-else-if="failed && !events.length" class="empty">[[ failed ]]</div>
             <div v-else-if="loaded && !events.length" class="empty">还没有记录。物流状态变化、推送结果和查询出错都会记在这里。</div>
-            <ol v-if="events.length" class="timeline-list">
-                <li v-for="event in events" :key="event.id" :class="['timeline-row', { 'is-fail': event.kind === 'push_fail' }]">
-                    <time class="timeline-time">[[ event.created_at ]]</time>
-                    <span :class="['pill', event.meta.tone]">[[ event.meta.label ]]</span>
-                    <div class="timeline-body">
-                        <span class="timeline-status">[[ event.status || '—' ]]</span>
-                        <span v-if="extraText(event)" class="timeline-detail">[[ extraText(event) ]]</span>
+            <ol v-if="events.length" class="timeline">
+                <li v-for="event in events" :key="event.id" :class="['timeline-item', { err: event.kind === 'push_fail' }]">
+                    <span :class="['dot', event.meta.dot]"></span>
+                    <div class="timeline-main">
+                        <div class="timeline-head">
+                            <span :class="['pill', event.meta.tone]">[[ event.meta.label ]]</span>
+                            <span class="timeline-title">[[ event.status || '—' ]]</span>
+                            <time class="timeline-time">[[ event.created_at ]]</time>
+                        </div>
+                        <p v-if="extraText(event)" class="timeline-desc">[[ extraText(event) ]]</p>
                     </div>
                 </li>
             </ol>
