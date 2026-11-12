@@ -18,6 +18,13 @@
 
     <div class="app-frame">
     <div id="app" class="page app-main">
+      <!-- 渠道输入框的候选：选中账号 / 自己用过的渠道 -->
+      <datalist id="channel-options-user">
+        <option v-for="channel in (selectedUser?.channels || [])" :key="channel" :value="channel"></option>
+      </datalist>
+      <datalist id="channel-options-me">
+        <option v-for="channel in (meAccount?.channels || [])" :key="channel" :value="channel"></option>
+      </datalist>
       <header class="app-header page-header rise">
         <div class="app-brand">
           <span class="app-sub">Admin Control Room</span>
@@ -135,7 +142,7 @@
                     <!-- 时间线占满整行，展开后才拉取 -->
                     <tr class="overview-timeline-row">
                       <td colspan="5">
-                        <task-timeline :task-id="task.id" :number="task.tracking_number"></task-timeline>
+                <task-timeline :task-id="task.id" :number="task.tracking_number"></task-timeline>
                       </td>
                     </tr>
                   </template>
@@ -468,6 +475,7 @@
               <div v-for="task in selectedUserTasks" :key="task.id" class="task-item inner">
                 <div class="task-item-head">
                   <strong>[[ task.tracking_number ]]</strong>
+                  <span v-if="task.channel" class="pill cyan task-channel">[[ task.channel ]]</span>
                   <span :class="['pill', taskTone(task)]">[[ taskStateLabel(task) ]]</span>
                 </div>
                 <div class="task-fields" v-if="taskDrafts[task.id]">
@@ -483,9 +491,26 @@
                     <span>查询间隔（秒）</span>
                     <input type="number" min="30" max="604800" class="field" v-model.number="taskDrafts[task.id].check_interval" />
                   </label>
+                  <label class="task-field">
+                    <span>渠道</span>
+                    <input type="text" class="field" maxlength="50" list="channel-options-user" v-model="taskDrafts[task.id].channel" />
+                  </label>
+                  <details class="disclosure flush">
+                    <summary>发货前节点<span class="summary-meta">[[ milestoneCount(taskDrafts[task.id]) ]]/3</span></summary>
+                    <div class="disclosure-body">
+                      <div class="task-fields">
+                        <label class="task-field" v-for="item in milestoneInputs" :key="item.stage">
+                          <span>[[ item.label ]]</span>
+                          <input type="text" class="field" inputmode="numeric" placeholder="YYYY-MM-DD HH:MM" v-model="taskDrafts[task.id].milestones[item.stage]" />
+                        </label>
+                      </div>
+                      <p class="hint">可以只填日期；时间按日本时间。留空保存即清除。</p>
+                    </div>
+                  </details>
                 </div>
                 <p class="task-meta">最近结果 [[ task.last_error || task.last_tracking_info || '暂无记录' ]]</p>
                 <p class="task-meta">最近检查 [[ task.last_checked_at || '-' ]] · 最近推送 [[ task.last_push_at || '-' ]]</p>
+                <task-forecast :task-id="task.id" :stamp="task.updated_at"></task-forecast>
                 <task-timeline :task-id="task.id" :number="task.tracking_number"></task-timeline>
                 <div class="actions">
                   <button type="button" class="btn btn-small" @click="saveTask(task)">保存</button>
@@ -512,6 +537,22 @@
                   <span>查询间隔（秒）</span>
                   <input type="number" min="30" max="604800" class="field" v-model.number="newTaskForm.check_interval" />
                 </label>
+                <label class="task-field">
+                  <span>渠道</span>
+                  <input type="text" class="field" maxlength="50" list="channel-options-user" v-model="newTaskForm.channel" />
+                </label>
+                <details class="disclosure flush">
+                  <summary>发货前节点<span class="summary-meta">[[ milestoneCount(newTaskForm) ]]/3</span></summary>
+                  <div class="disclosure-body">
+                    <div class="task-fields">
+                      <label class="task-field" v-for="item in milestoneInputs" :key="item.stage">
+                        <span>[[ item.label ]]</span>
+                        <input type="text" class="field" inputmode="numeric" placeholder="YYYY-MM-DD HH:MM" v-model="newTaskForm.milestones[item.stage]" />
+                      </label>
+                    </div>
+                    <p class="hint">可以只填日期；时间按日本时间。留空保存即清除。</p>
+                  </div>
+                </details>
               </div>
               <label class="switch-row">
                 <input type="checkbox" class="switch" v-model="newTaskForm.enabled" />
@@ -523,13 +564,20 @@
               </div>
             </div>
 
+            <div class="actions">
+              <button type="button" class="btn-ghost btn-small" @click="openBackfill('user')">补录历史单号</button>
+              <span class="hint">给这个账号补几单过去的单号和渠道，到达预测就有历史可参考。</span>
+            </div>
+
             <div class="task-list archived-list stagger" v-if="selectedUserArchivedTasks.length">
               <div v-for="task in selectedUserArchivedTasks" :key="task.id" class="task-item inner">
                 <div class="task-item-head">
                   <strong>[[ task.tracking_number ]]</strong>
+                  <span v-if="task.channel" class="pill cyan task-channel">[[ task.channel ]]</span>
                   <span class="pill">已归档</span>
                 </div>
                 <p class="task-meta">首次登记 [[ task.first_seen_at ]] · 登记次数 [[ task.seen_count ]]</p>
+                <task-forecast :task-id="task.id" :stamp="task.updated_at"></task-forecast>
                 <task-timeline :task-id="task.id" :number="task.tracking_number"></task-timeline>
                 <div class="actions">
                   <button type="button" class="btn btn-small" @click="restoreTask(task)">恢复</button>
@@ -584,6 +632,7 @@
               <div v-for="task in meTasks" :key="task.id" class="task-item inner">
                 <div class="task-item-head">
                   <strong>[[ task.tracking_number ]]</strong>
+                  <span v-if="task.channel" class="pill cyan task-channel">[[ task.channel ]]</span>
                   <span :class="['pill', taskTone(task)]">[[ taskStateLabel(task) ]]</span>
                 </div>
                 <div class="task-fields" v-if="taskDrafts[task.id]">
@@ -599,9 +648,26 @@
                     <span>查询间隔（秒）</span>
                     <input type="number" min="30" max="604800" class="field" v-model.number="taskDrafts[task.id].check_interval" />
                   </label>
+                  <label class="task-field">
+                    <span>渠道</span>
+                    <input type="text" class="field" maxlength="50" list="channel-options-me" v-model="taskDrafts[task.id].channel" />
+                  </label>
+                  <details class="disclosure flush">
+                    <summary>发货前节点<span class="summary-meta">[[ milestoneCount(taskDrafts[task.id]) ]]/3</span></summary>
+                    <div class="disclosure-body">
+                      <div class="task-fields">
+                        <label class="task-field" v-for="item in milestoneInputs" :key="item.stage">
+                          <span>[[ item.label ]]</span>
+                          <input type="text" class="field" inputmode="numeric" placeholder="YYYY-MM-DD HH:MM" v-model="taskDrafts[task.id].milestones[item.stage]" />
+                        </label>
+                      </div>
+                      <p class="hint">可以只填日期；时间按日本时间。留空保存即清除。</p>
+                    </div>
+                  </details>
                 </div>
                 <p class="task-meta">最近结果 [[ task.last_error || task.last_tracking_info || '暂无记录' ]]</p>
                 <p class="task-meta">最近检查 [[ task.last_checked_at || '-' ]] · 最近推送 [[ task.last_push_at || '-' ]]</p>
+                <task-forecast :task-id="task.id" :stamp="task.updated_at"></task-forecast>
                 <task-timeline :task-id="task.id" :number="task.tracking_number"></task-timeline>
                 <div class="actions">
                   <button type="button" class="btn btn-small" @click="saveTask(task, 'me')">保存</button>
@@ -628,6 +694,22 @@
                   <span>查询间隔（秒）</span>
                   <input type="number" min="30" max="604800" class="field" v-model.number="myTaskForm.check_interval" />
                 </label>
+                <label class="task-field">
+                  <span>渠道</span>
+                  <input type="text" class="field" maxlength="50" list="channel-options-me" v-model="myTaskForm.channel" />
+                </label>
+                <details class="disclosure flush">
+                  <summary>发货前节点<span class="summary-meta">[[ milestoneCount(myTaskForm) ]]/3</span></summary>
+                  <div class="disclosure-body">
+                    <div class="task-fields">
+                      <label class="task-field" v-for="item in milestoneInputs" :key="item.stage">
+                        <span>[[ item.label ]]</span>
+                        <input type="text" class="field" inputmode="numeric" placeholder="YYYY-MM-DD HH:MM" v-model="myTaskForm.milestones[item.stage]" />
+                      </label>
+                    </div>
+                    <p class="hint">可以只填日期；时间按日本时间。留空保存即清除。</p>
+                  </div>
+                </details>
               </div>
               <label class="switch-row">
                 <input type="checkbox" class="switch" v-model="myTaskForm.enabled" />
@@ -640,6 +722,11 @@
               <p class="hint">再次添加同一个单号会复活它的归档记录，不会新建重复任务。</p>
             </div>
 
+            <div class="actions">
+              <button type="button" class="btn-ghost btn-small" @click="openBackfill('me')">补录历史单号</button>
+              <span class="hint">补几单过去的单号和渠道，到达预测就有历史可参考。</span>
+            </div>
+
             <template v-if="meArchivedTasks.length">
               <div class="divider"></div>
               <h3 class="section-name">归档任务</h3>
@@ -647,12 +734,14 @@
                 <div v-for="task in meArchivedTasks" :key="task.id" class="task-item inner">
                   <div class="task-item-head">
                     <strong>[[ task.tracking_number ]]</strong>
+                    <span v-if="task.channel" class="pill cyan task-channel">[[ task.channel ]]</span>
                     <span class="pill">已归档</span>
                   </div>
                   <p class="task-meta">
                     首次登记 [[ task.first_seen_at ]] · 登记次数 [[ task.seen_count ]][[ task.label ? ' · 备注 ' + task.label : '' ]]
                   </p>
-                  <task-timeline :task-id="task.id" :number="task.tracking_number"></task-timeline>
+                  <task-forecast :task-id="task.id" :stamp="task.updated_at"></task-forecast>
+                <task-timeline :task-id="task.id" :number="task.tracking_number"></task-timeline>
                   <div class="actions">
                     <button type="button" class="btn btn-small" @click="restoreTask(task, 'me')">恢复</button>
                     <button type="button" class="btn-ghost btn-small danger" @click="deleteTask(task, 'me')">删除</button>

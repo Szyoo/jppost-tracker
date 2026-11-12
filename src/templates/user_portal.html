@@ -46,6 +46,40 @@
       </div>
     </details>
     {%- endmacro %}
+    {#- 到达预测：内容由 /static/forecast.js 调 /api/tasks/<id>/forecast 渲染 #}
+    {%- macro task_forecast(task) %}
+    <details class="disclosure flush task-forecast" open>
+      <summary>到达预测</summary>
+      <div class="disclosure-body" data-task-forecast="{{ task.id }}"></div>
+    </details>
+    {%- endmacro %}
+    {#- 渠道 + 发货前节点（下单 / 打包 / 出库）输入；节点可只填日期，留空保存即清除 #}
+    {%- macro forecast_fields(task) %}
+    {%- set ms = task.milestones if task else {} %}
+    <label class="task-field">
+      <span>渠道</span>
+      <input name="channel" type="text" class="field" maxlength="50" list="channel-options" value="{{ task.channel if task else '' }}" placeholder="例如：某渠道" />
+    </label>
+    <details class="disclosure flush"{% if ms %} open{% endif %}>
+      <summary>发货前节点<span class="summary-meta">{{ ms | length }}/3</span></summary>
+      <div class="disclosure-body">
+        <div class="task-fields">
+          {%- for stage, label in [('ordered', '下单'), ('packed', '打包'), ('handed_over', '出库')] %}
+          <label class="task-field">
+            <span>{{ label }}</span>
+            <input name="ms_{{ stage }}" type="text" class="field" inputmode="numeric" placeholder="YYYY-MM-DD HH:MM" value="{{ ms[stage].at if stage in ms else '' }}" />
+          </label>
+          {%- endfor %}
+        </div>
+        <p class="hint">可以只填日期；时间按日本时间。用于预测「从下单算第几天」和发货前的耗时。</p>
+      </div>
+    </details>
+    {%- endmacro %}
+    <datalist id="channel-options">
+      {%- for channel in account.channels %}
+      <option value="{{ channel }}"></option>
+      {%- endfor %}
+    </datalist>
     <div class="bg-layer"></div>
 
     <div class="app-frame">
@@ -100,6 +134,9 @@
             <form method="post" action="/me/tasks/{{ task.id }}/update" class="task-item inner">
               <div class="task-item-head">
                 <strong>{{ task.tracking_number }}</strong>
+                {%- if task.channel %}
+                <span class="pill cyan task-channel">{{ task.channel }}</span>
+                {%- endif %}
                 <span class="pill {% if not task.enabled %}{% elif task.last_error %}err{% else %}ok{% endif %}">
                   {% if not task.enabled %}已停用{% elif task.last_error %}轮询异常{% else %}追踪中{% endif %}
                 </span>
@@ -117,6 +154,7 @@
                   <span>查询间隔（秒）</span>
                   <input name="check_interval" type="number" min="30" max="604800" class="field" value="{{ task.check_interval }}" />
                 </label>
+                {{ forecast_fields(task) }}
               </div>
               <label class="switch-row">
                 <input name="enabled" type="checkbox" class="switch" {% if task.enabled %}checked{% endif %} />
@@ -124,6 +162,7 @@
               </label>
               <p class="task-meta">最近结果 {{ task.last_error or task.last_tracking_info or '暂无记录' }}</p>
               <p class="task-meta">最近检查 {{ task.last_checked_at or '-' }} · 最近推送 {{ task.last_push_at or '-' }}</p>
+              {{ task_forecast(task) }}
               {{ task_timeline(task) }}
               <div class="actions">
                 <button type="submit" class="btn btn-small">保存</button>
@@ -152,6 +191,7 @@
                 <span>查询间隔（秒）</span>
                 <input name="check_interval" type="number" min="30" max="604800" class="field" value="300" />
               </label>
+              {{ forecast_fields(None) }}
             </div>
             <label class="switch-row">
               <input name="enabled" type="checkbox" class="switch" checked />
@@ -163,6 +203,11 @@
             <p class="hint">再次添加同一个单号会复活它的归档记录，不会新建重复任务。</p>
           </form>
 
+          <div class="actions">
+            <button type="button" class="btn-ghost btn-small" data-backfill-open>补录历史单号</button>
+            <span class="hint">补几单过去的单号和渠道，到达预测就有历史可参考。</span>
+          </div>
+
           {% if account.archived_tasks %}
           <div class="divider"></div>
           <h3 class="section-name">归档任务</h3>
@@ -171,6 +216,9 @@
             <form method="post" action="/me/tasks" class="task-item inner">
               <div class="task-item-head">
                 <strong>{{ task.tracking_number }}</strong>
+                {%- if task.channel %}
+                <span class="pill cyan task-channel">{{ task.channel }}</span>
+                {%- endif %}
                 <span class="pill">已归档</span>
               </div>
               <p class="task-meta">
@@ -180,6 +228,7 @@
               <input type="hidden" name="label" value="{{ task.label }}" />
               <input type="hidden" name="check_interval" value="{{ task.check_interval }}" />
               <input type="hidden" name="enabled" value="1" />
+              {{ task_forecast(task) }}
               {{ task_timeline(task) }}
               <div class="actions">
                 <button type="submit" class="btn btn-small">恢复</button>
@@ -292,6 +341,7 @@
 
     <script type="module" src="/static/boot.js"></script>
     <script type="module" src="/static/timeline.js"></script>
+    <script type="module" src="/static/forecast.js"></script>
     {%- if message %}
     <!-- 表单提交后的操作反馈（重定向带回的 message / status）：用包的 toast()，与控制台一致 -->
     <script type="module">

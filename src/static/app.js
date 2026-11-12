@@ -6,6 +6,8 @@ const MAX_LOG_LINES = 500;
 const toastReady = import('@szyyw/design/toast.js');
 // 时间线的事件类型映射与分页拉取和门户页共用一份（/static/timeline.js，ES module）
 const timelineReady = import('/static/timeline.js');
+// 到达预测的渲染与补录对话框和门户页共用一份（/static/forecast.js，ES module）
+const forecastReady = import('/static/forecast.js');
 // 删除确认用包的对话框（danger 样式）
 const confirmReady = import('@szyyw/design/confirm.js');
 
@@ -106,18 +108,33 @@ const app = createApp({
             login_enabled: true,
         });
 
+        // 发货前节点的三个输入框（key 与后端 forecast.PRE_STAGES 一致，写错了后端会 400）
+        const milestoneInputs = [
+            { stage: 'ordered', label: '下单' },
+            { stage: 'packed', label: '打包' },
+            { stage: 'handed_over', label: '出库' },
+        ];
+        const buildMilestones = (milestones = {}) =>
+            Object.fromEntries(milestoneInputs.map(({ stage }) => [stage, milestones[stage]?.at || '']));
+        const milestoneCount = (form) => Object.values(form?.milestones || {}).filter((value) => String(value).trim()).length;
+
         const buildNewTaskForm = () => ({
             tracking_number: '',
             label: '',
             check_interval: 300,
             enabled: true,
+            channel: '',
+            milestones: buildMilestones(),
         });
 
-        // 每条任务一份可编辑草稿；启用开关不进草稿，避免"改了单号顺手被一起保存"
+        // 每条任务一份可编辑草稿；启用开关不进草稿，避免"改了单号顺手被一起保存"。
+        // 节点原样回填，原样保存时后端不会把调用方写的节点改成手填
         const buildTaskDraft = (task = {}) => ({
             tracking_number: task.tracking_number || '',
             label: task.label || '',
             check_interval: Number(task.check_interval || 300),
+            channel: task.channel || '',
+            milestones: buildMilestones(task.milestones || {}),
         });
 
         const users = ref(initialUserState.users || []);
@@ -723,6 +740,19 @@ const app = createApp({
             return sendTaskRequest(`/api/tasks/${task.id}`, 'DELETE', undefined, '删除追踪任务时发生错误。', scope);
         };
 
+        // 补录历史单号：'me' 补到管理员自己名下，'user' 补到用户管理里选中的账号
+        const openBackfill = async (scope = 'user') => {
+            const accountId = taskOwnerId(scope);
+            if (!accountId) return;
+            const { openBackfillDialog } = await forecastReady;
+            await openBackfillDialog({
+                accountId,
+                onDone: (result) => {
+                    if (result.user_state) syncUserState(result.user_state, { keepUserForm: true });
+                },
+            });
+        };
+
         watch(selectedUserId, (nextUserId) => {
             userForm.value = buildUserForm(users.value.find((user) => user.id === nextUserId) || {});
             newTaskForm.value = buildNewTaskForm();
@@ -878,6 +908,9 @@ const app = createApp({
             saveUser,
             savePortalSub,
             sendUserTestPush,
+            milestoneInputs,
+            milestoneCount,
+            openBackfill,
             createTask,
             saveTask,
             toggleTask,
@@ -956,6 +989,32 @@ app.component('task-timeline', {
             <p v-if="failed && events.length" class="hint">[[ failed ]]</p>
             <button v-if="nextBefore" type="button" class="btn-ghost btn-small" :disabled="loading" @click="load(true)">加载更多</button>
             </div>
+        </details>
+    `,
+});
+
+// 到达预测：挂载时拉一次，任务有更新（stamp 变了）再拉；渲染交给 forecast.js（与门户页同一份 DOM 结构），
+// 映射查不到的阶段 / 可信度会抛错，显示成加载失败，不悄悄显示原值。
+app.component('task-forecast', {
+    props: {
+        taskId: { type: Number, required: true },
+        stamp: { type: String, default: '' },
+    },
+    setup(props) {
+        const body = ref(null);
+        const load = async () => {
+            if (!body.value) return;
+            const { renderForecast } = await forecastReady;
+            await renderForecast(body.value, props.taskId);
+        };
+        onMounted(load);
+        watch(() => [props.taskId, props.stamp], load);
+        return { body };
+    },
+    template: `
+        <details class="disclosure flush task-forecast" open>
+            <summary>到达预测</summary>
+            <div class="disclosure-body" ref="body"></div>
         </details>
     `,
 });

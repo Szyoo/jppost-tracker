@@ -189,6 +189,22 @@ textarea.field {
   overflow-wrap: anywhere;
 }
 
+/* 渠道标签紧跟单号，状态胶囊仍靠右（head 是 space-between，auto 外边距先吃掉剩余空间） */
+.task-item-head .task-channel {
+  margin-inline-end: auto;
+}
+
+/* 「发货前节点」折叠区在三列字段网格里独占一整行 */
+.task-fields > .disclosure {
+  grid-column: 1 / -1;
+}
+
+/* 到达预测区块（forecast.js 渲染）：进度、提示条、剩余阶段时间线、依据，竖向排开 */
+.forecast-body {
+  display: grid;
+  gap: var(--sp-2);
+}
+
 .task-create {
   padding: var(--sp-4);
 }
