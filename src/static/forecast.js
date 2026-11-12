@@ -191,7 +191,7 @@ const buildResultRow = (item) => {
     const row = el('div', 'list-row multiline');
     const main = el('span', 'row-main');
     main.append(el('span', 'row-title', item.tracking_number || item.line));
-    const sub = item.status === 'invalid' ? `${item.line} · ${item.reason}`
+    const sub = item.status === 'invalid' ? item.reason
         : item.status === 'added' ? `抓到 ${item.records} 条履历`
             : item.status === 'no_records' ? '日本邮政查不到（可能已过保留期），任务已保留，可以手填发货前节点'
                 : '已有任务，渠道为空时已补上，下单日期已更新';
@@ -224,7 +224,7 @@ export const openBackfillDialog = async ({ accountId = null, onDone = null } = {
     textarea.rows = 8;
     textarea.placeholder = 'EB000000001CN 渠道A 2026-09-01\nEB000000002CN 渠道B';
     textarea.setAttribute('aria-label', '要补录的单号，每行一个');
-    const results = el('div', 'list divided');
+    const results = el('div', 'list divided u-mt-4');
     body.append(el('p', 'hint lead', BACKFILL_HELP), textarea, results);
 
     const foot = el('div', 'sheet-foot');
