@@ -93,6 +93,8 @@ bash install_bark.sh
 | POST | `/api/admin/accounts/<id>/portal-user` | 管理员 | 设置 / 清除账号的统一登录映射 |
 | PUT/DELETE | `/api/tasks/<id>` | 登录（本人或管理员） | 修改 / 删除任务 |
 | POST | `/api/tasks/<id>/archive` | 登录（本人或管理员） | 归档任务 |
+| GET | `/api/tasks/<id>/forecast` | 登录（本人或管理员） | 到达预测（结构见「到达预测」） |
+| POST | `/api/tasks/backfill` | 登录（管理员可带 `account_id` 替别人补录） | 补录历史单号：`{"lines": "单号 渠道 [下单日期]\n…"}`，最多 30 行 |
 | GET/PUT | `/api/me` | 登录 | 查看 / 修改自己的资料与 Bark 设置 |
 | POST | `/me/update`、`/me/tasks`、`/me/tasks/<id>/update`、`/me/tasks/<id>/archive`、`/me/tasks/<id>/delete`、`/me/test-push` | 登录 | 个人页的表单提交版本 |
 
@@ -123,6 +125,7 @@ python src/manage.py list-callers                              # 不显示令牌
 | GET | `/api/v1/ping` | 自检：返回 `{"caller": 调用方名称, "account": 绑定的账号用户名}` |
 | PUT | `/api/v1/tracking/<单号>` | 幂等登记：没有就新建（201），已有就关联或返回现状（200） |
 | GET | `/api/v1/tracking/<单号>?events=20` | 任务状态 + 最近 N 条时间线事件（默认 20，0–100） |
+| GET | `/api/v1/tracking/<单号>/forecast` | 到达预测：`{"tracking_number", "forecast": {…}}`，结构见「到达预测」 |
 | POST | `/api/v1/tracking/<单号>/archive` | 幂等归档（已归档也返回 200） |
 
 单号先去空白、转大写，再要求只含字母、数字、短横线，长度 6–40，否则 400。
@@ -134,11 +137,15 @@ PUT 请求体可省略；给了必须是 JSON 对象，只接受下列字段（`
 | `label` | 字符串，≤100 | 备注，**只在新建任务时使用**；关联或恢复已有任务时不改它的备注、查询间隔、暂停状态 |
 | `external_ref` | 字符串，≤200 | 调用方自己的关联编号；给了就更新，不给保留原值 |
 | `revive` | 布尔 | 任务被用户在网页里删除或归档后，是否仍要重新追踪（见下） |
+| `channel` | 字符串，≤50 | 渠道名（到达预测按渠道加权）。**只在任务渠道为空时写入**，不覆盖用户填的 |
+| `milestones` | 对象 | 发货前节点 `{"ordered" \| "packed" \| "handed_over": 时间}`，时间接受 `YYYY-MM-DD`、`YYYY-MM-DD HH:MM[:SS]`（日本时间）或带时区的 ISO 8601（换算成日本时间）。不覆盖用户在网页里手填的节点 |
+
+`channel` 与 `milestones` 在任务存在的各分支（`created` / `existing` / `linked` / `revived` / `delivered`）都生效；被 409 挡住时不写。
 
 PUT 响应 `{"result": …, "tracking": {…}}`，`result` 取值：`created`（新建，201）、`existing`（本调用方已登记且在追踪）、
 `linked`（关联到账号下已有的任务）、`revived`（从归档恢复）、`delivered`（已签收并被自动归档，原样返回、不恢复追踪）。
 
-`tracking` 对象字段：`tracking_number`、`label`、`external_ref`、`source_state`（本调用方的来源状态：`active`、`archived_by_api`、
+`tracking` 对象字段：`tracking_number`、`label`、`channel`（未标注为 `null`）、`external_ref`、`source_state`（本调用方的来源状态：`active`、`archived_by_api`、
 `user_archived`、`delivered_archived`、`user_deleted` 之一，未登记为 `null`）、
 `enabled`、`archived`、`last_tracking_info`、`last_checked_at`、`last_error`、`last_push_at`、`tracking_url`、`created_at`、`updated_at`。
 没有值的 `last_*` 与 `external_ref` 为 `null`；时间格式 `YYYY-MM-DD HH:MM:SS`（日本时间）。
@@ -175,6 +182,35 @@ archive 响应 `{"result": "archived" | "already_archived", "tracking": {…}}`�
   来源状态保持 `delivered_archived`。用户在网页里取消归档后来源状态回到 `active`。
 - 账号下已有用户手动添加的同单号任务时，PUT 只做关联，不改它的备注、间隔、暂停状态，也不报错。
 - archive 对任何人归档的任务都幂等返回 200，但不会把「用户归档」改记成「调用方归档」。
+
+### 到达预测
+
+追踪脚本每次抓到日本邮政履历都把全部记录存进承运方履历表（长期保留），读取时映射成阶段：
+发货前（下单寄出 `ordered`、打包完成 `packed`、出库交运 `handed_over`，来自网页手填或调用方）→ 引受 `accepted` →
+到达始发互换局 `origin_exchange` → 始发国海关 `origin_customs` → 离开始发国 `departed_origin` → 到达日本 `arrived_japan` →
+日本通关 `japan_customs` → 离开日本互换局 `departed_exchange` → 到达派送局 `local_arrived` → 派送中 `out_for_delivery` → 签收 `delivered`。
+同名状态（国際交換局に到着 等）按详情最后一段是否以都 / 道 / 府 / 県结尾区分日本与始发国；认不出的状态不算阶段。
+
+预测用全部账号的历史单号（按单号去重、排除当前单号）里「当前阶段 → 后续各阶段」的耗时，只跟离开当前阶段比当前已等时间更久的历史比，
+同渠道权重 1.0、其他渠道 0.3，给出加权中位数与区间（≥3 单用 20%–80% 分位，否则最小–最大）。只输出聚合统计，不暴露其他单号。
+历史太少时用「补录历史单号」（网页任务列表里的按钮或 `POST /api/tasks/backfill`）补几单过去的单号与渠道。
+
+`forecast` 对象：
+
+| 字段 | 说明 |
+|---|---|
+| `origin` | 「第 N 天」的起点 `{"stage", "at"}`：下单 → 出库 → 引受中最先有的那个；都没有为 `null` |
+| `day` | 从起点算第几天（起点当天为第 1 天，按日历跨午夜加 1）；已签收或无起点为 `null` |
+| `delivered` / `total_seconds` | 是否已签收；已签收时起点到签收的全程秒数 |
+| `current` | 当前阶段 `{"stage", "at", "waited_seconds"}`；还没有任何记录为 `null` |
+| `arrived` | 已到达阶段 `[{"stage", "at"}]`，按时间先后 |
+| `remaining` | 剩余阶段预测 `[{"stage", "median_seconds", "low_seconds", "high_seconds", "eta", "eta_low", "eta_high", "occurrence", "maybe", "samples"}]`；`maybe` 表示出现率低于 0.5 |
+| `confidence` | `none`（没有可参考样本）/ `borrowed`（同渠道 0 单，只借鉴其他渠道）/ `rough`（同渠道 1–4 单）/ `solid`（同渠道 ≥5 单） |
+| `samples` | 参考样本数 `{"same_channel", "other"}` |
+| `overdue` | 已比历史上离开当前阶段最慢的还久（这时按全部样本估计，剩余时长多为 0） |
+| `channel` / `generated_at` | 当前单的渠道、计算时间 |
+
+时间格式 `YYYY-MM-DD HH:MM`（日本时间），时长单位秒。
 
 ### Socket.IO（仅管理员可连接）
 

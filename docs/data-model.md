@@ -19,7 +19,8 @@ tracking_tasks —— 追什么（一个账号 N 条）
   enabled, archived,
   last_tracking_info, last_checked_at, last_error, last_push_at,
   first_seen_at, seen_count,
-  created_at, updated_at
+  created_at, updated_at,
+  channel                       -- 渠道名，空串 = 未标注（到达预测时 ADD COLUMN 补上）
   UNIQUE(account_id, tracking_number)
 ```
 
@@ -75,6 +76,42 @@ task_events —— 发生过什么（一个任务 N 条）
 
 建表在 `ensure_storage` 里排在 v1→v2 迁移之后（`CREATE TABLE IF NOT EXISTS`，已有库启动时自动补表）。
 以后若要重建 `tracking_tasks`，下面那个外键坑同样适用于 `task_events`。
+
+## 到达预测：渠道、carrier_records 与 pre_milestones
+
+```
+tracking_tasks.channel TEXT NOT NULL DEFAULT ''   -- ALTER TABLE ADD COLUMN，幂等；去首尾空白，最长 50
+
+carrier_records —— 承运方履历（长期保留，不清理）
+  id, task_id →tracking_tasks.id (ON DELETE CASCADE), tracking_number,
+  source CHECK IN ('jp_post'),   -- 承运方来源，穷举，见 forecast.CARRIER_SOURCES
+  record_at,                     -- 'YYYY-MM-DD HH:MM'；履历只有日期时存 'YYYY-MM-DD'
+  status, detail, created_at
+  UNIQUE(task_id, tracking_number, source, record_at, status, detail), INDEX(tracking_number)
+
+pre_milestones —— 发货前节点
+  id, task_id →tracking_tasks.id (ON DELETE CASCADE),
+  stage CHECK IN ('ordered', 'packed', 'handed_over'), at,
+  source CHECK IN ('caller', 'manual'), updated_at
+  UNIQUE(task_id, stage)
+```
+
+- **为什么另建 carrier_records 而不用 task_events**：时间线有 180 天 / 每任务 500 条的清理，不能当经验库；
+  而且时间线只记「本轮新增」，履历表是事实全集。tracker 每次成功抓到履历都把**全部**记录 `INSERT OR IGNORE` 进来，
+  在 `update_task_state` 的同一事务里、受同一个「抓取时单号」校验保护（单号被改了整次作废）；推送成功、失败、无变化都照写——
+  履历是事实，与推送无关。补录走 `record_carrier_records`，校验相同但不动任务状态。
+- **存原始状态，阶段在读取时算**（`forecast.record_stage` 按 `source` 分派到各承运方的映射）：以后改映射规则，对历史数据自动生效；
+  以后接入始发国承运方，只要在 `CARRIER_SOURCES` 加一项（CHECK 约束由它派生，已有库需要另做表迁移——别重建 `tracking_tasks`）。
+- 回填：启动时 `carrier_records` 为空而 `task_events` 里有 `status_change`，就把那些事件解析回填一次（`INSERT OR IGNORE`，重复执行无害）。
+  info 没有日期前缀的记录放不进时间轴，不入库。
+- `pre_milestones` 的优先级：**manual 优先**。调用方（`/api/v1` 的 `milestones`）以 `caller` 写入，不覆盖 `manual` 行、也不能删除；
+  用户在网页手填以 `manual` 写入，覆盖 `caller` 行；值与现有相同时不动（表单原样保存不会把调用方写的变成手填）；手填清空即删除该行。
+- `channel`：网页创建 / 编辑可改；调用方只在任务渠道为空时写入；补录对已有任务也只在为空时补。
+- 补录新建的任务是 `archived=1, enabled=0`（label 空），直接 INSERT、不走 `_insert_task`，不轮询不推送。
+  `api_refs` 的四个触发器只管 UPDATE / DELETE，插入一条已归档任务不会产生或改动来源记录。
+
+三者在 `ensure_storage` 里排在最后（`_ensure_forecast_schema`，只加列、只 `CREATE TABLE IF NOT EXISTS`），已有库启动时自动补。
+外键都指向 `tracking_tasks`：以后若要重建它，同 `task_events` 一样会踩下面的外键坑。
 
 ## 机器接口：api_callers 与 api_refs
 
