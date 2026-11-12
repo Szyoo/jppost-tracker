@@ -6,10 +6,13 @@ import secrets
 import sqlite3
 import time
 from contextlib import closing
+from datetime import datetime
 from urllib.parse import urlparse
 
 from dotenv import dotenv_values
 from werkzeug.security import check_password_hash, generate_password_hash
+
+import forecast
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -327,6 +330,236 @@ def _ensure_events_schema(conn):
     )
 
 
+# --- 到达预测：渠道、承运方履历、发货前节点 ---
+
+# carrier_records.source 与 pre_milestones 的 stage / source 都是穷举，CHECK 约束由它们派生
+_CARRIER_SOURCE_SQL = ", ".join(f"'{source}'" for source in forecast.CARRIER_SOURCES)
+_PRE_STAGE_SQL = ", ".join(f"'{stage}'" for stage in forecast.PRE_STAGES)
+# 发货前节点的来源：caller 外部调用方写入 / manual 用户手填（manual 优先，见 _write_milestones）
+MILESTONE_SOURCES = ("caller", "manual")
+_MILESTONE_SOURCE_SQL = ", ".join(f"'{source}'" for source in MILESTONE_SOURCES)
+
+
+def _ensure_forecast_schema(conn):
+    """到达预测用的一列两表，只加列、只新建，不重建任何已有表（data-model.md 的外键坑）。
+
+    - tracking_tasks.channel：渠道名，空串 = 未标注（ADD COLUMN，幂等）。
+    - carrier_records：承运方履历，长期保留、不清理（task_events 有 180 天 / 500 条的清理，不能当经验库）。
+      存原始状态，阶段在读取时由 forecast.record_stage 计算，以后改映射规则对历史数据自动生效。
+    - pre_milestones：发货前节点（下单 / 打包 / 出库），每个任务每个阶段一行。
+    两张表都随任务删除级联删除；以后若要重建 tracking_tasks，同 task_events 一样要先把数据读进内存。
+
+    carrier_records 为空而 task_events 里有 status_change 时，把它们解析回填一次（INSERT OR IGNORE，重复执行无害）。"""
+    if not _has_column(conn, "tracking_tasks", "channel"):
+        conn.execute("ALTER TABLE tracking_tasks ADD COLUMN channel TEXT NOT NULL DEFAULT ''")
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS carrier_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL,
+            tracking_number TEXT NOT NULL,
+            source TEXT NOT NULL CHECK(source IN ({_CARRIER_SOURCE_SQL})),
+            record_at TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT '',
+            detail TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            UNIQUE(task_id, tracking_number, source, record_at, status, detail),
+            FOREIGN KEY(task_id) REFERENCES tracking_tasks(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_carrier_records_number ON carrier_records(tracking_number)"
+    )
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS pre_milestones (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL,
+            stage TEXT NOT NULL CHECK(stage IN ({_PRE_STAGE_SQL})),
+            at TEXT NOT NULL,
+            source TEXT NOT NULL CHECK(source IN ({_MILESTONE_SOURCE_SQL})),
+            updated_at TEXT NOT NULL,
+            UNIQUE(task_id, stage),
+            FOREIGN KEY(task_id) REFERENCES tracking_tasks(id) ON DELETE CASCADE
+        )
+        """
+    )
+    if conn.execute("SELECT 1 FROM carrier_records LIMIT 1").fetchone() is None:
+        rows = conn.execute(
+            """
+            SELECT e.task_id, e.tracking_number, e.status, e.detail, e.created_at
+            FROM task_events e JOIN tracking_tasks t ON t.id = e.task_id
+            WHERE e.kind = 'status_change'
+            ORDER BY e.id
+            """
+        ).fetchall()
+        for row in rows:
+            _insert_carrier_records(
+                conn, row["task_id"], row["tracking_number"], [{"info": row["status"], "detail": row["detail"]}],
+                created_at=row["created_at"],
+            )
+
+
+def _insert_carrier_records(conn, task_id: int, tracking_number: str, records, *, source: str = "jp_post",
+                            created_at: str | None = None) -> int:
+    """把抓到的履历 [{"info", "detail"}] 写进 carrier_records（INSERT OR IGNORE），返回解析成功的条数。
+    info 拆成 record_at + status（forecast.parse_record_info）；没有日期前缀的记录放不进时间轴，跳过。"""
+    if source not in forecast.CARRIER_SOURCES:
+        raise ValueError(f"未定义的承运方来源：{source}")
+    stamp = created_at or _ts()
+    count = 0
+    for record in records or []:
+        parsed = forecast.parse_record_info(record.get("info"))
+        if parsed is None:
+            continue
+        record_at, status = parsed
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO carrier_records (task_id, tracking_number, source, record_at, status, detail, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (int(task_id), str(tracking_number or ""), source, record_at, status, str(record.get("detail") or ""), stamp),
+        )
+        count += 1
+    return count
+
+
+def record_carrier_records(task_id: int, tracking_number: str, records) -> int | None:
+    """只写履历、不动任务状态（补录用）。与 update_task_state 一样带抓取时的单号校验：
+    单号已被改走（或任务已删除）返回 None，不写。否则返回解析成功的条数。"""
+    with closing(_connect()) as conn:
+        with conn:
+            row = conn.execute(
+                "SELECT tracking_number FROM tracking_tasks WHERE id = ?", (int(task_id),)
+            ).fetchone()
+            if row is None or row["tracking_number"] != tracking_number:
+                return None
+            return _insert_carrier_records(conn, task_id, tracking_number, records)
+
+
+def _read_milestones(conn, task_ids) -> dict:
+    """{task_id: {stage: {"at", "source"}}}"""
+    ids = [int(task_id) for task_id in task_ids]
+    if not ids:
+        return {}
+    placeholders = ", ".join("?" for _ in ids)
+    result: dict = {task_id: {} for task_id in ids}
+    for row in conn.execute(
+        f"SELECT task_id, stage, at, source FROM pre_milestones WHERE task_id IN ({placeholders})", ids
+    ).fetchall():
+        result[int(row["task_id"])][row["stage"]] = {"at": row["at"], "source": row["source"]}
+    return result
+
+
+def normalize_milestones(value, *, allow_tz: bool = False, allow_empty: bool = True) -> dict:
+    """发货前节点输入 {stage: 时间字符串} 校验与规整：key 只能是 ordered / packed / handed_over，
+    值规整成 'YYYY-MM-DD HH:MM' 或 'YYYY-MM-DD'。allow_empty 时空串 / None 规整为 ''（表示清空）。不合法抛 ValueError。"""
+    if not isinstance(value, dict):
+        raise ValueError("发货前节点必须是对象。")
+    result = {}
+    for stage, raw in value.items():
+        if stage not in forecast.PRE_STAGES:
+            raise ValueError(f"不支持的发货前节点：{stage}（只能是 {', '.join(forecast.PRE_STAGES)}）")
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            if not allow_empty:
+                raise ValueError(f"{stage} 的时间不能为空。")
+            result[stage] = ""
+            continue
+        if not isinstance(raw, str):
+            raise ValueError(f"{stage} 的时间必须是字符串。")
+        try:
+            result[stage] = forecast.normalize_milestone_time(raw, allow_tz=allow_tz)
+        except ValueError as exc:
+            raise ValueError(f"{forecast.STAGE_META[stage]['label']}：{exc}") from None
+    return result
+
+
+def _write_milestones(conn, task_id: int, milestones: dict, source: str):
+    """写发货前节点（milestones 已经过 normalize_milestones）。manual 优先：
+    - manual：有值 → 写入（覆盖 caller 行）；值与现有相同则不动（表单原样保存不会把 caller 行变成 manual）；空串 → 删除该行。
+    - caller：只写有值的项；已有 manual 行的不覆盖；不能删除。"""
+    if source not in MILESTONE_SOURCES:
+        raise ValueError(f"未定义的节点来源：{source}")
+    now = _ts()
+    for stage, at in milestones.items():
+        existing = conn.execute(
+            "SELECT at, source FROM pre_milestones WHERE task_id = ? AND stage = ?", (int(task_id), stage)
+        ).fetchone()
+        if not at:
+            if source == "manual" and existing is not None:
+                conn.execute("DELETE FROM pre_milestones WHERE task_id = ? AND stage = ?", (int(task_id), stage))
+            continue
+        if existing is not None:
+            if existing["at"] == at:
+                continue
+            if source == "caller" and existing["source"] == "manual":
+                continue
+        conn.execute(
+            """
+            INSERT INTO pre_milestones (task_id, stage, at, source, updated_at) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(task_id, stage) DO UPDATE SET at = excluded.at, source = excluded.source,
+                updated_at = excluded.updated_at
+            """,
+            (int(task_id), stage, at, source, now),
+        )
+
+
+def _forecast_number_stages(conn, tracking_number: str, *, milestone_task_ids) -> dict:
+    """一个单号的阶段时间：该单号下所有任务的承运方履历，加上 milestone_task_ids 这些任务的发货前节点。"""
+    records = [
+        dict(row) for row in conn.execute(
+            "SELECT source, record_at, status, detail FROM carrier_records WHERE tracking_number = ?",
+            (tracking_number,),
+        ).fetchall()
+    ]
+    milestone_maps = _read_milestones(conn, milestone_task_ids)
+    stage_maps = [forecast.stages_from_records(records)]
+    for task_id in milestone_task_ids:
+        stage_maps.append(forecast.stages_from_records([], {
+            stage: item["at"] for stage, item in milestone_maps.get(int(task_id), {}).items()
+        }))
+    return forecast.merge_stages(*stage_maps)
+
+
+def _forecast_samples(conn, exclude_number: str) -> list:
+    """历史样本：所有账号所有任务（含归档）按单号去重。同单号多个任务：阶段时间取最早，
+    渠道取最近更新的那条非空渠道。排除当前单号。只返回阶段与渠道，不带单号与账号。"""
+    tasks_by_number: dict = {}
+    for row in conn.execute(
+        "SELECT id, tracking_number, channel FROM tracking_tasks ORDER BY updated_at DESC, id DESC"
+    ).fetchall():
+        tasks_by_number.setdefault(row["tracking_number"], []).append(row)
+    numbers = set(tasks_by_number)
+    numbers.update(
+        row[0] for row in conn.execute("SELECT DISTINCT tracking_number FROM carrier_records").fetchall()
+    )
+    numbers.discard(exclude_number)
+    samples = []
+    for number in sorted(numbers):
+        rows = tasks_by_number.get(number, [])
+        stages = _forecast_number_stages(conn, number, milestone_task_ids=[row["id"] for row in rows])
+        if not stages:
+            continue
+        channel = next((row["channel"] for row in rows if str(row["channel"] or "").strip()), "")
+        samples.append({"stages": stages, "channel": channel})
+    return samples
+
+
+def task_forecast(task_id: int, now=None):
+    """任务的到达预测（结构见 forecast.build_forecast）；任务不存在返回 None。
+    当前单的阶段：本单号在所有任务下的承运方履历（日本邮政的公开数据）+ 本任务自己的发货前节点
+    （别的账号同单号任务的节点不并进来，免得把别人的下单时间显示给这个人）。"""
+    with closing(_connect()) as conn:
+        row = conn.execute("SELECT * FROM tracking_tasks WHERE id = ?", (int(task_id),)).fetchone()
+        if row is None:
+            return None
+        number = row["tracking_number"]
+        current = _forecast_number_stages(conn, number, milestone_task_ids=[int(task_id)])
+        samples = _forecast_samples(conn, number)
+    return forecast.build_forecast(current, row["channel"], samples, now or datetime.now())
+
+
 # --- v1 → v2 迁移 ---
 
 def _migrate_v1_to_v2(conn):
@@ -558,6 +791,8 @@ def ensure_storage(dotenv_path: str):
                 _migrate_portal_sub_column(conn)
                 # 机器接口的两张表与墓碑触发器：只新建、不改动已有表
                 _ensure_api_schema(conn)
+                # 到达预测：渠道列、承运方履历、发货前节点（只加列、只新建）
+                _ensure_forecast_schema(conn)
                 if conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] == 0:
                     _migrate_legacy_profiles(conn, dotenv_path)
                 _sync_admin_account(conn, admin_username, admin_password_hash)
@@ -666,9 +901,12 @@ def _attach_tasks(conn, accounts: list[dict]):
         account_ids,
     ).fetchall()
 
+    milestones = _read_milestones(conn, [row["id"] for row in rows])
     grouped: dict[int, list] = {account_id: [] for account_id in account_ids}
     for row in rows:
-        grouped.setdefault(int(row["account_id"]), []).append(_row_to_task(row))
+        task = _row_to_task(row)
+        task["milestones"] = milestones.get(int(row["id"]), {})
+        grouped.setdefault(int(row["account_id"]), []).append(task)
 
     for account in accounts:
         tasks = grouped.get(int(account["id"]), [])
@@ -676,6 +914,8 @@ def _attach_tasks(conn, accounts: list[dict]):
         account["archived_tasks"] = [task for task in tasks if task["archived"]]
         account["task_count"] = len(tasks)
         account["active_task_count"] = len([task for task in account["tasks"] if task["enabled"]])
+        # 渠道输入框的 <datalist>：这个账号用过的渠道
+        account["channels"] = sorted({task["channel"] for task in tasks if task.get("channel")})
     return accounts
 
 
@@ -1069,7 +1309,13 @@ def create_task(account_id: int, data: dict):
                 "SELECT 1 FROM tracking_tasks WHERE account_id = ? AND tracking_number = ? AND archived = 1",
                 (int(account_id), _normalize_tracking_number(data.get("tracking_number", ""))),
             ).fetchone() is not None
+            channel = forecast.normalize_channel(data.get("channel"))
+            milestones = normalize_milestones(data.get("milestones") or {})
             task_id = _insert_task(conn, int(account_id), payload)
+            # 新建 / 复活时只写填了的项：复活时留空不等于要清掉原来的渠道和节点
+            if channel:
+                conn.execute("UPDATE tracking_tasks SET channel = ? WHERE id = ?", (channel, int(task_id)))
+            _write_milestones(conn, task_id, {stage: at for stage, at in milestones.items() if at}, "manual")
     task = get_task(task_id)
     # 调用方据此给出"已从归档恢复"之类的准确提示
     task["revived"] = revived
@@ -1110,6 +1356,14 @@ def update_task(task_id: int, data: dict, *, actor_role: str = "admin", actor_id
                 )
             except sqlite3.IntegrityError as exc:
                 raise ValueError("这个单号在该账号下已存在。") from exc
+            # 渠道与发货前节点只在请求里带了才改（停用/启用之类的局部更新不带它们）；节点留空 = 清除
+            if "channel" in data:
+                conn.execute(
+                    "UPDATE tracking_tasks SET channel = ? WHERE id = ?",
+                    (forecast.normalize_channel(data.get("channel")), int(task_id)),
+                )
+            if data.get("milestones") is not None:
+                _write_milestones(conn, task_id, normalize_milestones(data["milestones"]), "manual")
     return get_task(task_id)
 
 
@@ -1129,6 +1383,54 @@ def delete_task(task_id: int, *, actor_role: str = "admin", actor_id: int | None
         with conn:
             _assert_task_access(conn, task_id, actor_role, actor_id)
             conn.execute("DELETE FROM tracking_tasks WHERE id = ?", (int(task_id),))
+
+
+# 补录历史单号：每行结果穷举，前端 src/static/forecast.js 有同样一份（测试比对）
+BACKFILL_RESULT_META = {
+    "added": {"label": "已补录", "tone": "ok"},
+    "updated": {"label": "已补充", "tone": "info"},
+    "no_records": {"label": "查不到履历", "tone": "warn"},
+    "invalid": {"label": "格式错误", "tone": "err"},
+}
+BACKFILL_MAX_LINES = 30
+
+
+def backfill_task(account_id: int, number: str, channel: str, ordered_at: str = ""):
+    """补录一行（单号已规整校验、渠道已规整且非空、下单时间已规整或为空）。返回 (result, task_id)：
+    - updated：该账号已有这个单号的任务（不论是否归档）——不新建，渠道为空时补上渠道，给了下单时间就以手填写入；
+    - created：新建一条已归档、已停用的任务（label 空）。不经 _insert_task，不复活、不触发轮询与推送；
+      api_refs 的四个触发器只管 UPDATE / DELETE，INSERT 一条已归档任务不会动来源记录。
+      抓履历由调用方随后做（record_carrier_records）。"""
+    now = _ts()
+    with closing(_connect()) as conn:
+        with conn:
+            if conn.execute("SELECT 1 FROM accounts WHERE id = ?", (int(account_id),)).fetchone() is None:
+                raise ValueError("用户不存在。")
+            row = conn.execute(
+                "SELECT id FROM tracking_tasks WHERE account_id = ? AND tracking_number = ?",
+                (int(account_id), number),
+            ).fetchone()
+            if row is not None:
+                task_id = int(row["id"])
+                conn.execute(
+                    "UPDATE tracking_tasks SET channel = ? WHERE id = ? AND channel = ''", (channel, task_id)
+                )
+                result = "updated"
+            else:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO tracking_tasks (
+                        account_id, tracking_number, label, check_interval, enabled, archived, channel,
+                        first_seen_at, seen_count, created_at, updated_at
+                    ) VALUES (?, ?, '', ?, 0, 1, ?, ?, 1, ?, ?)
+                    """,
+                    (int(account_id), number, PROFILE_DEFAULTS["check_interval"], channel, now, now, now),
+                )
+                task_id = int(cursor.lastrowid)
+                result = "created"
+            if ordered_at:
+                _write_milestones(conn, task_id, {"ordered": ordered_at}, "manual")
+    return result, task_id
 
 
 def _latest_event(conn, task_id: int, tracking_number: str, kinds):
@@ -1208,6 +1510,7 @@ def update_task_state(
     push_failed: str | None = None,
     push_detail: str = "",
     auto_archive: bool = False,
+    carrier_records=None,
 ):
     """tracker 回写轮询结果，并在同一事务里写时间线事件。
 
@@ -1220,7 +1523,9 @@ def update_task_state(
       同一状态连续推送失败只记第一次（失败会按退避反复重试）。
     - auto_archive：签收后自动归档。与上面的事件同一事务：先把引用这条任务、仍为 active 的
       来源记录标成 delivered_archived，再归档（archived=1、enabled=0），最后记 auto_archived 事件
-      （排在本轮的 status_change / push_ok 之后）。任务已归档则跳过。"""
+      （排在本轮的 status_change / push_ok 之后）。任务已归档则跳过。
+    - carrier_records：这次抓到的全部履历，同一事务里 INSERT OR IGNORE 进 carrier_records（到达预测的经验库）。
+      与事件一样受单号校验保护，单号被改了就不写。"""
     with closing(_connect()) as conn:
         with conn:
             row = conn.execute("SELECT * FROM tracking_tasks WHERE id = ?", (int(task_id),)).fetchone()
@@ -1250,6 +1555,9 @@ def update_task_state(
             )
             if cursor.rowcount != 1:
                 return None
+
+            if carrier_records:
+                _insert_carrier_records(conn, task_id, current["tracking_number"], carrier_records)
 
             wrote = False
             if query_ok is not None:
@@ -1728,12 +2036,27 @@ def _api_task_delivered(conn, task_row, linked_ref_state) -> bool:
     return last is not None and last["kind"] == "auto_archived"
 
 
+def _api_apply_forecast_fields(conn, task_id: int, channel: str | None, milestones: dict | None):
+    """调用方带来的渠道与发货前节点：渠道只在任务渠道为空时写入（不覆盖用户填的）；
+    节点以 caller 身份写入，不覆盖用户手填的 manual 行。两者都已在接口层校验规整过。"""
+    if channel:
+        conn.execute(
+            "UPDATE tracking_tasks SET channel = ? WHERE id = ? AND channel = ''", (channel, int(task_id))
+        )
+    if milestones:
+        _write_milestones(conn, task_id, milestones, "caller")
+
+
 def api_put_tracking(caller_id: int, account_id: int, number: str, *, label: str | None = None,
-                     external_ref: str | None = None, revive: bool = False):
+                     external_ref: str | None = None, revive: bool = False,
+                     channel: str | None = None, milestones: dict | None = None):
     """PUT /api/v1/tracking/<number> 的存储侧。返回 (result, task)，result 穷举：
     created（新建任务）/ revived（从归档恢复）/ linked（关联到账号下已有的任务，或墓碑后用户自己又加回）/
     existing（本调用方早已登记、任务在追踪）/ delivered（签收后已自动归档，未带 revive 时原样返回、不复活）。
     被用户删除/归档且未带 revive 时抛 ApiConflict。
+
+    channel / milestones 在任务存在（含 delivered 不复活）的各分支都生效，见 _api_apply_forecast_fields；
+    被 409 挡住时整个请求作废，不写。
 
     规则：label 只在新建任务时使用；关联或复活已有任务时不动它的 label / 间隔 / 暂停状态
     （复活会把 enabled 置 1，否则复活了也不轮询）。external_ref 给了就更新，不给保留原值。
@@ -1773,7 +2096,9 @@ def api_put_tracking(caller_id: int, account_id: int, number: str, *, label: str
                 # 签收后自动归档：不复活，原样返回；本调用方的来源记录（没有就新建）记为 delivered_archived
                 task_id = int(task["id"])
                 ref = _api_upsert_ref(conn, caller_id, account_id, number, task_id, "delivered_archived", external_ref)
-                return "delivered", _api_view(conn, task, ref)
+                _api_apply_forecast_fields(conn, task_id, channel, milestones)
+                task_row = conn.execute("SELECT * FROM tracking_tasks WHERE id = ?", (task_id,)).fetchone()
+                return "delivered", _api_view(conn, task_row, ref)
             else:
                 task_id = int(task["id"])
                 api_archived = ref_on_task and ref_state == "archived_by_api"
@@ -1790,6 +2115,7 @@ def api_put_tracking(caller_id: int, account_id: int, number: str, *, label: str
                 result = "revived"
 
             ref = _api_upsert_ref(conn, caller_id, account_id, number, task_id, "active", external_ref)
+            _api_apply_forecast_fields(conn, task_id, channel, milestones)
             task_row = conn.execute("SELECT * FROM tracking_tasks WHERE id = ?", (task_id,)).fetchone()
             view = _api_view(conn, task_row, ref)
     return result, view

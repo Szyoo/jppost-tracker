@@ -7,6 +7,8 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
 import bark
+# 认定为「已签收」的状态（只做整串精确匹配）定义在 forecast，签收自动归档与到达预测的阶段映射共用同一份
+from forecast import DELIVERED_STATUSES
 from env_schema import BOOL_FALSE, BOOL_TRUE, ENV_FIELDS, TRACKER_ENV_KEYS
 from storage import (
     MIN_CHECK_INTERVAL,
@@ -29,12 +31,6 @@ IDLE_LOOP_SLEEP = 5
 # 推送失败后的首次退避秒数，之后按 2 倍递增，上限为任务自己的 check_interval
 PUSH_RETRY_BASE = 30
 
-# 认定为「已签收」的状态（履历表「配達状況」一栏）。只做整串精确匹配，
-# 「お届け先にお伺いしましたがご不在」「ご不在のため持ち戻り」「お届け予定」之类都不算：
-# - お届け先にお届け済み：日本邮政官网对送达收件人的标准写法
-# - お届け済み：同义的简写
-# - 窓口でお渡し：在邮局窗口交给收件人（局留め、不在后到窗口自取）
-DELIVERED_STATUSES = frozenset({"お届け先にお届け済み", "お届け済み", "窓口でお渡し"})
 # 记录的 info 是「日期 时间 状态」（见 parse_tracking_records），状态前的日期时间要先剥掉
 _INFO_DATETIME_PREFIX = re.compile(r"^\d{4}/\d{1,2}/\d{1,2}\s+\d{1,2}:\d{2}\s*")
 # 账号没配 Bark Keys 时照常追踪、只是不推送；这句提示留在 last_error 上，免得用户以为会收到通知
@@ -259,7 +255,9 @@ def records_since(records: list[dict], last_info: str) -> list[dict]:
 def process_task(task: dict, system_env: dict) -> bool:
     """处理一个任务。返回 True 表示这轮需要尽快重试（推送失败），
     由主循环按退避安排下一次，本函数绝不阻塞等待。
-    所有回写都带上抓取时的单号：抓取期间单号被改了，这轮结果直接作废。"""
+    所有回写都带上抓取时的单号：抓取期间单号被改了，这轮结果直接作废。
+    抓到履历的每条路径（无变化、未配推送、推送成功或失败）都把全部记录交给 carrier_records：
+    履历是事实，与推送成败无关，到达预测靠它积累经验。"""
     config = build_runtime_config(task, system_env)
     prefix = config["log_prefix"]
     task_id = config["task_id"]
@@ -293,7 +291,8 @@ def process_task(task: dict, system_env: dict) -> bool:
             and not task_has_event(task_id, number, "auto_archived")
         )
         update_task_state(
-            task_id, latest_info=current_info, error=ok_error, tracking_number=number, query_ok=True,
+            task_id, latest_info=current_info, error=ok_error, tracking_number=number,
+            carrier_records=records, query_ok=True,
             auto_archive=catch_up,
         )
         if catch_up:
@@ -311,6 +310,7 @@ def process_task(task: dict, system_env: dict) -> bool:
             latest_info=current_info,
             error=ok_error,
             tracking_number=number,
+            carrier_records=records,
             query_ok=True,
             new_records=new_records,
             auto_archive=delivered,
@@ -329,6 +329,7 @@ def process_task(task: dict, system_env: dict) -> bool:
             error="",
             pushed=True,
             tracking_number=number,
+            carrier_records=records,
             query_ok=True,
             new_records=new_records,
             push_status=current_info,
@@ -347,6 +348,7 @@ def process_task(task: dict, system_env: dict) -> bool:
         task_id,
         error=f"推送失败（{reason}），稍后重试。",
         tracking_number=number,
+            carrier_records=records,
         query_ok=True,
         new_records=new_records,
         push_status=current_info,

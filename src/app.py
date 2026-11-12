@@ -29,8 +29,12 @@ from szyyw_auth.flask import current_identity, is_anonymous
 import api_v1
 import bark
 import env_schema
+import forecast
 from storage import (
+    BACKFILL_MAX_LINES,
+    BACKFILL_RESULT_META,
     archive_task,
+    backfill_task,
     build_tracking_url,
     create_account,
     create_task,
@@ -43,10 +47,13 @@ from storage import (
     list_accounts,
     list_task_events,
     load_system_env,
+    normalize_api_tracking_number,
     parse_bark_keys,
+    record_carrier_records,
     register_user,
     resolve_portal_account,
     set_account_portal_sub,
+    task_forecast,
     update_account,
     update_task,
     verify_account_password,
@@ -1255,7 +1262,7 @@ def task_created_message(task: dict) -> str:
     return "追踪任务已添加。"
 
 
-TASK_INPUT_KEYS = ("tracking_number", "label", "check_interval", "enabled", "archived")
+TASK_INPUT_KEYS = ("tracking_number", "label", "check_interval", "enabled", "archived", "channel", "milestones")
 
 
 def build_task_payload(data: dict) -> dict:
@@ -1395,6 +1402,103 @@ def api_task_events(task_id: int):
     })
 
 
+@app.route('/api/tasks/<int:task_id>/forecast', methods=['GET'])
+@login_required
+def api_task_forecast(task_id: int):
+    """到达预测（结构见 forecast.build_forecast）。本人或管理员可看；样本只以聚合统计出现。"""
+    account = current_account()
+    _, error = guard_task_access(task_id, account)
+    if error:
+        return error
+    return jsonify({"status": "success", "forecast": task_forecast(task_id)})
+
+
+def fetch_carrier_records(tracking_number: str) -> list:
+    """补录时立即抓一次日本邮政履历，复用 tracker 的抓取与解析（失败返回空列表）。
+    tracker 在这里才 import：它在 import 时会读 .env、补表，只有补录用得上。
+    生产进程打了 gevent 补丁，requests 是协作式的，逐个顺序抓不会卡住其他请求。"""
+    import tracker
+
+    timeout = load_system_env(DOTENV_PATH, ("REQUEST_TIMEOUT",)).get("REQUEST_TIMEOUT") or "15"
+    config = {
+        "tracking_url": build_tracking_url(tracking_number),
+        "request_timeout": tracker._normalize_int(timeout, 15),
+        "log_prefix": f"[补录 · {tracking_number}]",
+    }
+    return tracker.get_tracking_records(config)
+
+
+def parse_backfill_line(line: str):
+    """「单号 渠道 [下单日期]」，空白分隔；渠道里可以有空格（最后一段像日期才当下单日期）。
+    返回 (单号, 渠道, 下单时间或 '')，不合法抛 ValueError（文案直接给用户看）。"""
+    tokens = line.split()
+    if len(tokens) < 2:
+        raise ValueError("至少要有单号和渠道两项。")
+    number = normalize_api_tracking_number(tokens[0])
+    rest = tokens[1:]
+    ordered_at = ""
+    if len(rest) >= 2:
+        try:
+            ordered_at = forecast.normalize_milestone_time(rest[-1].replace("/", "-"))
+            rest = rest[:-1]
+        except ValueError:
+            ordered_at = ""
+    channel = forecast.normalize_channel(" ".join(rest))
+    if not channel:
+        raise ValueError("缺少渠道。")
+    return number, channel, ordered_at
+
+
+@app.route('/api/tasks/backfill', methods=['POST'])
+@login_required
+def api_backfill_tasks():
+    """补录历史单号，给到达预测积累样本。body {"lines": "...", "account_id": 可选（仅管理员）}。
+    每行一个单号（最多 BACKFILL_MAX_LINES 行），结果逐行返回，status 穷举见 storage.BACKFILL_RESULT_META：
+    added（新建已归档任务并抓到 N 条履历）/ updated（已有任务，补了渠道或下单时间）/
+    no_records（日本邮政查不到，任务仍保留以便手填）/ invalid（这一行格式错误）。"""
+    account = current_account()
+    data = request.get_json(silent=True) or {}
+    account_id = int(account["id"])
+    raw_account = data.get("account_id")
+    if raw_account not in (None, "") and str(raw_account) != str(account_id):
+        if not is_admin():
+            return jsonify({"status": "error", "message": "无权为其他用户补录。"}), 403
+        try:
+            account_id = int(raw_account)
+        except (TypeError, ValueError):
+            return jsonify({"status": "error", "message": "account_id 不正确。"}), 400
+        if get_account(account_id) is None:
+            return jsonify({"status": "error", "message": "用户不存在。"}), 404
+    lines = [line.strip() for line in str(data.get("lines") or "").splitlines() if line.strip()]
+    if not lines:
+        return jsonify({"status": "error", "message": "请至少填一行：单号 渠道 [下单日期]。"}), 400
+    if len(lines) > BACKFILL_MAX_LINES:
+        return jsonify({"status": "error", "message": f"一次最多补录 {BACKFILL_MAX_LINES} 行。"}), 400
+
+    results = []
+    for line in lines:
+        try:
+            number, channel, ordered_at = parse_backfill_line(line)
+        except ValueError as exc:
+            results.append({"line": line, "status": "invalid", "reason": str(exc)})
+            continue
+        outcome, task_id = backfill_task(account_id, number, channel, ordered_at)
+        item = {"line": line, "tracking_number": number, "task_id": task_id}
+        if outcome == "updated":
+            item["status"] = "updated"
+        else:
+            count = record_carrier_records(task_id, number, fetch_carrier_records(number))
+            item["status"] = "added" if count else "no_records"
+            item["records"] = count or 0
+        results.append(item)
+    for item in results:
+        BACKFILL_RESULT_META[item["status"]]  # 穷举自检：漏了状态在这里就炸
+    payload = {"status": "success", "message": f"已处理 {len(results)} 行。", "results": results}
+    if is_admin():
+        payload["user_state"] = build_user_state()
+    return jsonify(payload)
+
+
 @app.route('/api/me', methods=['GET'])
 @login_required
 def api_me():
@@ -1445,13 +1549,24 @@ def me_update_form():
 
 
 def task_form_payload() -> dict:
-    """门户页是传统表单：未勾选的复选框不会提交，所以 enabled 按键是否存在判断。"""
-    return {
+    """门户页是传统表单：未勾选的复选框不会提交，所以 enabled 按键是否存在判断。
+    渠道与发货前节点（ms_<阶段>）只在表单里有这些输入框时才带上（归档区的「恢复」表单没有，不能把它们清掉）。"""
+    payload = {
         "tracking_number": request.form.get("tracking_number", ""),
         "label": request.form.get("label", ""),
         "check_interval": request.form.get("check_interval", "300"),
         "enabled": 'enabled' in request.form,
     }
+    if "channel" in request.form:
+        payload["channel"] = request.form.get("channel", "")
+    milestones = {
+        stage: request.form.get(f"ms_{stage}", "")
+        for stage in forecast.PRE_STAGES
+        if f"ms_{stage}" in request.form
+    }
+    if milestones:
+        payload["milestones"] = milestones
+    return payload
 
 
 @app.route('/me/tasks', methods=['POST'])

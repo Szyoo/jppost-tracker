@@ -19,7 +19,10 @@ from storage import (
     authenticate_api_caller,
     list_task_events,
     normalize_api_tracking_number,
+    normalize_milestones,
+    task_forecast,
 )
+from forecast import CHANNEL_MAX_LENGTH
 
 API_V1_PREFIX = "/api/v1"
 BLUEPRINT_NAME = "api_v1"
@@ -159,6 +162,9 @@ def _json_body(allowed: dict) -> dict:
         if kind is bool:
             if not isinstance(value, bool):
                 raise BadRequest("invalid_body", f"{key} 必须是布尔值。")
+        elif kind is dict:
+            if not isinstance(value, dict):
+                raise BadRequest("invalid_body", f"{key} 必须是 JSON 对象。")
         elif kind is str:
             if not isinstance(value, str):
                 raise BadRequest("invalid_body", f"{key} 必须是字符串。")
@@ -167,6 +173,17 @@ def _json_body(allowed: dict) -> dict:
                 raise BadRequest("invalid_body", f"{key} 不能超过 {max_length} 个字符。")
         result[key] = value
     return result
+
+
+def _milestones(value):
+    """milestones：key 只能是 ordered / packed / handed_over，值是时间字符串（YYYY-MM-DD[ HH:MM[:SS]]
+    或带时区的 ISO 8601，换算成日本时间）。不允许空值——调用方不能删除节点。"""
+    if value is None:
+        return None
+    try:
+        return normalize_milestones(value, allow_tz=True, allow_empty=False)
+    except ValueError as exc:
+        raise BadRequest("invalid_body", f"milestones：{exc}") from None
 
 
 def _events_limit() -> int:
@@ -203,6 +220,7 @@ def tracking_view(task: dict) -> dict:
     return {
         "tracking_number": task["tracking_number"],
         "label": task["label"],
+        "channel": _or_none(task.get("channel")),
         "external_ref": _or_none(ref["external_ref"]) if ref else None,
         "source_state": ref["state"] if ref else None,
         "enabled": task["enabled"],
@@ -250,6 +268,8 @@ def put_tracking(number):
         "label": (str, LABEL_MAX_LENGTH),
         "external_ref": (str, EXTERNAL_REF_MAX_LENGTH),
         "revive": (bool, None),
+        "channel": (str, CHANNEL_MAX_LENGTH),
+        "milestones": (dict, None),
     })
     result, task = api_put_tracking(
         caller["id"],
@@ -258,6 +278,8 @@ def put_tracking(number):
         label=body.get("label"),
         external_ref=body.get("external_ref"),
         revive=bool(body.get("revive")),
+        channel=body.get("channel") or None,
+        milestones=_milestones(body.get("milestones")),
     )
     status = 201 if result == "created" else 200
     return jsonify({"result": result, "tracking": tracking_view(task)}), status
@@ -283,3 +305,14 @@ def archive_tracking(number):
     if result is None:
         return _not_found(task)
     return jsonify({"result": result, "tracking": tracking_view(task)})
+
+
+@bp.route("/tracking/<number>/forecast", methods=["GET"])
+def get_tracking_forecast(number):
+    """到达预测，结构与网页的 GET /api/tasks/<id>/forecast 相同（见 forecast.build_forecast）。"""
+    caller = g.api_caller
+    number = _tracking_number(number)
+    task, tombstone = api_get_tracking(caller["id"], caller["account_id"], number)
+    if task is None:
+        return _not_found(tombstone)
+    return jsonify({"tracking_number": task["tracking_number"], "forecast": task_forecast(task["id"])})
