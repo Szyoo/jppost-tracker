@@ -686,49 +686,62 @@ def build_forecast(current_stages: dict, current_channel: str, samples, now: dat
     return result
 
 
-# --- 推送里的预测两行 ---
+# --- 推送正文（一行） ---
 
 _WEEKDAYS = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 
 
-def _md(moment) -> str:
-    return f"{moment.month}/{moment.day}"
+def day_part(hour: int) -> str:
+    """时段词：0–6 凌晨、6–12 上午、12–18 下午、18–24 晚上。"""
+    if hour < 6:
+        return "凌晨"
+    if hour < 12:
+        return "上午"
+    if hour < 18:
+        return "下午"
+    return "晚上"
 
 
-def format_span(seconds) -> str:
-    """全程用时：「3 天 5 小时」「5 小时」「3 天」。"""
-    hours = max(0, int(seconds or 0)) // 3600
-    days, rest = divmod(hours, 24)
-    if days and rest:
-        return f"{days} 天 {rest} 小时"
-    return f"{days} 天" if days else f"{rest} 小时"
-
-
-def push_forecast_lines(result) -> list:
-    """推送正文末尾的预测两行（result 是 build_forecast 的输出，带 transit_region / origin_name）：
-    「当前：<段名>·<阶段名>（第 N 天）」与「预计签收：11/14 周六 18:30 前后（11/14 15:40–18:40）」。
-    可信度 none 或历史里没有签收时第二行是「预计签收：暂无可参考的历史」；overdue 时追加「已比以往都慢」；
-    已签收时第二行是「全程 X 天 Y 小时」。还没有任何阶段时返回空列表。"""
-    if not result or not result.get("current"):
-        return []
-    region = result.get("transit_region", "")
-    stage = result["current"]["stage"]
-    day = f"（第 {result['day']} 天）" if result.get("day") else ""
-    lines = [f"当前：{segment_label(stage_segment(stage), region)}·{stage_label(stage, region, result.get('origin_name', ''))}{day}"]
-    if result.get("delivered"):
-        if result.get("total_seconds") is not None:
-            lines.append(f"全程 {format_span(result['total_seconds'])}")
-        return lines
-    item = next((entry for entry in result.get("remaining", []) if entry["stage"] == "delivered"), None)
-    if result.get("confidence") == "none" or item is None:
-        second = "预计签收：暂无可参考的历史"
+def eta_words(eta, now) -> str:
+    """「今天下午」「明天上午」「11/14（周六）上午」。"""
+    days = (eta.date() - now.date()).days
+    if days == 0:
+        when = "今天"
+    elif days == 1:
+        when = "明天"
     else:
-        eta = parse_stored_time(item["eta"])
-        low, high = parse_stored_time(item["eta_low"]), parse_stored_time(item["eta_high"])
-        high_text = f"{high:%H:%M}" if high.date() == low.date() else f"{_md(high)} {high:%H:%M}"
-        second = (f"预计签收：{_md(eta)} {_WEEKDAYS[eta.weekday()]} {eta:%H:%M} 前后"
-                  f"（{_md(low)} {low:%H:%M}–{high_text}）")
+        when = f"{eta.month}/{eta.day}（{_WEEKDAYS[eta.weekday()]}）"
+    return f"{when}{day_part(eta.hour)}"
+
+
+def total_days_text(seconds) -> str:
+    """全程天数，取整到 0.5 天：「全程 8.5 天」「全程 8 天」。"""
+    halves = round(max(0, float(seconds or 0)) / 86400 * 2)
+    value = halves / 2
+    return f"全程 {int(value) if halves % 2 == 0 else value} 天"
+
+
+def push_body(result, now, *, with_forecast: bool = True) -> str:
+    """推送正文（一行），result 是 build_forecast 的输出，now 是当前日本时间：
+    - 未签收：「第 N 天 · 预计 11/14（周六）上午签收」，日期是今天 / 明天时写「预计今天上午签收」「预计明天下午签收」；
+      可信度 none 或历史里没有签收时只写「第 N 天」；overdue 时写「第 N 天 · 比以往都慢」；
+    - 已签收：「全程 X 天」（取整到 0.5 天）；
+    - with_forecast=False（系统设置 PUSH_FORECAST 关闭）：不写预计签收与「比以往都慢」。
+    第 N 天按起点（下单 → 出库 → 引受）当天为第 1 天的自然日算；没有起点时不写天数。没有任何阶段时返回空串。"""
+    if not result or not result.get("current"):
+        return ""
+    if result.get("delivered"):
+        return total_days_text(result["total_seconds"]) if result.get("total_seconds") is not None else ""
+    origin = result.get("origin")
+    start = parse_stored_time(origin["at"]) if origin else None
+    parts = [f"第 {(now.date() - start.date()).days + 1} 天"] if start else []
+    if not with_forecast:
+        return " · ".join(parts)
     if result.get("overdue"):
-        second += " · 已比以往都慢"
-    lines.append(second)
-    return lines
+        parts.append("比以往都慢")
+    elif result.get("confidence") != "none":
+        item = next((entry for entry in result.get("remaining", []) if entry["stage"] == "delivered"), None)
+        if item is not None:
+            words = eta_words(parse_stored_time(item["eta"]), now)
+            parts.append(f"预计 {words}签收" if words[0].isdigit() else f"预计{words}签收")
+    return " · ".join(parts)

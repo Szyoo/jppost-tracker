@@ -52,6 +52,7 @@ class Net:
         self.page = None
         self.push_ok = True
         self.pushes = []
+        self.titles = []
         self.on_fetch = None
         monkeypatch.setattr(tracker.requests, "get", self._get)
         monkeypatch.setattr(tracker, "send_bark_notification", self._push)
@@ -67,6 +68,7 @@ class Net:
 
     def _push(self, config, title, body):
         self.pushes.append(body)
+        self.titles.append(title)
         return (True, "") if self.push_ok else (False, "HTTP 500")
 
 
@@ -159,10 +161,10 @@ def test_push_failure_logged_once_and_status_not_duplicated_on_retry(tracker, ta
     ]
 
     # 新状态再次推送失败：要重新记一条失败
-    net.page = page_html(R1, R2)
+    net.page = page_html(R1, R3)
     net.push_ok = False
     run_once(tracker, task["id"])
-    assert kinds(task["id"])[-2:] == [("status_change", info(R2)), ("push_fail", "经过（東京）")]
+    assert kinds(task["id"])[-2:] == [("status_change", info(R3)), ("push_fail", "到达東京")]
 
 
 def test_query_error_only_logged_on_transitions(tracker, task, monkeypatch):

@@ -146,6 +146,57 @@ SHARED_KINDS = frozenset({
 })
 
 
+# --- 推送白名单 ---
+
+# 只推关键节点（穷举）：其余节点只记录、显示，同样写进 notified_nodes（标记为已处理），以后不会误推。
+# 角色由节点成员的语义决定（日本邮政看 jp_kind / 异常状态，中国邮政看 cn_kind / 到达寄达地）。
+PUSH_ROLES = {
+    "accepted": "始发国收寄",
+    "export_hold": "始发国出口海关扣留待验（异常）",
+    "departed_origin": "离开始发国（出境）",
+    "arrived_japan": "航班到达日本（日本邮政接收寄达地 / 到达日本互换局，先到的那个）",
+    "import_hold": "日本进口海关扣留（异常）",
+    "departed_exchange": "离开日本互换局",
+    "local_arrived": "到达派送局",
+    "out_for_delivery": "派送中",
+    "delivered": "已妥投 / 窗口领取",
+    "anomaly": "日本邮政异常（不在带回、局内保管、退回、调查中、转寄、再次投递）",
+}
+# 一单只推一次的角色：「日本邮政接收（寄达地）」与「到达東京…（入境）」是同一件事，先到的推，后到的只记录
+ONCE_ROLES = frozenset({"arrived_japan"})
+# 日本邮政的异常类状态（外部数据，按 jp_status 的表收）
+JP_ANOMALY_STATUSES = frozenset({
+    "ご不在のため持ち戻り", "お届け先にお伺いしましたがご不在でした", "保管", "保管期間経過のため返送",
+    "返送", "差出人に返送", "差出人に返送済み", "調査中", "転送", "再配達",
+})
+_KIND_ROLE = {
+    "accept": "accepted",
+    "export_customs_hold": "export_hold",
+    "depart_origin": "departed_origin",
+    "arrive_japan_exchange": "arrived_japan",
+    "import_customs_hold": "import_hold",
+    "depart_japan_exchange": "departed_exchange",
+    "local_arrive": "local_arrived",
+    "out_for_delivery": "out_for_delivery",
+    "delivered": "delivered",
+}
+
+
+if not set(_KIND_ROLE.values()) | {"anomaly", "arrived_japan"} <= set(PUSH_ROLES):
+    raise ValueError("推送角色未在 PUSH_ROLES 里定义")
+
+
+def push_role(source: str, status: str, raw_kind):
+    """一条事件的推送角色（PUSH_ROLES 的 key）；不推的返回 None。"""
+    if raw_kind in _KIND_ROLE:
+        return _KIND_ROLE[raw_kind]
+    if source == "jp_post" and status in JP_ANOMALY_STATUSES:
+        return "anomaly"
+    if source == "cn_ems" and status == "到达寄达地":
+        return "arrived_japan"
+    return None
+
+
 # --- 地点 ---
 
 def _detail_parts(detail) -> list:
@@ -406,12 +457,14 @@ def build_nodes(records, milestones=None, *, tracking_number="", transit_region=
         if record["source"] == "jp_post":
             stage = forecast.record_stage("jp_post", status, record.get("detail", ""))
             kind = jp_kind(status, stage)
+            role = push_role("jp_post", status, kind)
             kind = kind if kind in SHARED_KINDS else None
             name = jp_name(status, record.get("detail", ""), ctx)
             detail = jp_status.detail_zh(record.get("detail", ""))
             segment_override, pinned = None, False
         else:
             kind = cn_kind(status)
+            role = push_role("cn_ems", status, kind)
             stage = forecast.record_stage("cn_ems", status, record.get("detail", ""))
             name, segment_override, pinned = cn_display(record, ctx, flights)
             if kind is None and stage == "left_collection":
@@ -420,7 +473,7 @@ def build_nodes(records, milestones=None, *, tracking_number="", transit_region=
         members.append({
             "source": record["source"], "moment": moment, "date_only": date_only, "kind": kind,
             "stage": stage, "name": name, "detail": detail, "segment": segment_override, "pinned": pinned,
-            "status": status, "record_at": record["record_at"],
+            "status": status, "record_at": record["record_at"], "role": role,
         })
     members.sort(key=lambda m: (m["moment"], m["source"]))
 
@@ -484,6 +537,7 @@ def build_nodes(records, milestones=None, *, tracking_number="", transit_region=
             "detail": (jp_member or first)["detail"],
             "visible": visible,
             "times": [(_fmt(m["moment"], m["date_only"])) for m in group],
+            "role": next((m["role"] for m in group if m["role"]), None),
         })
 
     for stage, at in (milestones or {}).items():
@@ -493,7 +547,7 @@ def build_nodes(records, milestones=None, *, tracking_number="", transit_region=
         nodes.append({
             "key": f"milestone:{stage}", "kind": None, "at": str(at), "moment": moment, "segment": "warehouse",
             "stage": stage, "name": forecast.stage_label(stage), "sources": ["milestone"], "original": None,
-            "detail": "", "visible": True, "times": [],
+            "detail": "", "visible": True, "times": [], "role": None,
         })
     # 只有日期的节点（「持ち出し中」）按当天 12:00 算会排到当天更晚阶段（如上午妥投）之后：
     # 排序时挪到同一天第一个阶段顺序更靠后的有时刻节点之前
@@ -544,15 +598,21 @@ def pushable_nodes(nodes) -> list:
     return [node for node in nodes if node["visible"] and node["sources"] != ["milestone"]]
 
 
+def push_eligible(nodes) -> set:
+    """nodes（按时间先后）里白名单节点的 key：有推送角色（PUSH_ROLES），且一单只推一次的角色（ONCE_ROLES）只取最早那个。"""
+    keys, seen_once = set(), set()
+    for node in nodes:
+        role = node.get("role")
+        if not role:
+            continue
+        if role in ONCE_ROLES:
+            if role in seen_once:
+                continue
+            seen_once.add(role)
+        keys.add(node["key"])
+    return keys
+
+
 def public_node(node) -> dict:
     """接口返回用：去掉内部字段（datetime、成员时间）。"""
     return {key: node[key] for key in ("key", "at", "segment", "stage", "name", "sources", "original", "detail")}
-
-
-def push_line(node) -> str:
-    """推送正文里一个节点：「11/13 07:20 到达東京国際郵便局（入境）（国際交換局に到着）」——日本邮政来源的带原文。"""
-    moment = node["moment"]
-    when = f"{moment.month}/{moment.day}" + ("" if len(node["at"]) <= 10 else f" {moment:%H:%M}")
-    original = f"（{node['original']}）" if node.get("original") else ""
-    return f"{when} {node['name']}{original}"
-

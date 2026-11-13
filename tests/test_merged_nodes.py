@@ -1,5 +1,5 @@
 """合并履历与推送：日本邮政状态汉化、带方向与地点的节点名、跨来源归并（±2 分钟、时区换算后）、段主来源、
-推送去重（哪边先报推哪边、另一边晚到不再推）、同轮合并、失败重推、上线迁移不补发、推送附带的到达预测。
+推送白名单与去重（哪边先报推哪边、另一边晚到不再推）、同轮只推最新、失败重推、上线迁移不补发、推送附带的到达预测。
 
 样本按真实的一单（中国寄日本的大件，经韩国中转两段航班）两边履历的结构造，单号虚构；17TRACK 与日本邮政都用假网络。"""
 import sqlite3
@@ -217,7 +217,8 @@ def ready(fake, events):
     fake.ready[NUM] = track_info(events)
 
 
-def test_shared_node_jp_first_pushes_once(cn_task, monkeypatch):
+def test_arrived_japan_pushed_once_cn_first(cn_task, monkeypatch):
+    """「日本邮政接收（寄达地）」先到：推它；之后两边报的「到达東京（入境）」都只记录。"""
     import tracker
 
     task, fake = cn_task
@@ -225,32 +226,34 @@ def test_shared_node_jp_first_pushes_once(cn_task, monkeypatch):
     ready(fake, CN_EVENTS[1:])  # 中国邮政到「到达寄达地」为止
     net.page = page_html(*JP_ROWS[:5])
     run(tracker, task["id"])
-    assert len(net.pushes) == 1  # 首次抓取只推最新一条
-    net.page = page_html(*JP_ROWS[:6])  # 日本邮政先报到达东京
+    assert len(net.pushes) == 1 and net.titles[-1] == "日本邮政接收（寄达地） · 01CN"
+    net.page = page_html(*JP_ROWS[:6])  # 日本邮政报到达东京
     run(tracker, task["id"])
-    assert len(net.pushes) == 2 and net.pushes[-1].startswith("11/13 07:18 到达東京国際郵便局（入境）（国際交換局に到着）")
     ready(fake, CN_EVENTS)  # 中国邮政晚到（07:17）
     run(tracker, task["id"])
-    assert len(net.pushes) == 2
+    assert len(net.pushes) == 1
+    assert any(key.startswith("arrive_japan_exchange@") for key in storage.notified_node_keys(task["id"], NUM))
 
 
-def test_shared_node_cn_first_pushes_once(cn_task, monkeypatch):
+def test_arrived_japan_pushed_once_jp_first(cn_task, monkeypatch):
+    """日本邮政先报「到达東京（入境）」：推它；中国邮政晚到的「到达寄达地」更早，只记录不补发。"""
     import tracker
 
     task, fake = cn_task
     net = Net(tracker, monkeypatch)
-    ready(fake, CN_EVENTS[1:])
+    ready(fake, CN_EVENTS[2:])  # 中国邮政到航班落地为止
     net.page = page_html(*JP_ROWS[:5])
     run(tracker, task["id"])
-    ready(fake, CN_EVENTS)  # 中国邮政先报
+    assert net.titles[-1] == "离开威海国际互换局（出境） · 01CN"  # 航班事件不在白名单里
+    net.page = page_html(*JP_ROWS[:6])
     run(tracker, task["id"])
-    assert len(net.pushes) == 2 and net.pushes[-1].startswith("11/13 07:17 到达日本互换局（入境）")
-    net.page = page_html(*JP_ROWS[:6])  # 日本邮政晚到
+    assert len(net.pushes) == 2 and net.titles[-1] == "到达東京国際郵便局（入境） · 01CN"
+    ready(fake, CN_EVENTS)
     run(tracker, task["id"])
     assert len(net.pushes) == 2
 
 
-def test_unique_nodes_each_pushed_and_same_round_combined(cn_task, monkeypatch):
+def test_whitelist_only_latest_pushed_rest_marked(cn_task, monkeypatch):
     import tracker
 
     task, fake = cn_task
@@ -258,20 +261,22 @@ def test_unique_nodes_each_pushed_and_same_round_combined(cn_task, monkeypatch):
     ready(fake, CN_EVENTS[-1:])
     net.page = page_html(*JP_ROWS[:1])
     run(tracker, task["id"])
+    assert net.titles == ["中国收寄 · 01CN"]
+    ready(fake, CN_EVENTS[-3:])  # 揽收网点分拣、离开：不在白名单里，只记录
+    run(tracker, task["id"])
     assert len(net.pushes) == 1
-    ready(fake, CN_EVENTS[-3:])  # 中国邮政独有：揽投部分拣、离开揽投部（同一分钟，合成一个节点）
+    keys = storage.notified_node_keys(task["id"], NUM)
+    assert any(key.startswith("left_collection@") for key in keys)
+    ready(fake, CN_EVENTS[-8:])  # 再来一批：出口海关、出口直封（出境）、发往机场
+    run(tracker, task["id"])
+    assert len(net.pushes) == 2 and net.titles[-1] == "离开威海国际互换局（出境） · 01CN"
+    events, _ = storage.list_task_events(task["id"], limit=100)
+    assert [e["status"] for e in events if e["kind"] == "push_ok"][0] == "离开威海国际互换局（出境）"
+    # 同轮其余节点（海关、发往机场）也记为已处理，之后不再推
     run(tracker, task["id"])
     assert len(net.pushes) == 2
-    assert net.pushes[-1].startswith("11/9 19:54 离开揽收网点 威海市丹东路第二揽投部 → 威海国际互换局\n")
-    assert "本轮还有：" not in net.pushes[-1]
-    ready(fake, CN_EVENTS[-8:])  # 再来一批：出口海关等
-    run(tracker, task["id"])
-    assert len(net.pushes) == 3
-    events, _ = storage.list_task_events(task["id"], limit=100)
-    pushes = [e["status"] for e in events if e["kind"] == "push_ok"]  # 新的在前
-    assert pushes[0] == "威海国际互换局 发往机场"
-    assert "本轮还有：" in net.pushes[-1]
-    assert "提交中国出口海关查验（威海）" in net.pushes[-1] and "中国出口海关放行（威海）" in net.pushes[-1]
+    assert len(storage.notified_node_keys(task["id"], NUM)) == len(
+        route_nodes.pushable_nodes(storage.task_nodes(task["id"], "韩国")))
 
 
 def test_push_failure_retries_same_nodes(cn_task, monkeypatch):
@@ -283,12 +288,12 @@ def test_push_failure_retries_same_nodes(cn_task, monkeypatch):
     net.page = page_html(*JP_ROWS[:1])
     run(tracker, task["id"])
     net.push_ok = False
-    ready(fake, CN_EVENTS[-3:])
+    ready(fake, CN_EVENTS[-8:])
     assert run(tracker, task["id"]) is True
-    assert storage.notified_node_keys(task["id"], NUM) and len(storage.notified_node_keys(task["id"], NUM)) == 1
+    assert len(storage.notified_node_keys(task["id"], NUM)) == 1  # 失败：本轮节点都不记
     net.push_ok = True
     assert run(tracker, task["id"]) is False
-    assert net.pushes[-1] == net.pushes[-2]  # 重推的是同一批节点
+    assert net.titles[-1] == net.titles[-2] == "离开威海国际互换局（出境） · 01CN"  # 重推的是同一个节点
     run(tracker, task["id"])
     assert len(net.pushes) == 3  # 1 次成功 + 1 次失败 + 1 次重推成功，之后不再推
 
@@ -329,69 +334,88 @@ def test_migration_marks_existing_nodes_without_pushing(tmp_path, monkeypatch):
     storage.ensure_storage(str(tmp_path / "missing.env"))  # 再次启动不重复标记、不报错
 
 
-def test_no_cn_number_push_behaviour_unchanged(db, owner, monkeypatch):
+def test_no_cn_number_push(db, owner, monkeypatch):
     import tracker
 
-    task = db.create_task(owner["id"], {"tracking_number": "AB123456789JP"})
+    task = db.create_task(owner["id"], {"tracking_number": "AB123456789JP", "label": "电饭煲"})
     net = Net(tracker, monkeypatch)
     net.page = page_html(("2026/10/01 10:00", "引受", ""), ("2026/10/01 18:00", "通過", ""))
     run(tracker, task["id"], {"TRACK17_API_KEY": ""})
-    assert len(net.pushes) == 1 and net.pushes[0].startswith("10/1 18:00 经过（通過）")
-    assert "本轮还有" not in net.pushes[0]  # 首次抓取只推最新一条
+    assert net.titles == ["日本收寄 · 电饭煲"]  # 「经过」不在白名单里，首次抓取推最新的白名单节点
+    assert "\n" not in net.pushes[0] and net.pushes[0].startswith("第 ")
 
 
-# --- 推送附带的到达预测 ---
+def test_unknown_and_anomaly_jp_status_roles():
+    nodes = nodes_of(jp_records(JP_ROWS[:9] + [("2026/11/14 12:00", "ご不在のため持ち戻り", "板橋北郵便局 · 東京都"),
+                                               ("2026/11/14 13:00", "配達希望受付", "板橋北郵便局 · 東京都")]))
+    roles = {n["name"]: n["role"] for n in nodes}
+    assert roles["无人在家已带回（板橋北郵便局）"] == "anomaly"
+    assert roles["已受理指定投递（板橋北郵便局）"] is None
+    assert roles["离开東京国際郵便局"] == "departed_exchange" and roles["到达板橋北郵便局"] == "local_arrived"
+    assert roles["日本进口通关中（東京国際郵便局）"] is None and roles["到达威海国际互换局"] is None
+
+
+# --- 推送正文（一行） ---
+
+NOW = datetime(2026, 11, 13, 9, 30)
+
 
 def _result(**overrides):
     base = {
         "current": {"stage": "arrived_japan", "at": "2026-11-13 07:17", "waited_seconds": 3600},
+        "origin": {"stage": "accepted", "at": "2026-11-09 19:31"},
         "day": 5, "delivered": False, "total_seconds": None, "confidence": "rough", "overdue": False,
-        "transit_region": "韩国", "origin_name": "中国",
         "remaining": [{"stage": "delivered", "eta": "2026-11-14 18:30", "eta_low": "2026-11-14 15:40", "eta_high": "2026-11-14 18:40"}],
     }
     base.update(overrides)
     return base
 
 
-def test_push_forecast_lines_formats():
-    lines = forecast.push_forecast_lines(_result())
-    assert lines == ["当前：日本段·到达日本互换局（入境）（第 5 天）", "预计签收：11/14 周六 18:30 前后（11/14 15:40–18:40）"]
-    assert forecast.push_forecast_lines(_result(confidence="none", remaining=[]))[1] == "预计签收：暂无可参考的历史"
-    overdue = forecast.push_forecast_lines(_result(overdue=True))[1]
-    assert overdue.endswith(" · 已比以往都慢")
-    cross = _result(remaining=[{"stage": "delivered", "eta": "2026-11-14 23:30", "eta_low": "2026-11-14 20:00", "eta_high": "2026-11-15 09:00"}])
-    assert forecast.push_forecast_lines(cross)[1].endswith("（11/14 20:00–11/15 09:00）")
-    done = forecast.push_forecast_lines(_result(
-        current={"stage": "delivered", "at": "2026-11-14 10:06", "waited_seconds": 0}, delivered=True,
-        day=None, total_seconds=4 * 86400 + 15 * 3600 + 120,
-    ))
-    assert done == ["当前：日本段·签收", "全程 4 天 15 小时"]
-    transit = forecast.push_forecast_lines(_result(current={"stage": "transit_arrived", "at": "x", "waited_seconds": 0}))
-    assert transit[0] == "当前：韩国段·到达韩国（第 5 天）"
-    assert forecast.push_forecast_lines(_result(current=None)) == []
+def _eta(at):
+    return [{"stage": "delivered", "eta": at, "eta_low": at, "eta_high": at}]
 
 
-def test_push_forecast_switch_and_failure(db, owner, monkeypatch):
+def test_push_body_formats():
+    body = forecast.push_body
+    assert body(_result(), NOW) == "第 5 天 · 预计明天晚上签收"
+    assert body(_result(remaining=_eta("2026-11-13 15:00")), NOW) == "第 5 天 · 预计今天下午签收"
+    assert body(_result(remaining=_eta("2026-11-14 10:00")), NOW) == "第 5 天 · 预计明天上午签收"
+    assert body(_result(remaining=_eta("2026-11-15 03:00")), NOW) == "第 5 天 · 预计 11/15（周日）凌晨签收"
+    assert body(_result(remaining=_eta("2026-11-16 12:00")), NOW) == "第 5 天 · 预计 11/16（周一）下午签收"
+    assert body(_result(confidence="none"), NOW) == "第 5 天"
+    assert body(_result(remaining=[]), NOW) == "第 5 天"
+    assert body(_result(overdue=True), NOW) == "第 5 天 · 比以往都慢"
+    assert body(_result(), NOW, with_forecast=False) == "第 5 天"
+    assert body(_result(origin=None), NOW) == "预计明天晚上签收"
+    done = dict(current={"stage": "delivered", "at": "2026-11-14 10:06", "waited_seconds": 0}, delivered=True, day=None)
+    assert body(_result(**done, total_seconds=4 * 86400 + 15 * 3600), NOW) == "全程 4.5 天"
+    assert body(_result(**done, total_seconds=4 * 86400 + 18 * 3600), NOW) == "全程 5 天"
+    assert body(_result(**done, total_seconds=4 * 86400 + 5 * 3600), NOW) == "全程 4 天"
+    assert body(_result(current=None), NOW) == ""
+    assert [forecast.day_part(h) for h in (0, 5, 6, 11, 12, 17, 18, 23)] == ["凌晨", "凌晨", "上午", "上午", "下午", "下午", "晚上", "晚上"]
+
+
+def test_push_body_switch_and_failure(db, owner, monkeypatch):
     import tracker
 
     task = db.create_task(owner["id"], {"tracking_number": "AB123456789JP"})
     net = Net(tracker, monkeypatch)
+    monkeypatch.setattr(tracker, "task_forecast", lambda *a, **k: _result(remaining=_eta("2099-01-01 10:00")))
     net.page = page_html(("2026/10/01 10:00", "引受", ""))
     run(tracker, task["id"], {"TRACK17_API_KEY": ""})
-    assert "当前：" in net.pushes[-1]  # 默认开
+    assert net.titles[-1] == "日本收寄 · 89JP" and "预计 1/1（周四）上午签收" in net.pushes[-1]  # 默认开
 
-    net.page = page_html(("2026/10/01 10:00", "引受", ""), ("2026/10/01 18:00", "通過", ""))
+    net.page = page_html(("2026/10/01 10:00", "引受", ""), ("2026/10/02 08:00", "到着", ""))
     run(tracker, task["id"], {"TRACK17_API_KEY": "", "PUSH_FORECAST": "0"})
-    assert "当前：" not in net.pushes[-1]
+    assert net.pushes[-1].startswith("第 ") and "预计" not in net.pushes[-1]
 
     def boom(*args, **kwargs):
         raise RuntimeError("预测坏了")
 
     monkeypatch.setattr(tracker, "task_forecast", boom)
-    net.page = page_html(("2026/10/01 10:00", "引受", ""), ("2026/10/01 18:00", "通過", ""), ("2026/10/02 09:00", "到着", ""))
+    net.page = page_html(("2026/10/01 10:00", "引受", ""), ("2026/10/02 08:00", "到着", ""), ("2026/10/02 09:00", "持ち出し中", ""))
     assert run(tracker, task["id"], {"TRACK17_API_KEY": ""}) is False
-    assert len(net.pushes) == 3 and "当前：" not in net.pushes[-1]
-    assert net.pushes[-1].startswith("10/2 09:00 到达派送局（到着）")
+    assert len(net.pushes) == 3 and net.pushes[-1] == "10/2 09:00"  # 预测失败照常推送，正文用节点时间
 
 
 def test_history_endpoint_and_display_fields(client, db, owner):

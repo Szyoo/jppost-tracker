@@ -441,7 +441,8 @@ def test_17track_errors_never_affect_jp_tracking_and_push(db, owner, fake17, mon
     net.page = page_html(("2026/11/09 18:31", "引受", "CHINA"), ("2026/11/10 08:00", "国際交換局に到着", "CHINA"),
                          ("2026/11/10 09:00", "国際交換局から発送", "CHINA"))
     tracker.process_task(_due(task["id"]), env)
-    assert len(net.pushes) == 3 and len(carrier_rows("jp_post")) == 3
+    # 到达始发国互换局不在推送白名单里，只推收寄与出境
+    assert len(net.pushes) == 2 and len(carrier_rows("jp_post")) == 3
     assert storage.track17_state(NUM)["last_error"] == "坏响应"
 
 

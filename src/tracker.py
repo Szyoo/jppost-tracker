@@ -1,6 +1,7 @@
 import os
 import re
 import time
+from datetime import datetime
 
 import requests
 from bs4 import BeautifulSoup
@@ -10,7 +11,7 @@ import bark
 import env_schema
 import forecast
 import track17
-from route_nodes import node_notified, push_line, pushable_nodes
+from route_nodes import ONCE_ROLES, node_notified, push_eligible, pushable_nodes
 # 认定为「已签收」的状态（只做整串精确匹配）定义在 forecast，签收自动归档与到达预测的阶段映射共用同一份
 from forecast import DELIVERED_STATUSES
 from forecast import origin_country as forecast_origin_country
@@ -120,22 +121,22 @@ def auto_archive_enabled(system_env: dict) -> bool:
     return ENV_FIELDS["AUTO_ARCHIVE_DELIVERED"]["default"] == "1"
 
 
-def build_push_message(config: dict, nodes: list, forecast_lines=()) -> tuple[str, str]:
-    """一轮的新节点合成一条推送。标题 = 最新节点名 · 任务标识（同一账号多个包裹推到同一台设备，
-    标题必须分得清是哪一件）；正文第一行是最新节点（日本邮政来源带原文），其后列出本轮其余新节点，
-    有备注名时再带单号，末尾是到达预测的「当前 / 预计签收」两行（PUSH_FORECAST 关闭或预测失败时没有）。"""
-    label = config["label"]
-    number = config["tracking_number"]
-    latest = nodes[-1]
-    title = f"{latest['name']} · {label or number}"
-    lines = [push_line(latest)]
-    if len(nodes) > 1:
-        lines.append("本轮还有：")
-        lines.extend(push_line(node) for node in nodes[:-1])
-    if label:
-        lines.append(f"单号 {number}")
-    lines.extend(forecast_lines or ())
-    return title, "\n".join(lines)
+def push_title(config: dict, node: dict) -> str:
+    """推送标题：「节点名 · 备注」，没有备注时用单号后 4 位（同一账号多个包裹推到同一台设备，要分得清是哪一件）。"""
+    tag = config["label"] or str(config["tracking_number"] or "")[-4:]
+    return f"{node['name']} · {tag}"
+
+
+def _node_when(node) -> str:
+    """正文算不出来时的兜底：节点时间「11/13 07:18」（只有日期时「11/14」）。"""
+    moment = node["moment"]
+    return f"{moment.month}/{moment.day}" + ("" if len(node["at"]) <= 10 else f" {moment:%H:%M}")
+
+
+def build_push_message(config: dict, node: dict, body: str = "") -> tuple[str, str]:
+    """一轮只推一个节点（本轮最新的白名单节点）。正文是 forecast.push_body 的一行
+    （「第 N 天 · 预计 11/14（周六）上午签收」/「全程 X 天」）；算不出来时用节点时间。"""
+    return push_title(config, node), (body or _node_when(node))
 
 
 def build_runtime_config(task: dict, system_env: dict) -> dict:
@@ -393,23 +394,26 @@ def push_forecast_enabled(system_env: dict) -> bool:
 
 
 def select_new_nodes(task_id: int, number: str, region: str):
-    """这轮要推送的节点与要静默记下的节点：(new, silent)。
+    """这轮要推送的节点与要静默记下的节点：(push, silent)，push 最多一个。
     - 可推送节点：合并履历里可见的承运方节点（route_nodes.pushable_nodes）；
     - 已推送过的（route_nodes.node_notified：同一节点另一边晚到也算推送过）跳过；
-    - 本任务本单号还没推送过任何节点（首次抓取）：只推最新一条，其余静默记下（沿用「首次只推最新」的语义）；
-    - 早于已推送节点里最晚那个的新节点（例如 17TRACK 数据晚到、补上了更早的国内段事件）静默记下，不补发。"""
+    - 只推白名单（route_nodes.push_eligible：有推送角色；「航班到达日本」两个说法只认最早那个，
+      已记下过其中一个就不再推另一个），其余新节点静默记下；
+    - 早于已处理节点里最晚那个的新节点（例如 17TRACK 数据晚到、补上了更早的国内段事件）静默记下，不补发；
+    - 同一轮有多个可推节点时只推最新的一个，其余静默记下（新任务首次抓取也一样只推一条）。"""
     nodes = pushable_nodes(task_nodes(task_id, region))
     notified = notified_node_keys(task_id, number)
     fresh = [node for node in nodes if not node_notified(node, notified)]
     if not fresh:
         return [], []
-    if not notified:
-        return fresh[-1:], fresh[:-1]
-    done = [node["moment"] for node in nodes if node_notified(node, notified)]
-    if not done:
-        return fresh, []
-    latest = max(done)
-    return [node for node in fresh if node["moment"] >= latest], [node for node in fresh if node["moment"] < latest]
+    done = [node for node in nodes if node_notified(node, notified)]
+    floor = max(node["moment"] for node in done) if done else None
+    done_once = {node["role"] for node in done} & ONCE_ROLES
+    eligible = push_eligible(nodes)
+    candidates = [node for node in fresh if node["key"] in eligible and node["role"] not in done_once
+                  and (floor is None or node["moment"] >= floor)]
+    push = candidates[-1:]
+    return push, [node for node in fresh if node not in push]
 
 
 def process_task(task: dict, system_env: dict) -> bool:
@@ -418,8 +422,9 @@ def process_task(task: dict, system_env: dict) -> bool:
     所有回写都带上抓取时的单号：抓取期间单号被改了，这轮结果直接作废。
 
     每轮先同步两边（17TRACK 的中国邮政、日本邮政官网），把日本邮政履历写进 carrier_records，
-    再算合并履历（route_nodes），对「还没推送过、且在合并履历里可见」的新节点推送：同一轮多个新节点合成一条，
-    哪边先报就由那一轮推送，另一边晚到的同一节点不再推送（notified_nodes）。推送失败的节点不记，下轮按退避重推。
+    再算合并履历（route_nodes），对「还没推送过、且在合并履历里可见」的新节点只推白名单里本轮最新的一个，
+    其余新节点记为已处理不推送；哪边先报就由那一轮推送，另一边晚到的同一节点不再推送（notified_nodes）。
+    推送失败时本轮节点都不记，下轮按退避重推。
     task_events 的 status_change 照旧按日本邮政履历写；签收自动归档照旧按日本邮政的签收状态判断。"""
     config = build_runtime_config(task, system_env)
     prefix = config["log_prefix"]
@@ -467,7 +472,8 @@ def process_task(task: dict, system_env: dict) -> bool:
         return False
     region = transit_region(system_env)
     new_nodes, silent = select_new_nodes(task_id, number, region)
-    if silent:
+    # 本轮没有要推的：不推的新节点直接记下；有要推的：其余节点随推送成功一起记，推送失败整批下轮重算
+    if silent and not (push_enabled and new_nodes):
         mark_nodes_notified(task_id, number, silent)
 
     if not push_enabled or not new_nodes:
@@ -489,15 +495,15 @@ def process_task(task: dict, system_env: dict) -> bool:
             print(f"{prefix} 已签收，自动归档，不再轮询。")
         return False
 
-    forecast_lines = []
-    if push_forecast_enabled(system_env):
-        try:
-            forecast_lines = forecast.push_forecast_lines(task_forecast(task_id, transit_region=region))
-        except Exception as exc:  # 预测失败绝不影响推送
-            print(f"{prefix} 推送附带的到达预测计算失败：{exc}")
-            forecast_lines = []
-    title, body = build_push_message(config, new_nodes, forecast_lines)
-    push_status = new_nodes[-1]["name"]
+    node = new_nodes[-1]
+    body = ""
+    try:
+        body = forecast.push_body(task_forecast(task_id, transit_region=region), datetime.now(),
+                                  with_forecast=push_forecast_enabled(system_env))
+    except Exception as exc:  # 预测失败绝不影响推送
+        print(f"{prefix} 推送正文的到达预测计算失败：{exc}")
+    title, body = build_push_message(config, node, body)
+    push_status = node["name"]
     pushed, reason = send_bark_notification(config, title, body)
     if pushed:
         # 签收的这轮先照常推送，推送成功后在同一次回写里归档：事件顺序为 status_change → push_ok → auto_archived
@@ -513,7 +519,7 @@ def process_task(task: dict, system_env: dict) -> bool:
             push_status=push_status,
             push_detail=f"已推送到 {len(config['bark_keys'])} 个设备",
             auto_archive=delivered,
-            notified_nodes=new_nodes,
+            notified_nodes=new_nodes + silent,
         )
         if delivered:
             print(f"{prefix} 已签收，推送成功后自动归档，不再轮询。")
