@@ -476,7 +476,8 @@ def build_nodes(records, milestones=None, *, tracking_number="", transit_region=
             "at": _fmt(first["moment"], first["date_only"]),
             "moment": first["moment"],
             "segment": segment,
-            "stage": first["stage"],
+            # 中国邮政的日本段事件不映射阶段（日本段以日本邮政为准），共有节点取成员里有的阶段，再退回 kind 对应的阶段
+            "stage": next((m["stage"] for m in group if m["stage"]), KIND_STAGE.get(kind)),
             "name": name,
             "sources": list(dict.fromkeys(sources)),
             "original": jp_member["status"] if jp_member else None,

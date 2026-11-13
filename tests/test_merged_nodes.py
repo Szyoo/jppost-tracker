@@ -451,5 +451,6 @@ def test_one_flight_landing_named_and_in_japan():
 
 
 def test_date_only_node_sorted_before_later_stage_same_day():
-    names = [n["name"] for n in nodes_of(jp_records()) if n["visible"]]
-    assert names.index("板橋北郵便局 派送中") < names.index("已妥投（板橋北郵便局）")
+    for records in (jp_records(), cn_records(CN_EVENTS + CN_JAPAN) + jp_records()):
+        names = [n["name"] for n in nodes_of(records) if n["visible"]]
+        assert names.index("板橋北郵便局 派送中") < names.index("已妥投（板橋北郵便局）")
