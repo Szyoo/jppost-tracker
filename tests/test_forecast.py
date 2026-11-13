@@ -86,7 +86,7 @@ def test_stage_mapping_edge_cases():
 def test_stages_cover_all_carrier_sources_and_tracker_reuses_delivered():
     import tracker
 
-    assert set(forecast.CARRIER_SOURCES) == {"jp_post"}
+    assert set(forecast.CARRIER_SOURCES) == {"jp_post", "cn_ems"}
     assert tracker.DELIVERED_STATUSES is forecast.DELIVERED_STATUSES
     assert forecast.STAGES[0] == "ordered" and forecast.STAGES[-1] == "delivered"
     assert set(forecast.PRE_STAGES) <= set(forecast.STAGES)
@@ -286,7 +286,7 @@ def test_carrier_source_check_constraint(db, task):
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
                 "INSERT INTO carrier_records (task_id, tracking_number, source, record_at, created_at)"
-                " VALUES (?, ?, 'cn_ems', '2026-10-01', 'x')",
+                " VALUES (?, ?, 'other_post', '2026-10-01', 'x')",
                 (task["id"], NUM),
             )
 

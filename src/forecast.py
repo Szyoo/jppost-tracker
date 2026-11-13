@@ -19,14 +19,19 @@ from datetime import datetime, timedelta, timezone
 DELIVERED_STATUSES = frozenset({"お届け先にお届け済み", "お届け済み", "窓口でお渡し"})
 
 # 阶段穷举，按时间先后排列（dict 保序，顺序即先后）。前三个是发货前节点（pre_milestones），其余来自承运方履历。
+# left_collection / handed_to_airline / flight_departed / landed_destination 只有始发国段（cn_ems）才有。
 STAGE_META = {
     "ordered": {"label": "下单寄出"},
     "packed": {"label": "打包完成"},
     "handed_over": {"label": "出库交运"},
     "accepted": {"label": "引受"},
+    "left_collection": {"label": "离开揽收网点"},
     "origin_exchange": {"label": "到达始发互换局"},
     "origin_customs": {"label": "始发国海关"},
     "departed_origin": {"label": "离开始发国"},
+    "handed_to_airline": {"label": "交航"},
+    "flight_departed": {"label": "航班起飞"},
+    "landed_destination": {"label": "航班到达日本"},
     "arrived_japan": {"label": "到达日本"},
     "japan_customs": {"label": "日本通关"},
     "departed_exchange": {"label": "离开日本互换局"},
@@ -179,10 +184,37 @@ def _jp_post_stage(status: str, detail: str):
     return None
 
 
-# 承运方来源穷举（carrier_records.source 的 CHECK 约束由它派生）：每个来源一支状态→阶段映射。
-# 以后接入始发国承运方时在这里加一项（例如 'cn_ems'），映射函数签名相同。
+def _cn_ems_stage(status: str, detail: str):
+    """中国邮政（17TRACK 转来的 EMS 轨迹）的事件描述 → 阶段。只映射始发国段：
+    与日本邮政重复含义的（收取 / 出口海关 / 互换局出口 / 到达寄达地处理中心）映射到同一阶段，同阶段两个来源取最早；
+    「到达寄达地处理中心」之后的日本段中文事件（境外进口海关、【日本】投递…）不映射，日本段以 jp_post 为准。"""
+    if status.startswith("中国邮政已收取"):
+        return "accepted"
+    if status.startswith("到达寄达地处理中心"):
+        return "arrived_japan"
+    if status == "到达寄达地":
+        return "landed_destination"
+    if "国际互换局" in status and ("已出口直封" in status or status.startswith("邮件离开")):
+        return "departed_origin"
+    if status.startswith("送交出口海关") or status.startswith("出口海关"):
+        return "origin_customs"
+    if status.startswith("已交承运商运输") or status.startswith("航空公司接收"):
+        return "handed_to_airline"
+    if status.startswith("航空公司启运"):
+        return "flight_departed"
+    if "互换局" not in status and (
+        (status.startswith("邮件离开【") and "揽投部" in status) or "完成分拣，准备发出" in status
+    ):
+        return "left_collection"
+    return None
+
+
+# 承运方来源穷举（carrier_records.source 的 CHECK 约束由它派生）：每个来源一支状态→阶段映射，签名相同。
+# jp_post：日本邮政官网履历（tracker 每轮抓取）；cn_ems：中国邮政 EMS 的始发国段（17TRACK，只对 CN 单号）。
+# 新增来源后已有库的 CHECK 约束由 storage._migrate_carrier_sources 自动放宽（只重建 carrier_records）。
 CARRIER_SOURCES = {
     "jp_post": _jp_post_stage,
+    "cn_ems": _cn_ems_stage,
 }
 
 
@@ -193,10 +225,102 @@ def record_stage(source: str, status, detail=""):
     return CARRIER_SOURCES[source](str(status or "").strip(), str(detail or ""))
 
 
-def stages_from_records(records, milestones=None) -> dict:
-    """一单的阶段时间：每个阶段取最早出现的时间。
-    records：[{"source", "record_at", "status", "detail"}]；milestones：{stage: 时间字符串}（发货前节点）。
-    返回 {stage: datetime}。"""
+# --- 时区 ---
+
+# 单号后两位国家码 → 当地 UTC 偏移（小时）。日本邮政页面上始发国那几行（引受、始发国互换局与海关）的时刻
+# 其实是始发国当地时间，读取时按这里换算成日本时间（库里保留原值）。
+# 本期只有 CN；没有映射的国家码按日本时间处理——国家码是外部数据，无法穷举，换算不了就保持原样。
+ORIGIN_UTC_OFFSETS = {"CN": 8}
+JST_OFFSET_HOURS = 9
+# 日本邮政履历里属于始发国的阶段（由 _jp_post_stage 按所在地判定）
+ORIGIN_SIDE_STAGES = frozenset({"accepted", "origin_exchange", "origin_customs", "departed_origin"})
+
+
+def origin_country(tracking_number) -> str:
+    """单号后两位字母即寄出国家码（EB000000001CN → CN）；不是两个字母返回空串。"""
+    tail = str(tracking_number or "").strip().upper()[-2:]
+    return tail if len(tail) == 2 and tail.isascii() and tail.isalpha() else ""
+
+
+def record_time(record, tracking_number=""):
+    """一条承运方记录的日本时间（datetime）。不合法返回 None。
+    - jp_post：映射到始发国阶段、且有时刻（不只是日期）的记录，按单号国家码的时区换算成日本时间；
+    - cn_ems：入库时已换算成日本时间（见 track17_event_time），原样读取。"""
+    moment = parse_stored_time(record["record_at"])
+    if moment is None:
+        return None
+    if record["source"] != "jp_post" or len(str(record["record_at"]).strip()) <= len("YYYY-MM-DD"):
+        return moment
+    offset = ORIGIN_UTC_OFFSETS.get(origin_country(tracking_number or record.get("tracking_number")))
+    if offset is None or record_stage("jp_post", record["status"], record.get("detail", "")) not in ORIGIN_SIDE_STAGES:
+        return moment
+    return moment + timedelta(hours=JST_OFFSET_HOURS - offset)
+
+
+# 中国邮政轨迹里「到达寄达地」及之后的日本段事件：时刻其实是日本当地时间，却被标成 +08:00。
+# 按描述里的这些字样识别，取字面时刻当日本时间；其余（境内、航班事件）按标注的时区换算。
+_CN_DESTINATION_MARKERS = ("寄达地", "境外", "【日本】")
+
+
+def track17_event_time(time_iso, description):
+    """17TRACK 事件的 time_iso → 日本时间 'YYYY-MM-DD HH:MM'；解析不了返回 None。
+    没有时区的按中国时间（UTC+8）处理。"""
+    text = str(time_iso or "").strip()
+    if not text:
+        return None
+    try:
+        moment = datetime.fromisoformat(text.replace("Z", "+00:00").replace("z", "+00:00"))
+    except ValueError:
+        return None
+    if any(marker in str(description or "") for marker in _CN_DESTINATION_MARKERS):
+        return moment.replace(tzinfo=None).strftime("%Y-%m-%d %H:%M")
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone(timedelta(hours=ORIGIN_UTC_OFFSETS["CN"])))
+    return moment.astimezone(JST).strftime("%Y-%m-%d %H:%M")
+
+
+# --- 收寄网点 ---
+
+# 「邮件离开【X】，正在发往…」/「邮件已在【X】完成分拣，准备发出」里的 X；互换局不算收寄网点
+_COLLECTION_OFFICE_RES = (
+    re.compile(r"^邮件离开【([^】]+)】，正在发往"),
+    re.compile(r"^邮件已在【([^】]+)】完成分拣"),
+)
+
+
+def collection_office(records):
+    """收寄网点：cn_ems 记录里最早一条能提取出网点名（且不是互换局）的那个；没有返回 None。"""
+    candidates = []
+    for record in records or []:
+        if record["source"] != "cn_ems":
+            continue
+        status = str(record["status"] or "").strip()
+        for pattern in _COLLECTION_OFFICE_RES:
+            match = pattern.match(status)
+            if match and "互换局" not in match.group(1):
+                moment = parse_stored_time(record["record_at"])
+                if moment is not None:
+                    candidates.append((moment, match.group(1).strip()))
+                break
+    return min(candidates)[1] if candidates else None
+
+
+def suggest_channel(office, office_channels) -> dict:
+    """渠道推断。office_channels：{收寄网点: {渠道…}}（其他已标渠道的单号）。
+    返回 {"collection_office", "suggested_channel", "office_multi_channel"}：
+    网点只对应过一个渠道时建议它；对应多个时不建议、标 office_multi_channel。"""
+    channels = sorted(office_channels.get(office, ())) if office else []
+    return {
+        "collection_office": office,
+        "suggested_channel": channels[0] if len(channels) == 1 else None,
+        "office_multi_channel": len(channels) > 1,
+    }
+
+
+def stages_from_records(records, milestones=None, tracking_number="") -> dict:
+    """一单的阶段时间：每个阶段取最早出现的时间（日本时间，见 record_time 的始发国时区换算）。
+    records：[{"source", "record_at", "status", "detail"}]；milestones：{stage: 时间字符串}（发货前节点）；
+    tracking_number：决定始发国时区（记录自带 tracking_number 时也可不传）。返回 {stage: datetime}。"""
     stages: dict = {}
 
     def put(stage, moment):
@@ -207,7 +331,7 @@ def stages_from_records(records, milestones=None) -> dict:
 
     for record in records or []:
         put(record_stage(record["source"], record["status"], record.get("detail", "")),
-            parse_stored_time(record["record_at"]))
+            record_time(record, tracking_number))
     for stage, at in (milestones or {}).items():
         if stage not in PRE_STAGES:
             raise ValueError(f"未定义的发货前节点：{stage}")

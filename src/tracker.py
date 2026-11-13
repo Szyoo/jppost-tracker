@@ -7,8 +7,10 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
 import bark
+import track17
 # 认定为「已签收」的状态（只做整串精确匹配）定义在 forecast，签收自动归档与到达预测的阶段映射共用同一份
 from forecast import DELIVERED_STATUSES
+from forecast import origin_country as forecast_origin_country
 from env_schema import BOOL_FALSE, BOOL_TRUE, ENV_FIELDS, TRACKER_ENV_KEYS
 from storage import (
     MIN_CHECK_INTERVAL,
@@ -17,7 +19,11 @@ from storage import (
     list_due_tasks,
     load_system_env,
     parse_bark_keys,
+    record_cn_records,
     task_has_event,
+    track17_catchup_candidates,
+    track17_state,
+    track17_update,
     update_task_state,
 )
 
@@ -33,6 +39,8 @@ PUSH_RETRY_BASE = 30
 
 # 记录的 info 是「日期 时间 状态」（见 parse_tracking_records），状态前的日期时间要先剥掉
 _INFO_DATETIME_PREFIX = re.compile(r"^\d{4}/\d{1,2}/\d{1,2}\s+\d{1,2}:\d{2}\s*")
+# 已归档单号补抓始发国段的间隔（秒）：每隔这么久最多补一批（track17.MAX_NUMBERS 个）
+CN_CATCHUP_INTERVAL = 30 * 60
 # 账号没配 Bark Keys 时照常追踪、只是不推送；这句提示留在 last_error 上，免得用户以为会收到通知
 NO_PUSH_HINT = "未配置 Bark Keys（账号设置），只记录物流状态、不推送。"
 
@@ -252,6 +260,96 @@ def records_since(records: list[dict], last_info: str) -> list[dict]:
     return [records[-1]]
 
 
+# --- 始发国段（中国邮政，经 17TRACK） ---
+
+# sync_cn_leg 的结果穷举：disabled 没配密钥 / not_cn 不是中国寄出的单号 / registered 这次刚登记（数据要一两分钟后才有）/
+# pending 已登记但还没有数据 / synced 查到并写入了事件 / error 17TRACK 出错（原因记在 track17_numbers.last_error）
+CN_SYNC_RESULTS = ("disabled", "not_cn", "registered", "pending", "synced", "error")
+
+
+def track17_api_key(system_env: dict) -> str:
+    return str(system_env.get("TRACK17_API_KEY", "") or "").strip()
+
+
+def sync_cn_leg(task_id: int, number: str, system_env: dict, *, timeout: int, log_prefix: str = "",
+                fetch_after_register: bool = False):
+    """CN 单号的始发国段同步一次：没登记过 → 登记（成功或「已登记」都记为已登记，每个单号只登记一次）；
+    已登记 → 查轨迹，把中国邮政的全部事件写进 carrier_records（source='cn_ems'，带单号校验）。
+    fetch_after_register：刚登记完也立刻查一次（补录用，多半还没数据）。
+    返回 (结果, 写入条数)，结果见 CN_SYNC_RESULTS。所有异常都在这里兜住，只记日志与 last_error。"""
+    api_key = track17_api_key(system_env)
+    if not api_key:
+        return "disabled", 0
+    if forecast_origin_country(number) != "CN":
+        return "not_cn", 0
+    prefix = log_prefix or f"[{number}]"
+    try:
+        state = track17_state(number)
+        just_registered = False
+        if state is None or not state.get("registered_at"):
+            reason = track17.register([number], api_key, timeout).get(number, "")
+            if reason:
+                track17_update(number, error=reason)
+                print(f"{prefix} 17TRACK 登记失败：{reason}")
+                return "error", 0
+            track17_update(number, registered=True, error="")
+            print(f"{prefix} 已在 17TRACK 登记，始发国段稍后补上。")
+            if not fetch_after_register:
+                return "registered", 0
+            just_registered = True
+        events = track17.get_cn_events([number], api_key, timeout).get(number)
+        if not events:
+            track17_update(number, error="")
+            return ("registered" if just_registered else "pending"), 0
+        count = record_cn_records(task_id, number, events)
+        if count is None:
+            # 抓取期间单号被改走：这次结果作废，不记 synced
+            track17_update(number, error="")
+            return "pending", 0
+        track17_update(number, synced=True, error="")
+        return "synced", count
+    except Exception as exc:  # 17TRACK 的任何问题都不能影响日本邮政追踪
+        try:
+            track17_update(number, error=str(exc)[:300])
+        except Exception:
+            pass
+        print(f"{prefix} 17TRACK 查询出错：{exc}")
+        return "error", 0
+
+
+def catch_up_cn_legs(system_env: dict, *, timeout: int, now=None) -> int:
+    """已归档（不再轮询）但始发国段还没补全的单号，批量查一次（最多 track17.MAX_NUMBERS 个，只查不登记）。
+    返回写入了事件的单号数。异常只记日志。"""
+    api_key = track17_api_key(system_env)
+    if not api_key:
+        return 0
+    try:
+        candidates = track17_catchup_candidates(now, limit=track17.MAX_NUMBERS)
+        if not candidates:
+            return 0
+        numbers = [number for number, _ in candidates]
+        try:
+            found = track17.get_cn_events(numbers, api_key, timeout)
+        except Exception as exc:
+            for number in numbers:
+                track17_update(number, error=str(exc)[:300])
+            print(f"[始发国段] 补抓 {len(numbers)} 个归档单号失败：{exc}")
+            return 0
+        synced = 0
+        for number, task_id in candidates:
+            events = found.get(number)
+            if events and record_cn_records(task_id, number, events) is not None:
+                track17_update(number, synced=True, error="")
+                synced += 1
+            else:
+                track17_update(number, error="")
+        print(f"[始发国段] 补抓 {len(numbers)} 个归档单号，{synced} 个拿到了中国邮政轨迹。")
+        return synced
+    except Exception as exc:
+        print(f"[始发国段] 补抓出错：{exc}")
+        return 0
+
+
 def process_task(task: dict, system_env: dict) -> bool:
     """处理一个任务。返回 True 表示这轮需要尽快重试（推送失败），
     由主循环按退避安排下一次，本函数绝不阻塞等待。
@@ -269,6 +367,9 @@ def process_task(task: dict, system_env: dict) -> bool:
         print(f"{prefix} {error}")
         update_task_state(task_id, error=error, tracking_number=number, query_ok=False)
         return False
+
+    # 始发国段与日本邮政互不影响：sync_cn_leg 自己兜住全部异常，不推送、只记录
+    sync_cn_leg(task_id, number, system_env, timeout=config["request_timeout"], log_prefix=prefix)
 
     records = get_tracking_records(config)
     if not records:
@@ -348,7 +449,7 @@ def process_task(task: dict, system_env: dict) -> bool:
         task_id,
         error=f"推送失败（{reason}），稍后重试。",
         tracking_number=number,
-            carrier_records=records,
+        carrier_records=records,
         query_ok=True,
         new_records=new_records,
         push_status=current_info,
@@ -362,9 +463,17 @@ def main():
     next_runs: dict[int, float] = {}
     push_failures: dict[int, int] = {}
     last_empty_log_at = 0.0
+    last_cn_catchup_at = 0.0
 
     try:
         while True:
+            if time.time() - last_cn_catchup_at >= CN_CATCHUP_INTERVAL:
+                last_cn_catchup_at = time.time()
+                catchup_env = load_system_env(DOTENV_PATH, TRACKER_ENV_KEYS)
+                catch_up_cn_legs(
+                    catchup_env, timeout=_normalize_int(catchup_env.get("REQUEST_TIMEOUT", "15"), 15)
+                )
+
             tasks = list_due_tasks()
             now = time.time()
 

@@ -31,8 +31,10 @@ APPLY_META = {
     },
 }
 
-# 字段类型（穷举）：校验逻辑见 validate_value
-FIELD_TYPES = ("text", "bool", "int", "url")
+# 字段类型（穷举）：校验逻辑见 validate_value。
+# secret：密钥，下发给网页时只给「是否已配置」（值换成 SECRET_MASK），提交 SECRET_MASK 表示不改
+FIELD_TYPES = ("text", "bool", "int", "url", "secret")
+SECRET_MASK = "********"
 
 BOOL_TRUE = {"1", "true", "yes", "on"}
 BOOL_FALSE = {"0", "false", "no", "off"}
@@ -102,7 +104,7 @@ GROUPS = [
     {
         "key": "tracker",
         "title": "追踪脚本",
-        "desc": "控制台拉起的追踪脚本如何运行：随 Web 自动启动、请求邮政官网与 Bark 时的等待上限，以及签收后是否自动归档。",
+        "desc": "控制台拉起的追踪脚本如何运行：随 Web 自动启动、请求邮政官网与 Bark 时的等待上限、始发国段轨迹，以及签收后是否自动归档。",
         "fields": [
             {
                 "key": "AUTO_START_TRACKER",
@@ -122,6 +124,15 @@ GROUPS = [
                 "max": 120,
                 "placeholder": "15",
                 "apply": "tracker",
+            },
+            {
+                "key": "TRACK17_API_KEY",
+                "label": "17TRACK API 密钥",
+                "desc": "物流聚合查询服务 17TRACK 的 API 密钥，用于给中国寄出的单号补充始发国段（中国邮政）轨迹并参与到达预测。每登记一个新单号扣 1 个额度，同一单号只登记一次；留空则关闭该功能，日本邮政追踪不受影响。",
+                "type": "secret",
+                "placeholder": "未配置",
+                "apply": "tracker",
+                "wide": True,
             },
             {
                 "key": "AUTO_ARCHIVE_DELIVERED",
@@ -202,6 +213,8 @@ def _check_schema():
             raise ValueError(f"{key}: 未知的生效时机 {field['apply']}")
         if field["type"] not in FIELD_TYPES:
             raise ValueError(f"{key}: 未知的字段类型 {field['type']}")
+        if field["type"] == "secret" and "default" in field:
+            raise ValueError(f"{key}: 密钥字段不能有默认值")
         if field["type"] != "int" and ("min" in field or "max" in field):
             raise ValueError(f"{key}: 只有整数字段能设范围")
         if "requires" in field and ENV_FIELDS[field["requires"]]["type"] != "bool":
@@ -268,5 +281,17 @@ def validate_value(key: str, text: str) -> str:
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
             raise ValueError(f"{name}必须是以 http:// 或 https:// 开头的完整地址。")
         return text
+    if kind == "secret":
+        if text == SECRET_MASK:
+            raise ValueError(f"{name}不能是占位符本身。")
+        return text
     # text：不再做格式限制，字符安全已由调用方检查
     return text
+
+
+def mask_secrets(values: dict) -> dict:
+    """下发给网页前把密钥字段的值换成 SECRET_MASK（已配置）或空串（未配置），明文不出服务端。"""
+    return {
+        key: (SECRET_MASK if value else "") if ENV_FIELDS.get(key, {}).get("type") == "secret" else value
+        for key, value in values.items()
+    }

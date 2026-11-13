@@ -6,7 +6,7 @@ import secrets
 import sqlite3
 import time
 from contextlib import closing
-from datetime import datetime
+from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
 from dotenv import dotenv_values
@@ -340,37 +340,88 @@ MILESTONE_SOURCES = ("caller", "manual")
 _MILESTONE_SOURCE_SQL = ", ".join(f"'{source}'" for source in MILESTONE_SOURCES)
 
 
+_CARRIER_RECORDS_COLUMNS = "id, task_id, tracking_number, source, record_at, status, detail, created_at"
+_CARRIER_RECORDS_TABLE_SQL = f"""
+    CREATE TABLE {{name}} (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id INTEGER NOT NULL,
+        tracking_number TEXT NOT NULL,
+        source TEXT NOT NULL CHECK(source IN ({_CARRIER_SOURCE_SQL})),
+        record_at TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT '',
+        detail TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        UNIQUE(task_id, tracking_number, source, record_at, status, detail),
+        FOREIGN KEY(task_id) REFERENCES tracking_tasks(id) ON DELETE CASCADE
+    )
+"""
+
+
+def _migrate_carrier_sources(conn):
+    """已有库的 carrier_records 建表语句里 source 的 CHECK 是旧的来源集合（SQLite 不能 ALTER 约束），
+    新增来源（如 cn_ems）后按「新表 → 复制 → 删旧表 → 改名」只重建 carrier_records 本身，幂等（集合一致就跳过）。
+
+    为什么不会踩 data-model.md 的外键坑：那个坑是「改名被引用的父表」时子表外键被重定向，随后 DROP 级联删光子表。
+    carrier_records 是子表（外键指向 tracking_tasks），没有任何表引用它：DROP 旧表只删它自己的行，
+    新表改名时也没有别的外键需要重定向；新表自带的外键原样指向 tracking_tasks。tracking_tasks 不动。
+    调用方（ensure_storage）在 PRAGMA foreign_keys=OFF 下执行，复制时也不会逐行做外键检查。
+    索引随旧表一起删除，随后由 _ensure_forecast_schema 的 CREATE INDEX IF NOT EXISTS 补回。"""
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'carrier_records'").fetchone()
+    if row is None or f"IN ({_CARRIER_SOURCE_SQL})" in _squash_sql(row[0]):
+        return
+    conn.execute("DROP TABLE IF EXISTS carrier_records_new")
+    conn.execute(_CARRIER_RECORDS_TABLE_SQL.format(name="carrier_records_new"))
+    conn.execute(
+        f"INSERT INTO carrier_records_new ({_CARRIER_RECORDS_COLUMNS}) "
+        f"SELECT {_CARRIER_RECORDS_COLUMNS} FROM carrier_records"
+    )
+    conn.execute("DROP TABLE carrier_records")
+    conn.execute("ALTER TABLE carrier_records_new RENAME TO carrier_records")
+
+
+def _ensure_track17_schema(conn):
+    """track17_numbers：每个单号在 17TRACK 的登记状态（按单号，不按任务：同单号多个任务只登记一次）。
+    17TRACK 按登记的单号扣额度，有这一行（registered_at 非空）就不再登记。
+    - registered_at：登记成功（或 17TRACK 回「已登记」）的时间；登记失败时为 NULL、last_error 记原因，下轮再试；
+    - last_synced_at：最近一次查到中国邮政事件的时间；
+    - last_attempt_at：最近一次请求（登记或查询）的时间，补抓归档单号时按它轮转、限频；
+    - last_error：最近一次失败原因，成功后清空。
+    不设外键：单号与任务的增删无关，删了任务也不该再为同一单号扣一次额度。"""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS track17_numbers (
+            tracking_number TEXT PRIMARY KEY,
+            registered_at TEXT,
+            last_synced_at TEXT,
+            last_attempt_at TEXT,
+            last_error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+
+
 def _ensure_forecast_schema(conn):
-    """到达预测用的一列两表，只加列、只新建，不重建任何已有表（data-model.md 的外键坑）。
+    """到达预测用的一列三表：只加列、只新建；唯一的重建是 carrier_records 来源集合变了时只重建它自己
+    （_migrate_carrier_sources，它是子表，不踩 data-model.md 的外键坑），tracking_tasks 永不重建。
 
     - tracking_tasks.channel：渠道名，空串 = 未标注（ADD COLUMN，幂等）。
     - carrier_records：承运方履历，长期保留、不清理（task_events 有 180 天 / 500 条的清理，不能当经验库）。
       存原始状态，阶段在读取时由 forecast.record_stage 计算，以后改映射规则对历史数据自动生效。
     - pre_milestones：发货前节点（下单 / 打包 / 出库），每个任务每个阶段一行。
-    两张表都随任务删除级联删除；以后若要重建 tracking_tasks，同 task_events 一样要先把数据读进内存。
+    - track17_numbers：17TRACK 登记状态（见 _ensure_track17_schema）。
+    前两张表都随任务删除级联删除；以后若要重建 tracking_tasks，同 task_events 一样要先把数据读进内存。
 
     carrier_records 为空而 task_events 里有 status_change 时，把它们解析回填一次（INSERT OR IGNORE，重复执行无害）。"""
     if not _has_column(conn, "tracking_tasks", "channel"):
         conn.execute("ALTER TABLE tracking_tasks ADD COLUMN channel TEXT NOT NULL DEFAULT ''")
-    conn.execute(
-        f"""
-        CREATE TABLE IF NOT EXISTS carrier_records (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            task_id INTEGER NOT NULL,
-            tracking_number TEXT NOT NULL,
-            source TEXT NOT NULL CHECK(source IN ({_CARRIER_SOURCE_SQL})),
-            record_at TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT '',
-            detail TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL,
-            UNIQUE(task_id, tracking_number, source, record_at, status, detail),
-            FOREIGN KEY(task_id) REFERENCES tracking_tasks(id) ON DELETE CASCADE
-        )
-        """
-    )
+    _migrate_carrier_sources(conn)
+    if not _has_table(conn, "carrier_records"):
+        conn.execute(_CARRIER_RECORDS_TABLE_SQL.format(name="carrier_records"))
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_carrier_records_number ON carrier_records(tracking_number)"
     )
+    _ensure_track17_schema(conn)
     conn.execute(
         f"""
         CREATE TABLE IF NOT EXISTS pre_milestones (
@@ -423,6 +474,105 @@ def _insert_carrier_records(conn, task_id: int, tracking_number: str, records, *
         )
         count += 1
     return count
+
+
+def _insert_parsed_records(conn, task_id: int, tracking_number: str, source: str, rows) -> int:
+    """写已拆好的记录 [{"record_at", "status", "detail"}]（cn_ems 用，record_at 已是日本时间），INSERT OR IGNORE。"""
+    if source not in forecast.CARRIER_SOURCES:
+        raise ValueError(f"未定义的承运方来源：{source}")
+    stamp = _ts()
+    for row in rows:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO carrier_records (task_id, tracking_number, source, record_at, status, detail, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (int(task_id), str(tracking_number or ""), source, row["record_at"], str(row["status"] or ""),
+             str(row.get("detail") or ""), stamp),
+        )
+    return len(rows)
+
+
+def record_cn_records(task_id: int, tracking_number: str, rows) -> int | None:
+    """写中国邮政始发国段记录（source='cn_ems'），与 jp_post 同样带抓取时的单号校验：
+    单号已被改走（或任务已删除）返回 None，不写。否则返回条数。"""
+    with closing(_connect()) as conn:
+        with conn:
+            row = conn.execute(
+                "SELECT tracking_number FROM tracking_tasks WHERE id = ?", (int(task_id),)
+            ).fetchone()
+            if row is None or row["tracking_number"] != tracking_number:
+                return None
+            return _insert_parsed_records(conn, task_id, tracking_number, "cn_ems", rows)
+
+
+# --- 17TRACK 登记状态 ---
+
+# 已归档单号的始发国段补抓：登记后最多补到这么久，每批最多这么多单号（17TRACK 每次查询上限 40）
+TRACK17_CATCHUP_DAYS = 3
+TRACK17_BATCH = 40
+# 认为始发国段已经完整（不再补抓）的事件：中国邮政记到「到达寄达地」
+TRACK17_DONE_STATUS = "到达寄达地"
+
+
+def track17_state(tracking_number: str):
+    """单号的 17TRACK 登记状态 dict；没有记录返回 None。"""
+    with closing(_connect()) as conn:
+        row = conn.execute(
+            "SELECT * FROM track17_numbers WHERE tracking_number = ?", (str(tracking_number),)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def track17_update(tracking_number: str, *, registered: bool = False, synced: bool = False, error: str | None = None):
+    """记一次 17TRACK 请求的结果：registered 记登记成功（已登记过的不改时间），synced 记查到了事件，
+    error 非 None 时记失败原因（空串表示成功、清空原因）。每次都刷新 last_attempt_at。"""
+    now = _ts()
+    with closing(_connect()) as conn:
+        with conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO track17_numbers (tracking_number, created_at) VALUES (?, ?)",
+                (str(tracking_number), now),
+            )
+            conn.execute(
+                """
+                UPDATE track17_numbers
+                SET registered_at = CASE WHEN ? AND registered_at IS NULL THEN ? ELSE registered_at END,
+                    last_synced_at = CASE WHEN ? THEN ? ELSE last_synced_at END,
+                    last_error = COALESCE(?, last_error),
+                    last_attempt_at = ?
+                WHERE tracking_number = ?
+                """,
+                (int(registered), now, int(synced), now, error, now, str(tracking_number)),
+            )
+
+
+def track17_catchup_candidates(now=None, *, min_gap_seconds: int = 1800, limit: int = TRACK17_BATCH) -> list:
+    """需要补抓始发国段的已归档单号：已登记、登记不满 TRACK17_CATCHUP_DAYS 天、该单号的任务全部已归档
+    （还在追踪的由 tracker 每轮自己查）、从没查到过事件或还没有「到达寄达地」、距上次请求超过 min_gap_seconds。
+    返回 [(单号, 任务 id)]，任务取该单号下最新的一条；按上次请求时间轮转，最多 limit 个。"""
+    moment = now or datetime.now()
+    since = (moment - timedelta(days=TRACK17_CATCHUP_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    gap = (moment - timedelta(seconds=min_gap_seconds)).strftime("%Y-%m-%d %H:%M:%S")
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            """
+            SELECT n.tracking_number, MAX(t.id) AS task_id
+            FROM track17_numbers n
+            JOIN tracking_tasks t ON t.tracking_number = n.tracking_number
+            WHERE n.registered_at IS NOT NULL AND n.registered_at >= ?
+              AND (n.last_attempt_at IS NULL OR n.last_attempt_at <= ?)
+              AND (n.last_synced_at IS NULL OR NOT EXISTS (
+                    SELECT 1 FROM carrier_records c
+                    WHERE c.tracking_number = n.tracking_number AND c.source = 'cn_ems' AND c.status = ?))
+            GROUP BY n.tracking_number
+            HAVING MIN(t.archived) = 1
+            ORDER BY COALESCE(n.last_attempt_at, ''), n.tracking_number
+            LIMIT ?
+            """,
+            (since, gap, TRACK17_DONE_STATUS, int(limit)),
+        ).fetchall()
+    return [(row["tracking_number"], int(row["task_id"])) for row in rows]
 
 
 def record_carrier_records(task_id: int, tracking_number: str, records) -> int | None:
@@ -505,16 +655,22 @@ def _write_milestones(conn, task_id: int, milestones: dict, source: str):
         )
 
 
-def _forecast_number_stages(conn, tracking_number: str, *, milestone_task_ids) -> dict:
-    """一个单号的阶段时间：该单号下所有任务的承运方履历，加上 milestone_task_ids 这些任务的发货前节点。"""
-    records = [
+def _number_records(conn, tracking_number: str) -> list:
+    return [
         dict(row) for row in conn.execute(
             "SELECT source, record_at, status, detail FROM carrier_records WHERE tracking_number = ?",
             (tracking_number,),
         ).fetchall()
     ]
+
+
+def _forecast_number_stages(conn, tracking_number: str, *, milestone_task_ids, records=None) -> dict:
+    """一个单号的阶段时间：该单号下所有任务的承运方履历，加上 milestone_task_ids 这些任务的发货前节点。
+    始发国段的时区换算按单号国家码（forecast.record_time）。records 已取过时可直接传入。"""
+    if records is None:
+        records = _number_records(conn, tracking_number)
     milestone_maps = _read_milestones(conn, milestone_task_ids)
-    stage_maps = [forecast.stages_from_records(records)]
+    stage_maps = [forecast.stages_from_records(records, tracking_number=tracking_number)]
     for task_id in milestone_task_ids:
         stage_maps.append(forecast.stages_from_records([], {
             stage: item["at"] for stage, item in milestone_maps.get(int(task_id), {}).items()
@@ -524,7 +680,7 @@ def _forecast_number_stages(conn, tracking_number: str, *, milestone_task_ids) -
 
 def _forecast_samples(conn, exclude_number: str) -> list:
     """历史样本：所有账号所有任务（含归档）按单号去重。同单号多个任务：阶段时间取最早，
-    渠道取最近更新的那条非空渠道。排除当前单号。只返回阶段与渠道，不带单号与账号。"""
+    渠道取最近更新的那条非空渠道。排除当前单号。只返回阶段、渠道与收寄网点，不带单号与账号。"""
     tasks_by_number: dict = {}
     for row in conn.execute(
         "SELECT id, tracking_number, channel FROM tracking_tasks ORDER BY updated_at DESC, id DESC"
@@ -538,26 +694,67 @@ def _forecast_samples(conn, exclude_number: str) -> list:
     samples = []
     for number in sorted(numbers):
         rows = tasks_by_number.get(number, [])
-        stages = _forecast_number_stages(conn, number, milestone_task_ids=[row["id"] for row in rows])
+        records = _number_records(conn, number)
+        stages = _forecast_number_stages(
+            conn, number, milestone_task_ids=[row["id"] for row in rows], records=records
+        )
         if not stages:
             continue
         channel = next((row["channel"] for row in rows if str(row["channel"] or "").strip()), "")
-        samples.append({"stages": stages, "channel": channel})
+        samples.append({"stages": stages, "channel": channel, "office": forecast.collection_office(records)})
     return samples
 
 
+def _office_channels(samples) -> dict:
+    """{收寄网点: {渠道…}}：只看标了渠道、提取得出收寄网点的样本。"""
+    result: dict = {}
+    for sample in samples:
+        channel = str(sample.get("channel") or "").strip()
+        if channel and sample.get("office"):
+            result.setdefault(sample["office"], set()).add(channel)
+    return result
+
+
 def task_forecast(task_id: int, now=None):
-    """任务的到达预测（结构见 forecast.build_forecast）；任务不存在返回 None。
-    当前单的阶段：本单号在所有任务下的承运方履历（日本邮政的公开数据）+ 本任务自己的发货前节点
-    （别的账号同单号任务的节点不并进来，免得把别人的下单时间显示给这个人）。"""
+    """任务的到达预测（结构见 forecast.build_forecast，另加 collection_office / suggested_channel / office_multi_channel）；
+    任务不存在返回 None。
+    当前单的阶段：本单号在所有任务下的承运方履历（日本邮政与中国邮政的公开数据）+ 本任务自己的发货前节点
+    （别的账号同单号任务的节点不并进来，免得把别人的下单时间显示给这个人）。
+    渠道推断只在本任务渠道为空时给出，不写库：收寄网点在其他已标渠道的单号里只对应过一个渠道才建议。"""
     with closing(_connect()) as conn:
         row = conn.execute("SELECT * FROM tracking_tasks WHERE id = ?", (int(task_id),)).fetchone()
         if row is None:
             return None
         number = row["tracking_number"]
-        current = _forecast_number_stages(conn, number, milestone_task_ids=[int(task_id)])
+        records = _number_records(conn, number)
+        current = _forecast_number_stages(conn, number, milestone_task_ids=[int(task_id)], records=records)
         samples = _forecast_samples(conn, number)
-    return forecast.build_forecast(current, row["channel"], samples, now or datetime.now())
+    result = forecast.build_forecast(current, row["channel"], samples, now or datetime.now())
+    office = forecast.collection_office(records)
+    if str(row["channel"] or "").strip():
+        result.update({"collection_office": office, "suggested_channel": None, "office_multi_channel": False})
+    else:
+        result.update(forecast.suggest_channel(office, _office_channels(samples)))
+    return result
+
+
+def task_cn_records(task_id: int) -> list:
+    """任务当前单号的中国邮政始发国段记录（所有任务下去重），按时间倒序：[{"record_at", "status", "detail"}]。
+    record_at 已是日本时间。任务不存在返回空列表。"""
+    with closing(_connect()) as conn:
+        row = conn.execute("SELECT tracking_number FROM tracking_tasks WHERE id = ?", (int(task_id),)).fetchone()
+        if row is None:
+            return []
+        rows = conn.execute(
+            """
+            SELECT record_at, status, detail FROM carrier_records
+            WHERE tracking_number = ? AND source = 'cn_ems'
+            GROUP BY record_at, status, detail
+            ORDER BY record_at DESC, MAX(id) DESC
+            """,
+            (row["tracking_number"],),
+        ).fetchall()
+    return [dict(item) for item in rows]
 
 
 # --- v1 → v2 迁移 ---

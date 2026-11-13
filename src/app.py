@@ -23,6 +23,7 @@ from flask import Flask, abort, g, send_from_directory, render_template, request
 from flask_socketio import SocketIO, emit, disconnect
 from dotenv import load_dotenv, set_key
 import requests
+import track17
 from szyyw_auth import login_url, sso_enabled
 from szyyw_auth.flask import current_identity, is_anonymous
 
@@ -53,6 +54,7 @@ from storage import (
     register_user,
     resolve_portal_account,
     set_account_portal_sub,
+    task_cn_records,
     task_forecast,
     update_account,
     update_task,
@@ -705,8 +707,9 @@ def build_account_state():
     return get_account(account["id"]) if account else None
 
 def build_system_env():
+    """下发给网页的系统设置：密钥字段只给「是否已配置」（env_schema.mask_secrets），明文不出服务端。"""
     system_env = load_system_env(DOTENV_PATH, SYSTEM_ENV_KEYS)
-    return {key: system_env.get(key, "") for key in SYSTEM_ENV_KEYS}
+    return env_schema.mask_secrets({key: system_env.get(key, "") for key in SYSTEM_ENV_KEYS})
 
 def build_env_apply_note(keys) -> str:
     return env_schema.apply_note(keys)
@@ -1087,6 +1090,13 @@ def update_env():
     raw_changes = {key: value for key, value in data.items() if key in SYSTEM_ENV_KEYS}
     if not raw_changes:
         return jsonify({"status": "error", "message": "没有可更新的系统配置。"}), 400
+    # 密钥字段原样回传占位符表示「不改」（网页拿不到明文，只能拿到占位符）
+    raw_changes = {
+        key: value for key, value in raw_changes.items()
+        if not (SYSTEM_ENV_FIELDS[key]["type"] == "secret" and value == env_schema.SECRET_MASK)
+    }
+    if not raw_changes:
+        return jsonify({"status": "success", "message": "没有检测到需要更新的变量。", "env_vars": build_system_env()})
 
     # 先整体校验再写：有一项不合法就一项都不写，避免写一半
     system_changes = {}
@@ -1410,7 +1420,24 @@ def api_task_forecast(task_id: int):
     _, error = guard_task_access(task_id, account)
     if error:
         return error
-    return jsonify({"status": "success", "forecast": task_forecast(task_id)})
+    return jsonify({"status": "success", "forecast": task_forecast(task_id), "cn_records": task_cn_records(task_id)})
+
+
+@app.route('/api/admin/track17/quota', methods=['GET'])
+@admin_required
+def api_track17_quota():
+    """17TRACK 剩余额度（管理员系统设置页显示用）。没配密钥 404，请求失败 502；都不回显密钥。"""
+    system_env = load_system_env(DOTENV_PATH, ("TRACK17_API_KEY", "REQUEST_TIMEOUT"))
+    api_key = str(system_env.get("TRACK17_API_KEY") or "").strip()
+    if not api_key:
+        return jsonify({"status": "error", "message": "未配置 17TRACK API 密钥。"}), 404
+    raw_timeout = str(system_env.get("REQUEST_TIMEOUT") or "").strip()
+    timeout = int(raw_timeout) if raw_timeout.isdigit() and int(raw_timeout) > 0 else 15
+    try:
+        quota = track17.get_quota(api_key, timeout)
+    except Exception as exc:
+        return jsonify({"status": "error", "message": f"查询额度失败：{exc}"}), 502
+    return jsonify({"status": "success", "quota": quota})
 
 
 def fetch_carrier_records(tracking_number: str) -> list:
@@ -1426,6 +1453,31 @@ def fetch_carrier_records(tracking_number: str) -> list:
         "log_prefix": f"[补录 · {tracking_number}]",
     }
     return tracker.get_tracking_records(config)
+
+
+def sync_backfill_cn_leg(task_id: int, tracking_number: str) -> str:
+    """补录 CN 单号时登记 17TRACK 并尝试抓一次始发国段（没配密钥或不是 CN 单号时什么都不做）。
+    返回给补录结果用的一句说明，空串表示不涉及。刚登记的多半还没数据，追踪脚本会对归档单号低频补抓。"""
+    import tracker
+
+    system_env = load_system_env(DOTENV_PATH, ("TRACK17_API_KEY", "REQUEST_TIMEOUT"))
+    result, count = tracker.sync_cn_leg(
+        task_id, tracking_number, system_env,
+        timeout=tracker._normalize_int(system_env.get("REQUEST_TIMEOUT") or "15", 15),
+        log_prefix=f"[补录 · {tracking_number}]", fetch_after_register=True,
+    )
+    return BACKFILL_CN_NOTES[result].format(count=count)
+
+
+# tracker.CN_SYNC_RESULTS 每一种结果在补录结果里的说明（穷举，测试比对两边）；空串表示不涉及、不显示
+BACKFILL_CN_NOTES = {
+    "disabled": "",
+    "not_cn": "",
+    "registered": "国内段稍后补上",
+    "pending": "国内段稍后补上",
+    "synced": "国内段 {count} 条",
+    "error": "国内段暂时查不到",
+}
 
 
 def parse_backfill_line(line: str):
@@ -1455,7 +1507,8 @@ def api_backfill_tasks():
     """补录历史单号，给到达预测积累样本。body {"lines": "...", "account_id": 可选（仅管理员）}。
     每行一个单号（最多 BACKFILL_MAX_LINES 行），结果逐行返回，status 穷举见 storage.BACKFILL_RESULT_META：
     added（新建已归档任务并抓到 N 条履历）/ updated（已有任务，补了渠道或下单时间）/
-    no_records（日本邮政查不到，任务仍保留以便手填）/ invalid（这一行格式错误）。"""
+    no_records（日本邮政查不到，任务仍保留以便手填）/ invalid（这一行格式错误）。
+    CN 单号在配了 17TRACK 密钥时另带 cn_note（始发国段的情况，如「国内段稍后补上」）。"""
     account = current_account()
     data = request.get_json(silent=True) or {}
     account_id = int(account["id"])
@@ -1490,6 +1543,9 @@ def api_backfill_tasks():
             count = record_carrier_records(task_id, number, fetch_carrier_records(number))
             item["status"] = "added" if count else "no_records"
             item["records"] = count or 0
+        cn_note = sync_backfill_cn_leg(task_id, number)
+        if cn_note:
+            item["cn_note"] = cn_note
         results.append(item)
     for item in results:
         BACKFILL_RESULT_META[item["status"]]  # 穷举自检：漏了状态在这里就炸
