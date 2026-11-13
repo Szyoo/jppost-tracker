@@ -18,12 +18,9 @@
 
     <div class="app-frame">
     <div id="app" class="page app-main">
-      <!-- 渠道输入框的候选：选中账号 / 自己用过的渠道 -->
-      <datalist id="channel-options-user">
-        <option v-for="channel in (selectedUser?.channels || [])" :key="channel" :value="channel"></option>
-      </datalist>
-      <datalist id="channel-options-me">
-        <option v-for="channel in (meAccount?.channels || [])" :key="channel" :value="channel"></option>
+      <!-- 渠道输入框的候选：每个账号自己用过的渠道（添加 / 编辑表单按归属账号取） -->
+      <datalist v-for="user in users" :key="user.id" :id="'channels-' + user.id">
+        <option v-for="channel in (user.channels || [])" :key="channel" :value="channel"></option>
       </datalist>
       <header class="app-header page-header rise">
         <div class="app-brand">
@@ -33,7 +30,7 @@
         {%- if not sso_on %}
         <!-- SSO 下身份与登出由右上角账户菜单提供，这里只在本地登录时显示 -->
         <form method="post" action="/logout" class="app-actions">
-          <!-- 显示名在「我的设置」里可以改，所以这里跟着 viewer 走而不是渲染时的快照 -->
+          <!-- 显示名在「设置」里可以改，所以这里跟着 viewer 走而不是渲染时的快照 -->
           <span class="current-user">[[ viewer.display_name ]] · [[ viewer.portal_user || viewer.username ]]</span>
           <span class="pill cyan">admin</span>
           <button type="submit" class="btn-ghost btn-small danger">退出</button>
@@ -44,180 +41,342 @@
       <div class="nav-bar glass rise">
         <nav class="tabs">
           <button type="button" :class="['tab', { active: page === 'home' }]" @click="page = 'home'">首页</button>
-          <button type="button" :class="['tab', { active: page === 'env' }]" @click="page = 'env'">系统设置</button>
-          <button type="button" :class="['tab', { active: page === 'users' }]" @click="page = 'users'">用户管理</button>
-          <button type="button" :class="['tab', { active: page === 'me' }]" @click="page = 'me'">我的设置</button>
+          <button type="button" :class="['tab', { active: page === 'settings' }]" @click="page = 'settings'">设置</button>
+          <button type="button" :class="['tab', { active: page === 'users' }]" @click="page = 'users'">用户</button>
           <button type="button" :class="['tab', { active: page === 'logs' }]" @click="page = 'logs'">日志</button>
         </nav>
       </div>
 
-      <!-- ============ 首页：纯仪表盘，只读 ============ -->
+      <!-- ============ 首页：单号 ============ -->
       <section class="section" v-if="page === 'home'">
-        <h2 class="section-name">全局概览</h2>
-        <div class="stat-grid stagger">
-          <div :class="['stat-card', 'stat', 'glass', 'lift', 'spot', { err: globalErrorTaskCount > 0 }]">
-            <div class="stat-label">异常任务</div>
-            <div class="stat-value num">[[ globalErrorTaskCount ]]</div>
-          </div>
-          <div class="stat-card glass lift spot">
-            <div class="stat-label">启用中任务</div>
-            <div class="stat-value num">[[ activeTaskCount ]]</div>
-          </div>
-          <div class="stat-card glass lift spot">
-            <div class="stat-label">全部任务（含归档）</div>
-            <div class="stat-value num">[[ totalTaskCount ]]</div>
-          </div>
-          <div class="stat-card glass lift spot">
-            <div class="stat-label">账号 · 可登录</div>
-            <div class="stat-value num">[[ users.length ]] · [[ loginUsersCount ]]</div>
-          </div>
-          <div class="stat-card glass lift spot">
-            <div class="stat-label">Bark 设备</div>
-            <div class="stat-value num">[[ globalBarkDeviceCount ]]</div>
-          </div>
+        <div v-if="script.known && !script.running" class="callout warn u-mb-4">
+          <strong>追踪脚本未运行</strong>，单号暂时不会更新。
+          <button type="button" class="btn-ghost btn-small" @click="startScript">启动</button>
         </div>
 
-        <div class="section">
-          <div class="panel glass rise">
-            <div class="panel-head">
-              <h2 class="panel-title">任务总览</h2>
-              <span :class="['pill', globalTrackingState.tone]">[[ globalTrackingState.label ]]</span>
-            </div>
-            <p class="hint lead">跨账号的所有追踪任务，异常的排在最前。这里只看状态，改单号和开关去「用户管理」或「我的设置」。</p>
-
-            <div class="chip-row overview-filters">
-              <button
-                v-for="item in overviewFilters"
-                :key="item.key"
-                type="button"
-                class="chip"
-                :aria-pressed="overviewFilter === item.key"
-                @click="overviewFilter = item.key"
-              >
-                [[ item.label ]]<span class="count">[[ item.count ]]</span>
-              </button>
-            </div>
-
-            <div class="table-wrap bleed" v-if="overviewTasks.length">
-              <table class="tbl reflow">
-                <thead>
-                  <tr>
-                    <th>状态</th>
-                    <th>单号 / 备注</th>
-                    <th>归属账号</th>
-                    <th>最近物流结果</th>
-                    <th class="col-actions" aria-label="操作"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <template v-for="task in overviewTasks" :key="task.id">
-                    <tr :class="overviewRowTone(task)">
-                      <td><span :class="['pill', taskState(task).tone]">[[ taskState(task).label ]]</span></td>
-                      <td data-label="单号 / 备注">
-                        <div>
-                          <strong class="num">[[ task.tracking_number ]]</strong>
-                          <div class="hint">[[ task.label || '无备注' ]]</div>
-                        </div>
-                      </td>
-                      <td data-label="归属账号">
-                        <div>
-                          <div>[[ task.account_display_name ]]</div>
-                          <div class="hint">[[ task.account_username ]]</div>
-                        </div>
-                      </td>
-                      <td data-label="最近物流结果">
-                        <div>
-                          <div :class="{ 'err-text': task.last_error }">
-                            [[ task.last_error || task.last_status_display || task.last_tracking_info || '暂无物流记录' ]]
-                          </div>
-                          <div class="hint">
-                            检查 [[ task.last_checked_at || '从未' ]] · 推送 [[ task.last_push_at || '从未' ]] · 间隔 [[ task.check_interval ]]s
-                          </div>
-                        </div>
-                      </td>
-                      <td class="col-actions">
-                        <button type="button" class="btn-ghost btn-small" @click="openTaskEditor(task)">去编辑</button>
-                      </td>
-                    </tr>
-                    <!-- 时间线占满整行，展开后才拉取 -->
-                    <tr class="overview-timeline-row">
-                      <td colspan="5">
-                <task-timeline :task-id="task.id" :number="task.tracking_number"></task-timeline>
-                      </td>
-                    </tr>
-                  </template>
-                </tbody>
-              </table>
-            </div>
-            <div v-else class="empty">
-              [[ totalTaskCount ? '当前筛选下没有任务，换一个筛选看看。' : '还没有任何追踪任务，到「用户管理」或「我的设置」里添加第一个单号。' ]]
-            </div>
+        <div class="panel glass rise">
+          <div class="panel-head">
+            <h2 class="panel-title">添加单号</h2>
           </div>
+          <task-add-form v-if="viewerAccountId" :account-id="viewerAccountId" :submit="createTask" :backfill="openBackfill"></task-add-form>
         </div>
 
-        <div class="section">
-          <div class="panel glass rise">
-            <div class="panel-head">
-              <h2 class="panel-title">服务控制</h2>
+        <div class="section panel glass rise" id="account-me">
+          <div class="panel-head">
+            <h2 class="panel-title">我的单号</h2>
+            <span class="row wrap u-gap-2">
+              <span v-if="meErrorTaskCount" class="pill err">异常 [[ meErrorTaskCount ]]</span>
+              <span class="pill">在途 [[ meTasks.length ]]</span>
+            </span>
+          </div>
+          <div class="task-list stagger" v-if="meTasks.length">
+            <task-card
+              v-for="task in sortActive(meTasks)"
+              :key="task.id"
+              :task="task"
+              :draft="taskDrafts[task.id]"
+              :state="taskState(task)"
+              :actions="taskActions"
+            ></task-card>
+          </div>
+          <div v-else class="empty compact">还没有在途的单号，在上面填一个开始追踪。</div>
+        </div>
+
+        <!-- 其他账号的单号：按账号分组，分组里也能替这个账号添加 -->
+        <div v-for="group in otherGroups" :key="group.user.id" :id="'account-' + group.user.id" class="section panel glass rise">
+          <div class="panel-head">
+            <h2 class="panel-title">[[ group.user.display_name || group.user.username ]]</h2>
+            <span class="row wrap u-gap-2">
+              <span v-if="group.errors" class="pill err">异常 [[ group.errors ]]</span>
+              <span class="pill">在途 [[ group.tasks.length ]]</span>
+              <button type="button" class="btn-ghost btn-small" @click="toggleGroupAdd(group.user.id)">[[ groupAddOpen[group.user.id] ? '收起添加' : '添加单号' ]]</button>
+            </span>
+          </div>
+          <task-add-form v-if="groupAddOpen[group.user.id]" :account-id="group.user.id" :submit="createTask" :backfill="openBackfill"></task-add-form>
+          <div class="task-list stagger" v-if="group.tasks.length">
+            <task-card
+              v-for="task in group.tasks"
+              :key="task.id"
+              :task="task"
+              :draft="taskDrafts[task.id]"
+              :state="taskState(task)"
+              :actions="taskActions"
+            ></task-card>
+          </div>
+          <div v-else class="empty compact">这个账号没有在途的单号。</div>
+        </div>
+
+        <!-- 已归档：展开时才渲染卡片（补录的历史单号可能很多，收着时不拉预测） -->
+        <div class="section panel glass rise">
+          <details class="disclosure flush" @toggle="archivedOpen = $event.target.open">
+            <summary>已归档<span class="summary-meta">[[ archivedTasks.length ]]</span></summary>
+            <div class="disclosure-body">
+              <template v-if="archivedOpen">
+                <div class="task-list" v-if="archivedTasks.length">
+                  <task-card
+                    v-for="task in archivedTasks"
+                    :key="task.id"
+                    :task="task"
+                    :draft="taskDrafts[task.id]"
+                    :state="taskState(task)"
+                    :owner="task.account_id === viewerAccountId ? '' : ownerName(task)"
+                    :actions="taskActions"
+                  ></task-card>
+                </div>
+                <div v-else class="empty compact">没有归档的单号。</div>
+              </template>
             </div>
+          </details>
+        </div>
+      </section>
 
-            <div class="service-grid">
-              <div class="service-card inner">
-                <div class="service-card-head">
-                  <h3>追踪脚本</h3>
-                  <span class="dot-label">
-                    <span :class="['dot', script.running ? 'ok' : 'idle']"></span>
-                    [[ script.running ? '运行中' : '未启动' ]]
-                  </span>
-                </div>
-                <p class="hint lead">当前有 [[ activeTaskCount ]] 个任务在启用中，共 [[ totalTaskCount ]] 个任务。</p>
-                <p class="hint lead" v-if="barkHelp.tracker_auto_start">自动模式：Web 启动即运行，意外退出会自动重启；手动停止后不会被拉起。</p>
-                <div class="row wrap">
-                  <button type="button" class="btn btn-small" @click="startScript" :disabled="script.running">启动</button>
-                  <button type="button" class="btn-ghost btn-small danger" @click="stopScript" :disabled="!script.running">停止</button>
-                </div>
-              </div>
+      <!-- ============ 设置：我的资料与 Bark → 服务控制 → 17TRACK → 状态规则 → 系统设置 ============ -->
+      <section class="section" v-if="page === 'settings'">
+        <div class="panel glass rise" id="settings-me">
+          <div class="panel-head">
+            <h2 class="panel-title">我的资料与 Bark 设备</h2>
+            <span class="pill">[[ meDeviceCount ]] 个 Bark 设备</span>
+          </div>
+          <!-- 身份不放进 .section-name：它是 uppercase 的小标签，用户名塞进去会被大写掉 -->
+          <p class="hint lead">[[ viewer.display_name ]] · [[ viewer.portal_user || viewer.username ]]</p>
 
-              <div class="service-card inner" v-if="barkHelp.local_bark_enabled">
-                <div class="service-card-head">
-                  <h3>Bark 服务</h3>
-                  <span class="dot-label">
-                    <span :class="['dot', bark.running ? 'ok' : 'idle']"></span>
-                    [[ bark.running ? '运行中' : '未启动' ]]
-                  </span>
-                </div>
-                <div class="row wrap">
-                  <button type="button" class="btn btn-small" @click="startBarkServer" :disabled="bark.running">启动</button>
-                  <button type="button" class="btn-ghost btn-small danger" @click="stopBarkServer" :disabled="!bark.running">停止</button>
-                </div>
-              </div>
-
-              <div class="service-card inner">
-                <div class="service-card-head">
-                  <h3>公网健康状态</h3>
-                  <button type="button" class="btn-ghost btn-small" @click="fetchRemoteBarkStatus" :disabled="remoteBark.loading">刷新</button>
-                </div>
-                <div v-if="remoteBark.loading" class="remote-line">加载中…</div>
-                <div v-else>
-                  <div class="remote-line"><span class="remote-label">公网</span><span>[[ remoteBark.url || barkHelp.public_url || '未配置' ]]</span></div>
-                  <div class="remote-line"><span class="remote-label">本机</span><span>[[ barkHelp.internal_url || '未配置' ]]</span></div>
-                  <div class="remote-line">
-                    <span class="remote-label">状态</span>
-                    <span :class="remoteBark.ok ? 'ok-text' : 'err-text'">
-                      [[ remoteBark.ok ? (remoteBark.fallback_used ? '在线（本机回退）' : '在线') : '离线' ]]
-                    </span>
+          <div class="form-grid two-col">
+            <div>
+              <label for="meDisplayName">显示名称</label>
+              <input id="meDisplayName" type="text" class="field" v-model="meForm.display_name" />
+            </div>
+            <div>
+              <label for="meUsername">登录用户名</label>
+              <input id="meUsername" type="text" class="field" :value="viewer.username" disabled />
+              <p class="hint">用户名与角色不在这里改，避免管理员把自己关在门外。</p>
+            </div>
+            <div class="full">
+              <label for="meNote">备注</label>
+              <input id="meNote" type="text" class="field" v-model="meForm.note" />
+            </div>
+            <div class="full switch-group">
+              <label class="switch-row">
+                <input type="checkbox" class="switch" v-model="meForm.bark_url_enabled" />
+                推送附带追踪链接
+              </label>
+            </div>
+            <div class="full">
+              <label for="meBarkKeys">Bark Keys（支持多端，一行一个）</label>
+              <textarea id="meBarkKeys" class="field mono" v-model="meForm.bark_keys" rows="5" placeholder="可以粘贴完整推送 URL，也可以只填 key"></textarea>
+              <p class="hint">
+                支持直接粘贴完整推送 URL，后端会自动提取 key。手机 Bark 的服务器地址填
+                <code>[[ barkHelp.public_url || barkHelp.internal_url || '未配置' ]]</code>。
+              </p>
+            </div>
+            <div class="full">
+              <label for="meBarkQueryParams">Bark 参数</label>
+              <input id="meBarkQueryParams" type="text" class="field" v-model="meForm.bark_query_params" />
+            </div>
+            <div class="full">
+              <div class="inner sub-card">
+                <h3 class="section-name">Bark 预览</h3>
+                <p class="hint lead">测试直接使用当前表单里的 Keys、参数和链接开关，不需要先保存。</p>
+                <div class="form-grid two-col">
+                  <div class="full">
+                    <label for="meTestTitle">测试标题</label>
+                    <input id="meTestTitle" type="text" class="field" v-model="meForm.test_title" />
+                  </div>
+                  <div class="full">
+                    <label for="meTestBody">测试内容</label>
+                    <textarea id="meTestBody" class="field mono" v-model="meForm.test_body" rows="3"></textarea>
+                  </div>
+                  <div class="full">
+                    <label for="meTestTaskId">推送链接取自哪个任务</label>
+                    <select id="meTestTaskId" v-model="meForm.task_id" class="field">
+                      <option value="">不附带追踪链接</option>
+                      <option v-for="task in meTasks" :key="task.id" :value="task.id">
+                        [[ task.tracking_number ]][[ task.label ? ' · ' + task.label : '' ]]
+                      </option>
+                    </select>
                   </div>
                 </div>
               </div>
             </div>
+            {%- if not sso_on %}
+            <div class="full">
+              <label for="meNewPassword">新密码（留空表示不修改）</label>
+              <input id="meNewPassword" type="password" class="field" v-model="meForm.new_password" autocomplete="new-password" />
+            </div>
+            {%- endif %}
+          </div>
+
+          <div class="actions">
+            <button type="button" class="btn" @click="saveMe">保存</button>
+            <button type="button" class="btn-ghost" @click="sendMeTestPush" :disabled="sendingMeTestPush">发送 Bark 测试</button>
           </div>
         </div>
-      </section>
 
-      <!-- ============ 系统设置 ============ -->
-      <section class="section" v-if="page === 'env'">
-        <h2 class="section-name">系统设置</h2>
-        <div class="panel glass rise">
+        <div class="section panel glass rise" id="settings-service">
+          <div class="panel-head">
+            <h2 class="panel-title">服务控制</h2>
+          </div>
+
+          <div class="service-grid">
+            <div class="service-card inner">
+              <div class="service-card-head">
+                <h3>追踪脚本</h3>
+                <span class="dot-label">
+                  <span :class="['dot', script.running ? 'ok' : 'idle']"></span>
+                  [[ script.running ? '运行中' : '未启动' ]]
+                </span>
+              </div>
+              <p class="hint lead">当前有 [[ activeTaskCount ]] 个任务在启用中，共 [[ totalTaskCount ]] 个任务。</p>
+              <p class="hint lead" v-if="barkHelp.tracker_auto_start">自动模式：Web 启动即运行，意外退出会自动重启；手动停止后不会被拉起。</p>
+              <div class="row wrap">
+                <button type="button" class="btn btn-small" @click="startScript" :disabled="script.running">启动</button>
+                <button type="button" class="btn-ghost btn-small danger" @click="stopScript" :disabled="!script.running">停止</button>
+              </div>
+            </div>
+
+            <div class="service-card inner" v-if="barkHelp.local_bark_enabled">
+              <div class="service-card-head">
+                <h3>Bark 服务</h3>
+                <span class="dot-label">
+                  <span :class="['dot', bark.running ? 'ok' : 'idle']"></span>
+                  [[ bark.running ? '运行中' : '未启动' ]]
+                </span>
+              </div>
+              <div class="row wrap">
+                <button type="button" class="btn btn-small" @click="startBarkServer" :disabled="bark.running">启动</button>
+                <button type="button" class="btn-ghost btn-small danger" @click="stopBarkServer" :disabled="!bark.running">停止</button>
+              </div>
+            </div>
+
+            <div class="service-card inner">
+              <div class="service-card-head">
+                <h3>公网健康状态</h3>
+                <button type="button" class="btn-ghost btn-small" @click="fetchRemoteBarkStatus" :disabled="remoteBark.loading">刷新</button>
+              </div>
+              <div v-if="remoteBark.loading" class="remote-line">加载中…</div>
+              <div v-else>
+                <div class="remote-line"><span class="remote-label">公网</span><span>[[ remoteBark.url || barkHelp.public_url || '未配置' ]]</span></div>
+                <div class="remote-line"><span class="remote-label">本机</span><span>[[ barkHelp.internal_url || '未配置' ]]</span></div>
+                <div class="remote-line">
+                  <span class="remote-label">状态</span>
+                  <span :class="remoteBark.ok ? 'ok-text' : 'err-text'">
+                    [[ remoteBark.ok ? (remoteBark.fallback_used ? '在线（本机回退）' : '在线') : '离线' ]]
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 17TRACK：额度（服务端缓存 5 分钟）+ 登记单号统计；数据来自 GET /api/admin/track17 -->
+        <div class="section panel glass rise" id="settings-track17">
+          <div class="panel-head">
+            <h2 class="panel-title">17TRACK</h2>
+            <a class="pill pill-ext" :href="track17Card?.console_url || 'https://api.17track.net'" target="_blank" rel="noopener noreferrer"><span v-html="extLinkIcon"></span>控制台</a>
+          </div>
+          <p v-if="!track17Card" class="stat-sub">加载中…</p>
+          <p v-else-if="!track17Card.configured" class="stat-sub">未配置 — 在下方系统设置填写 <code>TRACK17_API_KEY</code></p>
+          <template v-else>
+            <p v-if="!track17Card.quota_ok" class="stat-sub">17TRACK 接口请求失败</p>
+            <template v-else>
+              <div class="stat-value">[[ track17Card.quota.quota_used ?? '?' ]]<span class="stat-sub"> / [[ track17Card.quota.quota_total ?? '?' ]]</span></div>
+              <div class="bar"><div :class="['bar-fill', { over: track17UsagePct > 85 }]" :style="{ width: Math.min(track17UsagePct, 100) + '%' }"></div></div>
+              <p class="stat-sub">剩 [[ track17Card.quota.quota_remain ?? '?' ]]<template v-if="track17Card.quota.today_used !== undefined"> · 今日已用 [[ track17Card.quota.today_used ]]</template></p>
+            </template>
+            <dl class="kv u-mt-3">
+              <dt>已登记单号</dt>
+              <dd>[[ track17Card.numbers.registered ]]（待数据 [[ track17Card.numbers.pending ]] · 已同步 [[ track17Card.numbers.synced ]] · 出错 [[ track17Card.numbers.error ]]）</dd>
+              <dt>最近同步</dt>
+              <dd>[[ track17Card.numbers.last_synced_at || '—' ]]</dd>
+              <template v-if="track17Card.numbers.last_error">
+                <dt>最近错误</dt>
+                <dd>[[ track17Card.numbers.last_error.tracking_number ]] · [[ track17Card.numbers.last_error.error ]]<span class="muted"> · [[ track17Card.numbers.last_error.at ]]</span></dd>
+              </template>
+            </dl>
+          </template>
+        </div>
+
+        <!-- 状态规则：内置表认不出的承运方状态的归类（后台自动归类或手工填写，保存即生效）；数据来自 /api/admin/status-rules -->
+        <div class="section panel glass rise" id="settings-status-rules">
+          <div class="panel-head">
+            <h2 class="panel-title">状态规则</h2>
+            <button type="button" class="btn-ghost btn-small" @click="loadStatusRules">刷新</button>
+          </div>
+          <p class="hint lead">承运方出现内置表里没有的状态时登记在这里，由后台自动归类（见下方系统设置「新状态自动归类」）后直接生效；也可以手工修改，改过的标为「手工」。</p>
+          <div class="table-wrap bleed" v-if="statusRules.length">
+            <table class="tbl reflow">
+              <thead>
+                <tr>
+                  <th>来源</th>
+                  <th>原文</th>
+                  <th>中文名</th>
+                  <th>阶段</th>
+                  <th>推送</th>
+                  <th>状态</th>
+                  <th class="col-actions" aria-label="操作"></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="rule in statusRules" :key="rule.id">
+                  <td data-label="来源">[[ statusRuleOptions.sources[rule.source] || rule.source ]]</td>
+                  <td data-label="原文">
+                    <div>
+                      <strong>[[ rule.raw_status ]]</strong>
+                      <div class="hint" v-if="rule.sample_detail">[[ rule.sample_detail ]]</div>
+                    </div>
+                  </td>
+                  <template v-if="statusRuleDrafts[rule.id]">
+                    <td data-label="中文名"><input type="text" class="field" maxlength="30" v-model="statusRuleDrafts[rule.id].name_zh" /></td>
+                    <td data-label="阶段">
+                      <select class="field" v-model="statusRuleDrafts[rule.id].stage">
+                        <option value="">（不参与阶段判定）</option>
+                        <option v-for="(label, key) in statusRuleOptions.stages" :key="key" :value="key">[[ label ]]</option>
+                      </select>
+                      <select class="field" v-model="statusRuleDrafts[rule.id].kind">
+                        <option value="">（独有事件，不与另一来源合并）</option>
+                        <option v-for="(label, key) in statusRuleOptions.kinds" :key="key" :value="key">[[ label ]]</option>
+                      </select>
+                    </td>
+                    <td data-label="推送">
+                      <label class="switch-row"><input type="checkbox" class="switch" v-model="statusRuleDrafts[rule.id].push" />推送</label>
+                    </td>
+                    <td data-label="状态"></td>
+                    <td class="col-actions">
+                      <button type="button" class="btn btn-small" @click="saveStatusRule(rule)">保存</button>
+                      <button type="button" class="btn-ghost btn-small" @click="cancelStatusRule(rule)">取消</button>
+                    </td>
+                  </template>
+                  <template v-else>
+                    <td data-label="中文名">[[ rule.name_zh || '—' ]]</td>
+                    <td data-label="阶段">
+                      <div>
+                        <div>[[ rule.stage ? (statusRuleOptions.stages[rule.stage] || rule.stage) : '—' ]]</div>
+                        <div class="hint" v-if="rule.kind">[[ statusRuleOptions.kinds[rule.kind] || rule.kind ]]</div>
+                      </div>
+                    </td>
+                    <td data-label="推送">[[ rule.status === 'done' ? (rule.push ? '推送' : '不推送') : '—' ]]</td>
+                    <td data-label="状态">
+                      <div>
+                        <span :class="['pill', statusRuleState(rule).tone]">[[ statusRuleState(rule).label ]]</span>
+                        <div class="hint" v-if="rule.last_error">[[ rule.last_error ]]（[[ rule.attempts ]] 次）</div>
+                      </div>
+                    </td>
+                    <td class="col-actions">
+                      <button type="button" class="btn-ghost btn-small" @click="editStatusRule(rule)">编辑</button>
+                      <button type="button" class="btn-ghost btn-small" @click="reclassifyStatusRule(rule)" :disabled="rule.status === 'pending'">重新归类</button>
+                      <button type="button" class="btn-ghost btn-small danger" @click="deleteStatusRule(rule)">删除</button>
+                    </td>
+                  </template>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div v-else class="empty">还没有遇到内置表以外的状态。</div>
+        </div>
+
+        <div class="section panel glass rise" id="settings-env">
+          <div class="panel-head">
+            <h2 class="panel-title">系统设置</h2>
+          </div>
           <div class="env-intro">
             <p class="hint">这里编辑的是全局 <code>.env</code>。用户自己的单号、Bark Keys 和推送参数不在这里改。</p>
             <p class="hint">
@@ -227,110 +386,6 @@
               <span class="pill warn">需重启 Web</span> 要重启控制台进程才会被读到。
             </p>
           </div>
-          <!-- 17TRACK 卡片：额度（服务端缓存 5 分钟）+ 登记单号统计；数据来自 GET /api/admin/track17 -->
-          <section class="inner stat-card u-mb-4">
-            <div class="panel-head">
-              <h3 class="panel-title">17TRACK</h3>
-              <a class="pill pill-ext" :href="track17Card?.console_url || 'https://api.17track.net'" target="_blank" rel="noopener noreferrer"><span v-html="extLinkIcon"></span>控制台</a>
-            </div>
-            <p v-if="!track17Card" class="stat-sub">加载中…</p>
-            <p v-else-if="!track17Card.configured" class="stat-sub">未配置 — 在系统设置填写 <code>TRACK17_API_KEY</code></p>
-            <template v-else>
-              <p v-if="!track17Card.quota_ok" class="stat-sub">17TRACK 接口请求失败</p>
-              <template v-else>
-                <div class="stat-value">[[ track17Card.quota.quota_used ?? '?' ]]<span class="stat-sub"> / [[ track17Card.quota.quota_total ?? '?' ]]</span></div>
-                <div class="bar"><div :class="['bar-fill', { over: track17UsagePct > 85 }]" :style="{ width: Math.min(track17UsagePct, 100) + '%' }"></div></div>
-                <p class="stat-sub">剩 [[ track17Card.quota.quota_remain ?? '?' ]]<template v-if="track17Card.quota.today_used !== undefined"> · 今日已用 [[ track17Card.quota.today_used ]]</template></p>
-              </template>
-              <dl class="kv u-mt-3">
-                <dt>已登记单号</dt>
-                <dd>[[ track17Card.numbers.registered ]]（待数据 [[ track17Card.numbers.pending ]] · 已同步 [[ track17Card.numbers.synced ]] · 出错 [[ track17Card.numbers.error ]]）</dd>
-                <dt>最近同步</dt>
-                <dd>[[ track17Card.numbers.last_synced_at || '—' ]]</dd>
-                <template v-if="track17Card.numbers.last_error">
-                  <dt>最近错误</dt>
-                  <dd>[[ track17Card.numbers.last_error.tracking_number ]] · [[ track17Card.numbers.last_error.error ]]<span class="muted"> · [[ track17Card.numbers.last_error.at ]]</span></dd>
-                </template>
-              </dl>
-            </template>
-          </section>
-          <!-- 状态规则：内置表认不出的承运方状态的归类（后台自动归类或手工填写，保存即生效）；数据来自 /api/admin/status-rules -->
-          <section class="inner u-mb-4">
-            <div class="panel-head">
-              <h3 class="panel-title">状态规则</h3>
-              <button type="button" class="btn-ghost btn-small" @click="loadStatusRules">刷新</button>
-            </div>
-            <p class="hint">承运方出现内置表里没有的状态时登记在这里，由后台自动归类（见下方「新状态自动归类」）后直接生效；也可以手工修改，改过的标为「手工」。</p>
-            <div class="table-wrap bleed" v-if="statusRules.length">
-              <table class="tbl reflow">
-                <thead>
-                  <tr>
-                    <th>来源</th>
-                    <th>原文</th>
-                    <th>中文名</th>
-                    <th>阶段</th>
-                    <th>推送</th>
-                    <th>状态</th>
-                    <th class="col-actions" aria-label="操作"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="rule in statusRules" :key="rule.id">
-                    <td data-label="来源">[[ statusRuleOptions.sources[rule.source] || rule.source ]]</td>
-                    <td data-label="原文">
-                      <div>
-                        <strong>[[ rule.raw_status ]]</strong>
-                        <div class="hint" v-if="rule.sample_detail">[[ rule.sample_detail ]]</div>
-                      </div>
-                    </td>
-                    <template v-if="statusRuleDrafts[rule.id]">
-                      <td data-label="中文名"><input type="text" class="field" maxlength="30" v-model="statusRuleDrafts[rule.id].name_zh" /></td>
-                      <td data-label="阶段">
-                        <select class="field" v-model="statusRuleDrafts[rule.id].stage">
-                          <option value="">（不参与阶段判定）</option>
-                          <option v-for="(label, key) in statusRuleOptions.stages" :key="key" :value="key">[[ label ]]</option>
-                        </select>
-                        <select class="field" v-model="statusRuleDrafts[rule.id].kind">
-                          <option value="">（独有事件，不与另一来源合并）</option>
-                          <option v-for="(label, key) in statusRuleOptions.kinds" :key="key" :value="key">[[ label ]]</option>
-                        </select>
-                      </td>
-                      <td data-label="推送">
-                        <label class="switch-row"><input type="checkbox" class="switch" v-model="statusRuleDrafts[rule.id].push" />推送</label>
-                      </td>
-                      <td data-label="状态"></td>
-                      <td class="col-actions">
-                        <button type="button" class="btn btn-small" @click="saveStatusRule(rule)">保存</button>
-                        <button type="button" class="btn-ghost btn-small" @click="cancelStatusRule(rule)">取消</button>
-                      </td>
-                    </template>
-                    <template v-else>
-                      <td data-label="中文名">[[ rule.name_zh || '—' ]]</td>
-                      <td data-label="阶段">
-                        <div>
-                          <div>[[ rule.stage ? (statusRuleOptions.stages[rule.stage] || rule.stage) : '—' ]]</div>
-                          <div class="hint" v-if="rule.kind">[[ statusRuleOptions.kinds[rule.kind] || rule.kind ]]</div>
-                        </div>
-                      </td>
-                      <td data-label="推送">[[ rule.status === 'done' ? (rule.push ? '推送' : '不推送') : '—' ]]</td>
-                      <td data-label="状态">
-                        <div>
-                          <span :class="['pill', statusRuleState(rule).tone]">[[ statusRuleState(rule).label ]]</span>
-                          <div class="hint" v-if="rule.last_error">[[ rule.last_error ]]（[[ rule.attempts ]] 次）</div>
-                        </div>
-                      </td>
-                      <td class="col-actions">
-                        <button type="button" class="btn-ghost btn-small" @click="editStatusRule(rule)">编辑</button>
-                        <button type="button" class="btn-ghost btn-small" @click="reclassifyStatusRule(rule)" :disabled="rule.status === 'pending'">重新归类</button>
-                        <button type="button" class="btn-ghost btn-small danger" @click="deleteStatusRule(rule)">删除</button>
-                      </td>
-                    </template>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <div v-else class="empty">还没有遇到内置表以外的状态。</div>
-          </section>
           <form @submit.prevent="saveEnv">
             <div class="env-groups stagger">
               <section v-for="group in envGroups" :key="group.key" class="env-group inner">
@@ -381,9 +436,9 @@
         </div>
       </section>
 
-      <!-- ============ 用户管理 ============ -->
+      <!-- ============ 用户：账号列表 + 账号详情（单号在首页按账号分组） ============ -->
       <section class="section" v-if="page === 'users'">
-        <h2 class="section-name">用户管理 · 总账号 [[ users.length ]] · 可登录 [[ loginUsersCount ]] · 任务 [[ activeTaskCount ]] / [[ totalTaskCount ]]</h2>
+        <h2 class="section-name">用户 · 总账号 [[ users.length ]] · 可登录 [[ loginUsersCount ]] · 任务 [[ activeTaskCount ]] / [[ totalTaskCount ]]</h2>
         <div class="users-layout">
           <div class="panel glass rise">
             <div class="panel-head">
@@ -433,7 +488,7 @@
               <div class="actions">
                 <button type="button" class="btn btn-small" @click="createUser" :disabled="{% if sso_on %}!newUserForm.username.trim(){% else %}!newUserForm.username.trim() || !newUserForm.password.trim(){% endif %}">新增</button>
               </div>
-              <p class="hint">账号建好后在下面的"追踪任务"里添加单号。</p>
+              <p class="hint">账号建好后到首页这个账号的分组里添加单号。</p>
             </div>
 
             <div class="list gap stagger">
@@ -458,20 +513,20 @@
             </div>
           </div>
 
-          <div class="panel glass rise" v-if="selectedUserId">
+          <div class="panel glass rise" v-if="selectedUser">
             <div class="panel-head">
               <h2 class="panel-title">账号详情</h2>
-              <span :class="['pill', selectedUserTrackingState.tone]">[[ selectedUserTrackingState.label ]]</span>
+              <button type="button" class="btn-ghost btn-small" @click="goToAccountTasks(selectedUser.id)">在首页看这个账号的单号</button>
             </div>
 
-            <div class="stat-grid detail-stats" v-if="selectedUser">
+            <div class="stat-grid detail-stats">
               <div class="stat-card inner">
                 <div class="stat-label">任务 启用 / 全部（含归档）</div>
-                <div class="stat-value num">[[ selectedUserActiveTaskCount ]] / [[ selectedUserTaskCount ]]</div>
+                <div class="stat-value num">[[ selectedUser.active_task_count || 0 ]] / [[ selectedUser.task_count || 0 ]]</div>
               </div>
               <div class="stat-card inner">
                 <div class="stat-label">归档任务</div>
-                <div class="stat-value num">[[ selectedUserArchivedTasks.length ]]</div>
+                <div class="stat-value num">[[ (selectedUser.archived_tasks || []).length ]]</div>
               </div>
               <div class="stat-card inner">
                 <div class="stat-label">Bark 设备</div>
@@ -560,7 +615,7 @@
                       <label for="userTestTaskId">推送链接取自哪个任务</label>
                       <select id="userTestTaskId" v-model="userForm.task_id" class="field">
                         <option value="">不附带追踪链接</option>
-                        <option v-for="task in selectedUserTasks" :key="task.id" :value="task.id">
+                        <option v-for="task in (selectedUser.tasks || [])" :key="task.id" :value="task.id">
                           [[ task.tracking_number ]][[ task.label ? ' · ' + task.label : '' ]]
                         </option>
                       </select>
@@ -574,379 +629,13 @@
               <button type="button" class="btn" @click="saveUser" :disabled="!userForm.username.trim()">保存账号</button>
               <button type="button" class="btn-ghost" @click="sendUserTestPush" :disabled="sendingTestPush">发送 Bark 测试</button>
             </div>
-
-            <div class="divider"></div>
-
-            <div class="panel-head">
-              <h2 class="panel-title">追踪任务</h2>
-              <span :class="['pill', selectedUserTrackingState.tone]">[[ selectedUserTrackingState.label ]]</span>
-            </div>
-
-            <div class="task-list stagger" v-if="selectedUserTasks.length">
-              <div v-for="task in selectedUserTasks" :key="task.id" class="task-item inner">
-                <div class="task-item-head">
-                  <strong>[[ task.tracking_number ]]</strong>
-                  <span v-if="task.channel" class="pill cyan task-channel">[[ task.channel ]]</span>
-                  <span :class="['pill', taskTone(task)]">[[ taskStateLabel(task) ]]</span>
-                </div>
-                <div class="task-fields" v-if="taskDrafts[task.id]">
-                  <label class="task-field">
-                    <span>日本邮政单号</span>
-                    <input type="text" class="field" v-model="taskDrafts[task.id].tracking_number" />
-                  </label>
-                  <label class="task-field">
-                    <span>备注名</span>
-                    <input type="text" class="field" v-model="taskDrafts[task.id].label" />
-                  </label>
-                  <label class="task-field">
-                    <span>查询间隔（秒）</span>
-                    <input type="number" min="30" max="604800" class="field" v-model.number="taskDrafts[task.id].check_interval" />
-                  </label>
-                  <label class="task-field">
-                    <span>渠道</span>
-                    <input type="text" class="field" maxlength="50" list="channel-options-user" v-model="taskDrafts[task.id].channel" />
-                  </label>
-                  <label class="switch-row">
-                    <input type="checkbox" class="switch" v-model="taskDrafts[task.id].atypical" />
-                    非常规件（如大件电器）：作为预测参考时降低权重
-                  </label>
-                  <details class="disclosure flush">
-                    <summary>发货前节点<span class="summary-meta">[[ milestoneCount(taskDrafts[task.id]) ]]/3</span></summary>
-                    <div class="disclosure-body">
-                      <div class="task-fields">
-                        <label class="task-field" v-for="item in milestoneInputs" :key="item.stage">
-                          <span>[[ item.label ]]</span>
-                          <input type="text" class="field" inputmode="numeric" placeholder="YYYY-MM-DD HH:MM" v-model="taskDrafts[task.id].milestones[item.stage]" />
-                        </label>
-                      </div>
-                      <p class="hint">可以只填日期；时间按日本时间。留空保存即清除。</p>
-                    </div>
-                  </details>
-                </div>
-                <p class="task-meta">最近结果 [[ task.last_error || task.last_status_display || task.last_tracking_info || '暂无记录' ]]</p>
-                <p class="task-meta">最近检查 [[ task.last_checked_at || '-' ]] · 最近推送 [[ task.last_push_at || '-' ]]</p>
-                <task-forecast :task-id="task.id" :stamp="task.updated_at"></task-forecast>
-                <task-timeline :task-id="task.id" :number="task.tracking_number"></task-timeline>
-                <div class="actions">
-                  <button type="button" class="btn btn-small" @click="saveTask(task)">保存</button>
-                  <button type="button" class="btn-ghost btn-small" @click="toggleTask(task)">[[ task.enabled ? '停用' : '启用' ]]</button>
-                  <button type="button" class="btn-ghost btn-small" @click="archiveTask(task)">归档</button>
-                  <button type="button" class="btn-ghost btn-small danger" @click="deleteTask(task)">删除</button>
-                </div>
-              </div>
-            </div>
-            <div v-else class="empty">这个账号当前没有进行中的追踪任务。</div>
-
-            <div class="inner task-create">
-              <h3 class="section-name">添加任务</h3>
-              <div class="task-fields">
-                <label class="task-field">
-                  <span>日本邮政单号</span>
-                  <input type="text" class="field" v-model="newTaskForm.tracking_number" />
-                </label>
-                <label class="task-field">
-                  <span>备注名</span>
-                  <input type="text" class="field" v-model="newTaskForm.label" />
-                </label>
-                <label class="task-field">
-                  <span>查询间隔（秒）</span>
-                  <input type="number" min="30" max="604800" class="field" v-model.number="newTaskForm.check_interval" />
-                </label>
-                <label class="task-field">
-                  <span>渠道</span>
-                  <input type="text" class="field" maxlength="50" list="channel-options-user" v-model="newTaskForm.channel" />
-                </label>
-                <details class="disclosure flush">
-                  <summary>发货前节点<span class="summary-meta">[[ milestoneCount(newTaskForm) ]]/3</span></summary>
-                  <div class="disclosure-body">
-                    <div class="task-fields">
-                      <label class="task-field" v-for="item in milestoneInputs" :key="item.stage">
-                        <span>[[ item.label ]]</span>
-                        <input type="text" class="field" inputmode="numeric" placeholder="YYYY-MM-DD HH:MM" v-model="newTaskForm.milestones[item.stage]" />
-                      </label>
-                    </div>
-                    <p class="hint">可以只填日期；时间按日本时间。留空保存即清除。</p>
-                  </div>
-                </details>
-              </div>
-              <label class="switch-row">
-                <input type="checkbox" class="switch" v-model="newTaskForm.enabled" />
-                添加后立即启用
-              </label>
-              <div class="actions row">
-                <button type="button" class="btn btn-small" @click="createTask()" :disabled="!newTaskForm.tracking_number.trim()" :title="!newTaskForm.tracking_number.trim() ? '请先填写日本邮政单号' : ''">添加任务</button>
-                <span class="tiny muted" v-if="!newTaskForm.tracking_number.trim()">填入单号后可添加</span>
-              </div>
-            </div>
-
-            <div class="actions">
-              <button type="button" class="btn-ghost btn-small" @click="openBackfill('user')">补录历史单号</button>
-              <span class="hint">给这个账号补几单过去的单号和渠道，到达预测就有历史可参考。</span>
-            </div>
-
-            <div class="task-list archived-list stagger" v-if="selectedUserArchivedTasks.length">
-              <div v-for="task in selectedUserArchivedTasks" :key="task.id" class="task-item inner">
-                <div class="task-item-head">
-                  <strong>[[ task.tracking_number ]]</strong>
-                  <span v-if="task.channel" class="pill cyan task-channel">[[ task.channel ]]</span>
-                  <span class="pill">已归档</span>
-                </div>
-                <p class="task-meta">首次登记 [[ task.first_seen_at ]] · 登记次数 [[ task.seen_count ]]</p>
-                <task-forecast :task-id="task.id" :stamp="task.updated_at"></task-forecast>
-                <task-timeline :task-id="task.id" :number="task.tracking_number"></task-timeline>
-                <div class="actions">
-                  <button type="button" class="btn btn-small" @click="restoreTask(task)">恢复</button>
-                  <button type="button" class="btn-ghost btn-small danger" @click="deleteTask(task)">删除</button>
-                </div>
-              </div>
-            </div>
-
           </div>
 
           <div class="panel glass rise" v-else>
             <div class="panel-head">
               <h2 class="panel-title">账号详情</h2>
             </div>
-            <div class="empty">从左边的列表选一个账号，这里会出现它的完整配置与追踪任务。管理员自己的配置在「我的设置」里改。</div>
-          </div>
-        </div>
-      </section>
-
-      <!-- ============ 我的设置：管理员自己的账号与任务 ============ -->
-      <section class="section" v-if="page === 'me'">
-        <!-- 身份不放进 .section-name：它是 uppercase 的小标签，用户名塞进去会被大写掉 -->
-        <h2 class="section-name">我的设置</h2>
-        <p class="hint lead">[[ viewer.display_name ]] · [[ viewer.portal_user || viewer.username ]] · 这里改的是管理员自己的账号与任务。</p>
-        <div class="stat-grid stagger">
-          <div class="stat-card glass lift spot">
-            <div class="stat-label">启用中任务</div>
-            <div class="stat-value num">[[ meActiveTaskCount ]]</div>
-          </div>
-          <div class="stat-card glass lift spot">
-            <div class="stat-label">全部任务（含归档）</div>
-            <div class="stat-value num">[[ meTaskCount ]]</div>
-          </div>
-          <div class="stat-card glass lift spot">
-            <div class="stat-label">归档任务</div>
-            <div class="stat-value num">[[ meArchivedTasks.length ]]</div>
-          </div>
-          <div :class="['stat-card', 'stat', 'glass', 'lift', 'spot', { err: meErrorTaskCount > 0 }]">
-            <div class="stat-label">异常任务</div>
-            <div class="stat-value num">[[ meErrorTaskCount ]]</div>
-          </div>
-        </div>
-
-        <div class="section">
-          <div class="panel glass rise">
-            <div class="panel-head">
-              <h2 class="panel-title">我的追踪任务</h2>
-              <span :class="['pill', meTrackingState.tone]">[[ meTrackingState.label ]]</span>
-            </div>
-
-            <div class="task-list stagger" v-if="meTasks.length">
-              <div v-for="task in meTasks" :key="task.id" class="task-item inner">
-                <div class="task-item-head">
-                  <strong>[[ task.tracking_number ]]</strong>
-                  <span v-if="task.channel" class="pill cyan task-channel">[[ task.channel ]]</span>
-                  <span :class="['pill', taskTone(task)]">[[ taskStateLabel(task) ]]</span>
-                </div>
-                <div class="task-fields" v-if="taskDrafts[task.id]">
-                  <label class="task-field">
-                    <span>日本邮政单号</span>
-                    <input type="text" class="field" v-model="taskDrafts[task.id].tracking_number" />
-                  </label>
-                  <label class="task-field">
-                    <span>备注名</span>
-                    <input type="text" class="field" v-model="taskDrafts[task.id].label" />
-                  </label>
-                  <label class="task-field">
-                    <span>查询间隔（秒）</span>
-                    <input type="number" min="30" max="604800" class="field" v-model.number="taskDrafts[task.id].check_interval" />
-                  </label>
-                  <label class="task-field">
-                    <span>渠道</span>
-                    <input type="text" class="field" maxlength="50" list="channel-options-me" v-model="taskDrafts[task.id].channel" />
-                  </label>
-                  <label class="switch-row">
-                    <input type="checkbox" class="switch" v-model="taskDrafts[task.id].atypical" />
-                    非常规件（如大件电器）：作为预测参考时降低权重
-                  </label>
-                  <details class="disclosure flush">
-                    <summary>发货前节点<span class="summary-meta">[[ milestoneCount(taskDrafts[task.id]) ]]/3</span></summary>
-                    <div class="disclosure-body">
-                      <div class="task-fields">
-                        <label class="task-field" v-for="item in milestoneInputs" :key="item.stage">
-                          <span>[[ item.label ]]</span>
-                          <input type="text" class="field" inputmode="numeric" placeholder="YYYY-MM-DD HH:MM" v-model="taskDrafts[task.id].milestones[item.stage]" />
-                        </label>
-                      </div>
-                      <p class="hint">可以只填日期；时间按日本时间。留空保存即清除。</p>
-                    </div>
-                  </details>
-                </div>
-                <p class="task-meta">最近结果 [[ task.last_error || task.last_status_display || task.last_tracking_info || '暂无记录' ]]</p>
-                <p class="task-meta">最近检查 [[ task.last_checked_at || '-' ]] · 最近推送 [[ task.last_push_at || '-' ]]</p>
-                <task-forecast :task-id="task.id" :stamp="task.updated_at"></task-forecast>
-                <task-timeline :task-id="task.id" :number="task.tracking_number"></task-timeline>
-                <div class="actions">
-                  <button type="button" class="btn btn-small" @click="saveTask(task, 'me')">保存</button>
-                  <button type="button" class="btn-ghost btn-small" @click="toggleTask(task, 'me')">[[ task.enabled ? '停用' : '启用' ]]</button>
-                  <button type="button" class="btn-ghost btn-small" @click="archiveTask(task, 'me')">归档</button>
-                  <button type="button" class="btn-ghost btn-small danger" @click="deleteTask(task, 'me')">删除</button>
-                </div>
-              </div>
-            </div>
-            <div v-else class="empty">你还没有追踪任务，用下面的表单添加第一个单号。</div>
-
-            <div class="inner task-create">
-              <h3 class="section-name">添加任务</h3>
-              <div class="task-fields">
-                <label class="task-field">
-                  <span>日本邮政单号</span>
-                  <input type="text" class="field" v-model="myTaskForm.tracking_number" />
-                </label>
-                <label class="task-field">
-                  <span>备注名</span>
-                  <input type="text" class="field" v-model="myTaskForm.label" placeholder="例如：键盘" />
-                </label>
-                <label class="task-field">
-                  <span>查询间隔（秒）</span>
-                  <input type="number" min="30" max="604800" class="field" v-model.number="myTaskForm.check_interval" />
-                </label>
-                <label class="task-field">
-                  <span>渠道</span>
-                  <input type="text" class="field" maxlength="50" list="channel-options-me" v-model="myTaskForm.channel" />
-                </label>
-                <details class="disclosure flush">
-                  <summary>发货前节点<span class="summary-meta">[[ milestoneCount(myTaskForm) ]]/3</span></summary>
-                  <div class="disclosure-body">
-                    <div class="task-fields">
-                      <label class="task-field" v-for="item in milestoneInputs" :key="item.stage">
-                        <span>[[ item.label ]]</span>
-                        <input type="text" class="field" inputmode="numeric" placeholder="YYYY-MM-DD HH:MM" v-model="myTaskForm.milestones[item.stage]" />
-                      </label>
-                    </div>
-                    <p class="hint">可以只填日期；时间按日本时间。留空保存即清除。</p>
-                  </div>
-                </details>
-              </div>
-              <label class="switch-row">
-                <input type="checkbox" class="switch" v-model="myTaskForm.enabled" />
-                添加后立即启用
-              </label>
-              <div class="actions row">
-                <button type="button" class="btn btn-small" @click="createTask('me')" :disabled="!myTaskForm.tracking_number.trim()" :title="!myTaskForm.tracking_number.trim() ? '请先填写日本邮政单号' : ''">添加任务</button>
-                <span class="tiny muted" v-if="!myTaskForm.tracking_number.trim()">填入单号后可添加</span>
-              </div>
-              <p class="hint">再次添加同一个单号会复活它的归档记录，不会新建重复任务。</p>
-            </div>
-
-            <div class="actions">
-              <button type="button" class="btn-ghost btn-small" @click="openBackfill('me')">补录历史单号</button>
-              <span class="hint">补几单过去的单号和渠道，到达预测就有历史可参考。</span>
-            </div>
-
-            <template v-if="meArchivedTasks.length">
-              <div class="divider"></div>
-              <h3 class="section-name">归档任务</h3>
-              <div class="task-list stagger">
-                <div v-for="task in meArchivedTasks" :key="task.id" class="task-item inner">
-                  <div class="task-item-head">
-                    <strong>[[ task.tracking_number ]]</strong>
-                    <span v-if="task.channel" class="pill cyan task-channel">[[ task.channel ]]</span>
-                    <span class="pill">已归档</span>
-                  </div>
-                  <p class="task-meta">
-                    首次登记 [[ task.first_seen_at ]] · 登记次数 [[ task.seen_count ]][[ task.label ? ' · 备注 ' + task.label : '' ]]
-                  </p>
-                  <task-forecast :task-id="task.id" :stamp="task.updated_at"></task-forecast>
-                <task-timeline :task-id="task.id" :number="task.tracking_number"></task-timeline>
-                  <div class="actions">
-                    <button type="button" class="btn btn-small" @click="restoreTask(task, 'me')">恢复</button>
-                    <button type="button" class="btn-ghost btn-small danger" @click="deleteTask(task, 'me')">删除</button>
-                  </div>
-                </div>
-              </div>
-            </template>
-          </div>
-        </div>
-
-        <div class="section">
-          <div class="panel glass rise">
-            <div class="panel-head">
-              <h2 class="panel-title">我的资料</h2>
-              <span class="pill">[[ meDeviceCount ]] 个 Bark 设备</span>
-            </div>
-
-            <div class="form-grid two-col">
-              <div>
-                <label for="meDisplayName">显示名称</label>
-                <input id="meDisplayName" type="text" class="field" v-model="meForm.display_name" />
-              </div>
-              <div>
-                <label for="meUsername">登录用户名</label>
-                <input id="meUsername" type="text" class="field" :value="viewer.username" disabled />
-                <p class="hint">用户名与角色不在这里改，避免管理员把自己关在门外。</p>
-              </div>
-              <div class="full">
-                <label for="meNote">备注</label>
-                <input id="meNote" type="text" class="field" v-model="meForm.note" />
-              </div>
-              <div class="full switch-group">
-                <label class="switch-row">
-                  <input type="checkbox" class="switch" v-model="meForm.bark_url_enabled" />
-                  推送附带追踪链接
-                </label>
-              </div>
-              <div class="full">
-                <label for="meBarkKeys">Bark Keys（支持多端，一行一个）</label>
-                <textarea id="meBarkKeys" class="field mono" v-model="meForm.bark_keys" rows="5" placeholder="可以粘贴完整推送 URL，也可以只填 key"></textarea>
-                <p class="hint">
-                  支持直接粘贴完整推送 URL，后端会自动提取 key。手机 Bark 的服务器地址填
-                  <code>[[ barkHelp.public_url || barkHelp.internal_url || '未配置' ]]</code>。
-                </p>
-              </div>
-              <div class="full">
-                <label for="meBarkQueryParams">Bark 参数</label>
-                <input id="meBarkQueryParams" type="text" class="field" v-model="meForm.bark_query_params" />
-              </div>
-              <div class="full">
-                <div class="inner sub-card">
-                  <h3 class="section-name">Bark 预览</h3>
-                  <p class="hint lead">测试直接使用当前表单里的 Keys、参数和链接开关，不需要先保存。</p>
-                  <div class="form-grid two-col">
-                    <div class="full">
-                      <label for="meTestTitle">测试标题</label>
-                      <input id="meTestTitle" type="text" class="field" v-model="meForm.test_title" />
-                    </div>
-                    <div class="full">
-                      <label for="meTestBody">测试内容</label>
-                      <textarea id="meTestBody" class="field mono" v-model="meForm.test_body" rows="3"></textarea>
-                    </div>
-                    <div class="full">
-                      <label for="meTestTaskId">推送链接取自哪个任务</label>
-                      <select id="meTestTaskId" v-model="meForm.task_id" class="field">
-                        <option value="">不附带追踪链接</option>
-                        <option v-for="task in meTasks" :key="task.id" :value="task.id">
-                          [[ task.tracking_number ]][[ task.label ? ' · ' + task.label : '' ]]
-                        </option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              {%- if not sso_on %}
-              <div class="full">
-                <label for="meNewPassword">新密码（留空表示不修改）</label>
-                <input id="meNewPassword" type="password" class="field" v-model="meForm.new_password" autocomplete="new-password" />
-              </div>
-              {%- endif %}
-            </div>
-
-            <div class="actions">
-              <button type="button" class="btn" @click="saveMe">保存</button>
-              <button type="button" class="btn-ghost" @click="sendMeTestPush" :disabled="sendingMeTestPush">发送 Bark 测试</button>
-            </div>
+            <div class="empty">从左边的列表选一个账号，这里会出现它的资料与 Bark 设置。单号在首页按账号分组；管理员自己的资料在「设置」里改。</div>
           </div>
         </div>
       </section>

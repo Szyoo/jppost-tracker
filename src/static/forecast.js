@@ -188,7 +188,7 @@ const readJson = async (response, fallback) => {
     return result;
 };
 
-// 返回 { forecast, history, task, links, track17 }：history 是合并履历节点（日本时间，按时间倒序，带 segment / sources）；
+// 返回 { forecast, summary, history, task, links, track17 }：summary 是任务卡片的摘要行（「当前步骤 · 第 N 天 · 预计…签收」，与推送正文同一写法）；history 是合并履历节点（日本时间，按时间倒序，带 segment / sources）；
 // task 是 { archived, atypical }；links 是 { jp_post, track17 }（track17 只有 CN 单号才有）；
 // track17 是登记状态 { status, registered_at, last_synced_at, error }，只在 CN 单号且配了密钥时有
 export const fetchForecast = async (taskId) => {
@@ -199,6 +199,7 @@ export const fetchForecast = async (taskId) => {
     const result = await readJson(response, '加载预测失败');
     return {
         forecast: result.forecast,
+        summary: result.summary,
         history: result.history || [],
         task: result.task || {},
         links: result.links || {},
@@ -418,14 +419,17 @@ const loadIcons = async () => {
     }
 };
 
-// onUpdated(result)：「设为该渠道」成功后回调（管理后台用 result.user_state 刷新列表；门户页整页刷新）
-export const renderForecast = async (container, taskId, { onUpdated = null } = {}) => {
+// onUpdated(result)：「设为该渠道」成功后回调（管理后台用 result.user_state 刷新列表；门户页整页刷新）；
+// onLoaded({ summary })：拉到后回调，任务卡片用它填摘要行；onFailed(error)：拉取或渲染失败（失败原因已显示在区块里）
+export const renderForecast = async (container, taskId, { onUpdated = null, onLoaded = null, onFailed = null } = {}) => {
     container.replaceChildren(el('p', 'hint', '预测加载中…'));
     try {
-        const [{ forecast, history, task, links, track17 }] = await Promise.all([fetchForecast(taskId), loadIcons()]);
+        const [{ forecast, summary, history, task, links, track17 }] = await Promise.all([fetchForecast(taskId), loadIcons()]);
         container.replaceChildren(buildForecastNode(forecast, { history, task, links, track17, taskId, onUpdated }));
+        onLoaded?.({ summary });
     } catch (error) {
         container.replaceChildren(el('p', 'hint', error.message || '加载预测失败。'));
+        onFailed?.(error);
     }
 };
 
@@ -522,9 +526,34 @@ export const openBackfillDialog = async ({ accountId = null, onDone = null } = {
 
 // --- 门户页（服务端渲染）自动挂载 ---
 
+// 预测区块展开着就立即拉；收起的（已归档的卡片）第一次展开时才拉。拉到后把摘要行填进同一张卡片的 [data-task-summary]
 document.querySelectorAll('[data-task-forecast]').forEach((node) => {
-    // 门户页是服务端渲染的，设了渠道就整页刷新，让任务卡上的渠道也更新
-    renderForecast(node, node.dataset.taskForecast, { onUpdated: () => window.location.reload() });
+    const taskId = node.dataset.taskForecast;
+    const summary = document.querySelector(`[data-task-summary="${taskId}"]`);
+    const load = () => renderForecast(node, taskId, {
+        // 门户页是服务端渲染的，设了渠道就整页刷新，让任务卡上的渠道也更新
+        onUpdated: () => window.location.reload(),
+        onLoaded: (result) => {
+            if (!summary) return;
+            summary.querySelector('strong').textContent = result.summary;
+            summary.hidden = false;
+        },
+        // 失败原因已显示在预测区块里，摘要行直接收起
+        onFailed: () => {
+            if (summary) summary.hidden = true;
+        },
+    });
+    const box = node.closest('details');
+    if (!box || box.open) {
+        load();
+        return;
+    }
+    const onToggle = () => {
+        if (!box.open) return;
+        box.removeEventListener('toggle', onToggle);
+        load();
+    };
+    box.addEventListener('toggle', onToggle);
 });
 
 document.querySelectorAll('[data-backfill-open]').forEach((button) => {

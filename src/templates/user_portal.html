@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>我的快递与 Bark 设置</title>
+    <title>我的快递</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="/favicon.ico" sizes="any" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
@@ -12,11 +12,11 @@
     <link rel="stylesheet" href="/static/style.css" />
   </head>
   <body>
-    {#- 任务时间线：先渲染最近几条，更多的由 /static/timeline.js 调 /api/tasks/<id>/events 追加（行结构与 timeline.js 的 buildRow 一致） #}
+    {#- 推送与查询记录（任务时间线）：先渲染最近几条，更多的由 /static/timeline.js 调 /api/tasks/<id>/events 追加（行结构与 timeline.js 的 buildRow 一致） #}
     {%- macro task_timeline(task) %}
     {%- set page = task_events[task.id] %}
     <details class="disclosure flush task-timeline" data-task-timeline="{{ task.id }}" data-number="{{ task.tracking_number }}"{% if page.has_more %} data-next-before="{{ page.events[-1].id }}"{% endif %}>
-      <summary>时间线</summary>
+      <summary>推送与查询记录</summary>
       <div class="disclosure-body">
       {%- if page.events %}
       <ol class="timeline">
@@ -46,41 +46,135 @@
       </div>
     </details>
     {%- endmacro %}
-    {#- 到达预测：内容由 /static/forecast.js 调 /api/tasks/<id>/forecast 渲染 #}
-    {%- macro task_forecast(task) %}
-    <details class="disclosure flush task-forecast" open>
-      <summary>到达预测</summary>
-      <div class="disclosure-body" data-task-forecast="{{ task.id }}"></div>
-    </details>
-    {%- endmacro %}
-    {#- 渠道 + 发货前节点（下单 / 打包 / 出库）输入；节点可只填日期，留空保存即清除 #}
-    {%- macro forecast_fields(task) %}
-    {%- set ms = task.milestones if task else {} %}
+    {#- 发货前节点（下单 / 打包 / 出库）输入；节点可只填日期，留空保存即清除 #}
+    {%- macro milestone_fields(ms) %}
+    {%- for stage, label in [('ordered', '下单'), ('packed', '打包'), ('handed_over', '出库')] %}
     <label class="task-field">
-      <span>渠道</span>
-      <input name="channel" type="text" class="field" maxlength="50" list="channel-options" value="{{ task.channel if task else '' }}" placeholder="例如：某渠道" />
+      <span>{{ label }}</span>
+      <input name="ms_{{ stage }}" type="text" class="field" inputmode="numeric" placeholder="YYYY-MM-DD HH:MM" value="{{ ms[stage].at if stage in ms else '' }}" />
     </label>
-    <details class="disclosure flush"{% if ms %} open{% endif %}>
-      <summary>发货前节点<span class="summary-meta">{{ ms | length }}/3</span></summary>
-      <div class="disclosure-body">
-        <div class="task-fields">
-          {%- for stage, label in [('ordered', '下单'), ('packed', '打包'), ('handed_over', '出库')] %}
-          <label class="task-field">
-            <span>{{ label }}</span>
-            <input name="ms_{{ stage }}" type="text" class="field" inputmode="numeric" placeholder="YYYY-MM-DD HH:MM" value="{{ ms[stage].at if stage in ms else '' }}" />
-          </label>
-          {%- endfor %}
+    {%- endfor %}
+    {%- endmacro %}
+    {#- 任务卡片：在途与已归档共用。头部（备注为主标题、单号、渠道与状态胶囊）→ 摘要行（forecast.js 拉到预测后填，与推送正文同一写法）
+        → 到达预测（在途默认展开，归档的展开时才拉）→ 推送与查询记录 → 编辑（就地展开）→ 操作 #}
+    {%- macro task_card(task) %}
+    <article class="task-item inner" id="task-{{ task.id }}">
+      <div class="task-item-head">
+        <div class="task-title">
+          <strong>{{ task.label or task.tracking_number }}</strong>
+          {%- if task.label %}
+          <span class="task-meta num">{{ task.tracking_number }}</span>
+          {%- endif %}
         </div>
-        <p class="hint">可以只填日期；时间按日本时间。用于预测「从下单算第几天」和发货前的耗时。</p>
+        <span class="row wrap u-gap-2">
+          {%- if task.channel %}
+          <span class="pill cyan">{{ task.channel }}</span>
+          {%- endif %}
+          {%- if task.archived %}
+          <span class="pill">已归档</span>
+          {%- elif not task.enabled %}
+          <span class="pill">已停用</span>
+          {%- elif task.last_error %}
+          <span class="pill err">轮询异常</span>
+          {%- else %}
+          <span class="pill ok">追踪中</span>
+          {%- endif %}
+        </span>
       </div>
-    </details>
-    {%- if task %}
-    <input type="hidden" name="atypical_field" value="1" />
-    <label class="switch-row">
-      <input name="atypical" type="checkbox" class="switch" {% if task.atypical %}checked{% endif %} />
-      非常规件（如大件电器）：作为预测参考时降低权重
-    </label>
-    {%- endif %}
+      <p class="callout info" data-task-summary="{{ task.id }}"{% if task.archived %} hidden{% endif %}><strong>摘要加载中…</strong></p>
+      {%- if task.archived %}
+      <p class="task-meta">首次登记 {{ task.first_seen_at }} · 登记次数 {{ task.seen_count }}</p>
+      {%- else %}
+      {%- if task.last_error %}
+      <p class="err-text task-meta">查询出错：{{ task.last_error }}</p>
+      {%- endif %}
+      <p class="task-meta">最近结果 {{ task.last_status_display or task.last_tracking_info or '暂无记录' }}</p>
+      <p class="task-meta">最近检查 {{ task.last_checked_at or '-' }} · 最近推送 {{ task.last_push_at or '-' }} · 间隔 {{ task.check_interval }}s</p>
+      {%- endif %}
+      {#- 到达预测：内容由 /static/forecast.js 调 /api/tasks/<id>/forecast 渲染 #}
+      <details class="disclosure flush task-forecast"{% if not task.archived %} open{% endif %}>
+        <summary>到达预测</summary>
+        <div class="disclosure-body" data-task-forecast="{{ task.id }}"></div>
+      </details>
+      {{ task_timeline(task) }}
+      {%- if not task.archived %}
+      {%- set ms = task.milestones %}
+      <details class="disclosure flush">
+        <summary>编辑</summary>
+        <div class="disclosure-body">
+          <form method="post" action="/me/tasks/{{ task.id }}/update">
+            <div class="task-fields">
+              <label class="task-field">
+                <span>日本邮政单号</span>
+                <input name="tracking_number" type="text" class="field" value="{{ task.tracking_number }}" />
+              </label>
+              <label class="task-field">
+                <span>备注名</span>
+                <input name="label" type="text" class="field" value="{{ task.label }}" />
+              </label>
+              <label class="task-field">
+                <span>查询间隔（秒）</span>
+                <input name="check_interval" type="number" min="30" max="604800" class="field" value="{{ task.check_interval }}" />
+              </label>
+              <label class="task-field">
+                <span>渠道</span>
+                <input name="channel" type="text" class="field" maxlength="50" list="channel-options" value="{{ task.channel }}" />
+              </label>
+              <input type="hidden" name="atypical_field" value="1" />
+              <label class="switch-row">
+                <input name="atypical" type="checkbox" class="switch" {% if task.atypical %}checked{% endif %} />
+                非常规件（如大件电器）：作为预测参考时降低权重
+              </label>
+              <details class="disclosure flush"{% if ms %} open{% endif %}>
+                <summary>发货前节点<span class="summary-meta">{{ ms | length }}/3</span></summary>
+                <div class="disclosure-body">
+                  <div class="task-fields">
+                    {{ milestone_fields(ms) }}
+                  </div>
+                  <p class="hint">可以只填日期；时间按日本时间。用于预测「从下单算第几天」和发货前的耗时。</p>
+                </div>
+              </details>
+            </div>
+            <label class="switch-row u-mt-3">
+              <input name="enabled" type="checkbox" class="switch" {% if task.enabled %}checked{% endif %} />
+              启用追踪
+            </label>
+            <div class="actions">
+              <button type="submit" class="btn btn-small">保存</button>
+            </div>
+          </form>
+        </div>
+      </details>
+      {%- endif %}
+      <div class="actions">
+        {%- if task.archived %}
+        <form method="post" action="/me/tasks">
+          <input type="hidden" name="tracking_number" value="{{ task.tracking_number }}" />
+          <input type="hidden" name="label" value="{{ task.label }}" />
+          <input type="hidden" name="check_interval" value="{{ task.check_interval }}" />
+          <input type="hidden" name="enabled" value="1" />
+          <button type="submit" class="btn btn-small">取消归档</button>
+        </form>
+        {%- else %}
+        {#- 停用 / 启用：只带单号、备注、间隔与启用位，不带渠道、节点与非常规件，那些保持原样 #}
+        <form method="post" action="/me/tasks/{{ task.id }}/update">
+          <input type="hidden" name="tracking_number" value="{{ task.tracking_number }}" />
+          <input type="hidden" name="label" value="{{ task.label }}" />
+          <input type="hidden" name="check_interval" value="{{ task.check_interval }}" />
+          {%- if not task.enabled %}
+          <input type="hidden" name="enabled" value="1" />
+          {%- endif %}
+          <button type="submit" class="btn-ghost btn-small">{{ '停用' if task.enabled else '启用' }}</button>
+        </form>
+        <form method="post" action="/me/tasks/{{ task.id }}/archive">
+          <button type="submit" class="btn-ghost btn-small">归档</button>
+        </form>
+        {%- endif %}
+        <form method="post" action="/me/tasks/{{ task.id }}/delete">
+          <button type="submit" class="btn-ghost btn-small danger">删除</button>
+        </form>
+      </div>
+    </article>
     {%- endmacro %}
     <datalist id="channel-options">
       {%- for channel in account.channels %}
@@ -94,7 +188,7 @@
       <header class="app-header page-header rise">
         <div class="app-brand">
           <span class="app-sub">My Delivery Space</span>
-          <h1 class="app-title">我的快递与 Bark 设置</h1>
+          <h1 class="app-title">我的快递</h1>
         </div>
         {%- if not sso_on %}
         <!-- SSO 下身份与登出由右上角账户菜单提供，这里只在本地登录时显示 -->
@@ -106,152 +200,85 @@
         {%- endif %}
       </header>
 
-      <h2 class="section-name">我的概览</h2>
-      <div class="stat-grid stagger">
-        <div class="stat-card glass lift spot">
-          <div class="stat-label">启用中任务</div>
-          <div class="stat-value num">{{ account.active_task_count or 0 }}</div>
+      <!-- 添加单号：单号 + 备注 + 渠道一行，其余收在「更多」里 -->
+      <form method="post" action="/me/tasks" class="panel glass rise">
+        <div class="panel-head">
+          <h2 class="panel-title">添加单号</h2>
+          <a class="link" href="#settings">设置</a>
         </div>
-        <div class="stat-card glass lift spot">
-          <div class="stat-label">全部任务（含归档）</div>
-          <div class="stat-value num">{{ account.task_count or 0 }}</div>
+        <div class="field-row">
+          <input name="tracking_number" type="text" class="field" placeholder="单号" aria-label="单号" required />
+          <input name="label" type="text" class="field" placeholder="备注（如：键盘）" aria-label="备注" />
+          <input name="channel" type="text" class="field" maxlength="50" list="channel-options" placeholder="渠道" aria-label="渠道" />
+          <button type="submit" class="btn">添加</button>
         </div>
-        <div class="stat-card glass lift spot">
-          <div class="stat-label">归档任务</div>
-          <div class="stat-value num">{{ account.archived_tasks | length }}</div>
-        </div>
-        <div class="stat-card glass lift spot">
-          <div class="stat-label">Bark 设备</div>
-          <div class="stat-value num">{{ account.bark_device_count or 0 }}</div>
-        </div>
-      </div>
-
-      <div class="section">
-        <div class="panel glass rise">
-          <div class="panel-head">
-            <h2 class="panel-title">我的追踪任务</h2>
-            <span class="pill {{ 'ok' if account.active_task_count else '' }}">
-              {{ '启用中 %d 个' % account.active_task_count if account.active_task_count else '暂无启用任务' }}
-            </span>
-          </div>
-
-          {% if account.tasks %}
-          <div class="task-list stagger">
-            {% for task in account.tasks %}
-            <form method="post" action="/me/tasks/{{ task.id }}/update" class="task-item inner">
-              <div class="task-item-head">
-                <strong>{{ task.tracking_number }}</strong>
-                {%- if task.channel %}
-                <span class="pill cyan task-channel">{{ task.channel }}</span>
-                {%- endif %}
-                <span class="pill {% if not task.enabled %}{% elif task.last_error %}err{% else %}ok{% endif %}">
-                  {% if not task.enabled %}已停用{% elif task.last_error %}轮询异常{% else %}追踪中{% endif %}
-                </span>
-              </div>
-              <div class="task-fields">
-                <label class="task-field">
-                  <span>日本邮政单号</span>
-                  <input name="tracking_number" type="text" class="field" value="{{ task.tracking_number }}" />
-                </label>
-                <label class="task-field">
-                  <span>备注名</span>
-                  <input name="label" type="text" class="field" value="{{ task.label }}" />
-                </label>
-                <label class="task-field">
-                  <span>查询间隔（秒）</span>
-                  <input name="check_interval" type="number" min="30" max="604800" class="field" value="{{ task.check_interval }}" />
-                </label>
-                {{ forecast_fields(task) }}
-              </div>
-              <label class="switch-row">
-                <input name="enabled" type="checkbox" class="switch" {% if task.enabled %}checked{% endif %} />
-                启用追踪
-              </label>
-              <p class="task-meta">最近结果 {{ task.last_error or task.last_status_display or task.last_tracking_info or '暂无记录' }}</p>
-              <p class="task-meta">最近检查 {{ task.last_checked_at or '-' }} · 最近推送 {{ task.last_push_at or '-' }}</p>
-              {{ task_forecast(task) }}
-              {{ task_timeline(task) }}
-              <div class="actions">
-                <button type="submit" class="btn btn-small">保存</button>
-                <button type="submit" class="btn-ghost btn-small" formaction="/me/tasks/{{ task.id }}/archive">归档</button>
-                <button type="submit" class="btn-ghost btn-small danger" formaction="/me/tasks/{{ task.id }}/delete">删除</button>
-              </div>
-            </form>
-            {% endfor %}
-          </div>
-          {% else %}
-          <div class="empty">你还没有追踪任务，用下面的表单添加第一个单号。</div>
-          {% endif %}
-
-          <form method="post" action="/me/tasks" class="inner task-create">
-            <h3 class="section-name">添加任务</h3>
+        <details class="disclosure flush u-mt-2">
+          <summary>更多</summary>
+          <div class="disclosure-body">
             <div class="task-fields">
-              <label class="task-field">
-                <span>日本邮政单号</span>
-                <input name="tracking_number" type="text" class="field" />
-              </label>
-              <label class="task-field">
-                <span>备注名</span>
-                <input name="label" type="text" class="field" placeholder="例如：键盘" />
-              </label>
               <label class="task-field">
                 <span>查询间隔（秒）</span>
                 <input name="check_interval" type="number" min="30" max="604800" class="field" value="300" />
               </label>
-              {{ forecast_fields(None) }}
+              {{ milestone_fields({}) }}
             </div>
-            <label class="switch-row">
+            <p class="hint">下单 / 打包 / 出库是发货前节点：可以只填日期，时间按日本时间，用于预测「从下单算第几天」。</p>
+            <label class="switch-row u-mt-3">
               <input name="enabled" type="checkbox" class="switch" checked />
               添加后立即启用
             </label>
-            <div class="actions">
-              <button type="submit" class="btn btn-small">添加任务</button>
-            </div>
             <p class="hint">再次添加同一个单号会复活它的归档记录，不会新建重复任务。</p>
-          </form>
-
-          <div class="actions">
-            <button type="button" class="btn-ghost btn-small" data-backfill-open>补录历史单号</button>
-            <span class="hint">补几单过去的单号和渠道，到达预测就有历史可参考。</span>
+            <div class="actions">
+              <button type="button" class="btn-ghost btn-small" data-backfill-open>补录历史单号</button>
+              <span class="hint">补几单过去的单号和渠道，到达预测就有历史可参考。</span>
+            </div>
           </div>
+        </details>
+      </form>
 
-          {% if account.archived_tasks %}
-          <div class="divider"></div>
-          <h3 class="section-name">归档任务</h3>
-          <div class="task-list stagger">
-            {% for task in account.archived_tasks %}
-            <form method="post" action="/me/tasks" class="task-item inner">
-              <div class="task-item-head">
-                <strong>{{ task.tracking_number }}</strong>
-                {%- if task.channel %}
-                <span class="pill cyan task-channel">{{ task.channel }}</span>
-                {%- endif %}
-                <span class="pill">已归档</span>
-              </div>
-              <p class="task-meta">
-                首次登记 {{ task.first_seen_at }} · 登记次数 {{ task.seen_count }}{% if task.label %} · 备注 {{ task.label }}{% endif %}
-              </p>
-              <input type="hidden" name="tracking_number" value="{{ task.tracking_number }}" />
-              <input type="hidden" name="label" value="{{ task.label }}" />
-              <input type="hidden" name="check_interval" value="{{ task.check_interval }}" />
-              <input type="hidden" name="enabled" value="1" />
-              {{ task_forecast(task) }}
-              {{ task_timeline(task) }}
-              <div class="actions">
-                <button type="submit" class="btn btn-small">恢复</button>
-                <button type="submit" class="btn-ghost btn-small danger" formaction="/me/tasks/{{ task.id }}/delete">删除</button>
-              </div>
-            </form>
-            {% endfor %}
-          </div>
-          {% endif %}
+      <div class="section panel glass rise">
+        <div class="panel-head">
+          <h2 class="panel-title">我的单号</h2>
+          <span class="pill">在途 {{ account.tasks | length }}</span>
         </div>
+        {%- if account.tasks %}
+        {#- 异常的排最前，其次正常追踪的，停用的在最后 #}
+        {%- set enabled_tasks = account.tasks | selectattr('enabled') | list %}
+        {%- set ordered = (enabled_tasks | selectattr('last_error') | list) + (enabled_tasks | rejectattr('last_error') | list) + (account.tasks | rejectattr('enabled') | list) %}
+        <div class="task-list stagger">
+          {%- for task in ordered %}
+          {{ task_card(task) }}
+          {%- endfor %}
+        </div>
+        {%- else %}
+        <div class="empty compact">还没有在途的单号，在上面填一个开始追踪。</div>
+        {%- endif %}
       </div>
 
-      <div class="section layout-main-side">
+      <div class="section panel glass rise">
+        <details class="disclosure flush">
+          <summary>已归档<span class="summary-meta">{{ account.archived_tasks | length }}</span></summary>
+          <div class="disclosure-body">
+            {%- if account.archived_tasks %}
+            <div class="task-list">
+              {%- for task in account.archived_tasks %}
+              {{ task_card(task) }}
+              {%- endfor %}
+            </div>
+            {%- else %}
+            <div class="empty compact">没有归档的单号。</div>
+            {%- endif %}
+          </div>
+        </details>
+      </div>
+
+      <!-- 设置：资料与 Bark 设备、Bark 设置手顺 -->
+      <div class="section" id="settings">
+      <h2 class="section-name">设置</h2>
+      <div class="layout-main-side">
         <div class="panel glass rise">
           <div class="panel-head">
-            <h2 class="panel-title">我的资料</h2>
+            <h2 class="panel-title">我的资料与 Bark 设备</h2>
             <span class="pill">{{ account.bark_device_count or 0 }} 个 Bark 设备</span>
           </div>
 
@@ -342,6 +369,7 @@
             </p>
           </div>
         </div>
+      </div>
       </div>
     </div>
     </div>

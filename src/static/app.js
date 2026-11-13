@@ -18,6 +18,36 @@ const escapeHtml = (text) => String(text ?? '').replace(/[&<>"']/g, (ch) => ({
 }[ch]));
 const logHtml = (text) => escapeHtml(text).replace(/\n/g, '<br>');
 
+// 发货前节点的三个输入框（key 与后端 forecast.PRE_STAGES 一致，写错了后端会 400）
+const MILESTONE_INPUTS = [
+    { stage: 'ordered', label: '下单' },
+    { stage: 'packed', label: '打包' },
+    { stage: 'handed_over', label: '出库' },
+];
+const buildMilestones = (milestones = {}) =>
+    Object.fromEntries(MILESTONE_INPUTS.map(({ stage }) => [stage, milestones[stage]?.at || '']));
+const milestoneCount = (form) => Object.values(form?.milestones || {}).filter((value) => String(value).trim()).length;
+
+const buildNewTaskForm = () => ({
+    tracking_number: '',
+    label: '',
+    check_interval: 300,
+    enabled: true,
+    channel: '',
+    milestones: buildMilestones(),
+});
+
+// 每条任务一份可编辑草稿；启用开关不进草稿，避免"改了单号顺手被一起保存"。
+// 节点原样回填，原样保存时后端不会把调用方写的节点改成手填
+const buildTaskDraft = (task = {}) => ({
+    tracking_number: task.tracking_number || '',
+    label: task.label || '',
+    check_interval: Number(task.check_interval || 300),
+    channel: task.channel || '',
+    atypical: Boolean(task.atypical),
+    milestones: buildMilestones(task.milestones || {}),
+});
+
 const app = createApp({
     setup() {
         const title = ref('快递追踪控制台');
@@ -76,7 +106,7 @@ const app = createApp({
 
         const envDirtyCount = computed(() => Object.keys(envChangedEntries.value).length);
 
-        // 17TRACK 卡片：切到系统设置页、或改了密钥后拉一次（额度由服务端缓存 5 分钟）
+        // 17TRACK 区块：切到设置页、或改了密钥后拉一次（额度由服务端缓存 5 分钟）
         const track17Card = ref(null);
         const extLinkIcon = ref('');
         const loadTrack17Card = async () => {
@@ -102,7 +132,7 @@ const app = createApp({
             return (Number(quota.quota_used || 0) / Number(quota.quota_total)) * 100;
         });
 
-        // 状态规则：切到系统设置页时拉一次；编辑后立即生效（来源记为手工）
+        // 状态规则：切到设置页时拉一次；编辑后立即生效（来源记为手工）
         const statusRules = ref([]);
         const statusRuleOptions = ref({ sources: {}, kinds: {}, stages: {} });
         const statusRuleDrafts = ref({});
@@ -219,47 +249,16 @@ const app = createApp({
             login_enabled: true,
         });
 
-        // 发货前节点的三个输入框（key 与后端 forecast.PRE_STAGES 一致，写错了后端会 400）
-        const milestoneInputs = [
-            { stage: 'ordered', label: '下单' },
-            { stage: 'packed', label: '打包' },
-            { stage: 'handed_over', label: '出库' },
-        ];
-        const buildMilestones = (milestones = {}) =>
-            Object.fromEntries(milestoneInputs.map(({ stage }) => [stage, milestones[stage]?.at || '']));
-        const milestoneCount = (form) => Object.values(form?.milestones || {}).filter((value) => String(value).trim()).length;
-
-        const buildNewTaskForm = () => ({
-            tracking_number: '',
-            label: '',
-            check_interval: 300,
-            enabled: true,
-            channel: '',
-            milestones: buildMilestones(),
-        });
-
-        // 每条任务一份可编辑草稿；启用开关不进草稿，避免"改了单号顺手被一起保存"。
-        // 节点原样回填，原样保存时后端不会把调用方写的节点改成手填
-        const buildTaskDraft = (task = {}) => ({
-            tracking_number: task.tracking_number || '',
-            label: task.label || '',
-            check_interval: Number(task.check_interval || 300),
-            channel: task.channel || '',
-            atypical: Boolean(task.atypical),
-            milestones: buildMilestones(task.milestones || {}),
-        });
-
         const users = ref(initialUserState.users || []);
         const taskTotals = ref({
             task_count: Number(initialUserState.task_count || 0),
             active_task_count: Number(initialUserState.active_task_count || 0),
         });
-        // 首页是只读仪表盘，不再默认选中账号——旧版默认选第一个非 admin 用户，
+        // 用户页不默认选中账号——旧版默认选第一个非 admin 用户，
         // 结果管理员一进来看到的"当前账号"是别人，表单改的也是别人的数据
         const selectedUserId = ref(null);
         const userForm = ref(buildUserForm({}));
         const newUserForm = ref(buildNewUserForm());
-        const newTaskForm = ref(buildNewTaskForm());
         const taskDrafts = ref({});
 
         // 管理员自己的账号：以账号列表里的那条为准（任务操作后它会被刷新），
@@ -271,7 +270,6 @@ const app = createApp({
                 (initialUserState.users || []).find((user) => user.id === initialViewerAccount.id) || initialViewerAccount
             )
         );
-        const myTaskForm = ref(buildNewTaskForm());
 
         const rebuildTaskDrafts = () => {
             const drafts = {};
@@ -305,11 +303,9 @@ const app = createApp({
         const activeTaskCount = computed(() => Number(taskTotals.value.active_task_count || 0));
         const totalTaskCount = computed(() => Number(taskTotals.value.task_count || 0));
         const loginUsersCount = computed(() => users.value.filter((user) => user.login_enabled).length);
-        const globalBarkDeviceCount = computed(() =>
-            users.value.reduce((sum, user) => sum + Number(user.bark_device_count || 0), 0)
-        );
 
-        const script = ref({ running: false, logs: [] });
+        // known：收到过一次脚本状态才知道它到底跑没跑，之前不显示「未运行」提示，免得一进页面闪一下
+        const script = ref({ running: false, known: false, logs: [] });
         const bark = ref({ running: false, logs: [] });
         const remoteBarkLogs = ref([]);
         const remoteBark = ref({
@@ -337,42 +333,6 @@ const app = createApp({
         const remoteBarkLogOutput = ref(null);
 
         const selectedUser = computed(() => users.value.find((user) => user.id === selectedUserId.value) || null);
-        const selectedUserTasks = computed(() => selectedUser.value?.tasks || []);
-        const selectedUserArchivedTasks = computed(() => selectedUser.value?.archived_tasks || []);
-        const selectedUserTaskCount = computed(() => Number(selectedUser.value?.task_count || 0));
-        const selectedUserActiveTaskCount = computed(() => Number(selectedUser.value?.active_task_count || 0));
-        const selectedUserErrorTaskCount = computed(() => countErrorTasks(selectedUserTasks.value));
-
-        // 三处"追踪状态"徽章（首页 / 选中账号 / 我的设置）共用的判定，顺序与 taskState 一致：
-        // 异常最优先，脚本没跑只是"还没开始"。各处只提供自己的数量与文案。
-        const summarizeTracking = ({ total, active, errors, emptyLabel, okLabel }) => {
-            if (!total) {
-                return { tone: '', label: emptyLabel };
-            }
-            if (errors) {
-                return { tone: 'err', label: `${errors} 个任务异常` };
-            }
-            if (!active) {
-                return { tone: '', label: '任务全部停用' };
-            }
-            if (!script.value.running) {
-                return { tone: 'warn', label: '追踪脚本未运行' };
-            }
-            return { tone: 'ok', label: `${okLabel} ${active} 个` };
-        };
-        const countErrorTasks = (tasks) => tasks.filter((task) => taskState(task).key === 'error').length;
-
-        const selectedUserTrackingState = computed(() =>
-            selectedUser.value
-                ? summarizeTracking({
-                      total: selectedUserTaskCount.value,
-                      active: selectedUserActiveTaskCount.value,
-                      errors: selectedUserErrorTaskCount.value,
-                      emptyLabel: '待添加任务',
-                      okLabel: '追踪中',
-                  })
-                : { tone: '', label: '未选择账号' }
-        );
 
         // 任务状态的唯一判据：weight 兼作首页排序权重，越小越该被先看到
         const taskState = (task) => {
@@ -395,100 +355,56 @@ const app = createApp({
             }
             return { key: 'ok', tone: 'ok', label: '追踪中', weight: 3 };
         };
+        const countErrorTasks = (tasks) => tasks.filter((task) => taskState(task).key === 'error').length;
 
-        // 首页总览行的状态色条（包的 tr.ok/.warn/.err/.idle），与 taskState 的 key 一一对应；未列出的 key 取不到值，会在渲染时暴露
-        const OVERVIEW_ROW_TONE = { error: 'err', idle: 'warn', fresh: 'warn', ok: 'ok', archived: 'idle', paused: 'idle' };
-        const overviewRowTone = (task) => OVERVIEW_ROW_TONE[taskState(task).key];
+        // 在途卡片的顺序：异常最前；同状态内按最近检查时间倒序，久没动静的沉到后面
+        const sortActive = (tasks) =>
+            [...tasks].sort((left, right) => {
+                const byState = taskState(left).weight - taskState(right).weight;
+                if (byState !== 0) return byState;
+                return String(right.last_checked_at || '').localeCompare(String(left.last_checked_at || ''));
+            });
 
-        const taskTone = (task) => taskState(task).tone;
-        const taskStateLabel = (task) => taskState(task).label;
-
-        // ---------- 首页仪表盘：跨账号的全局任务流 ----------
-
-        // 拉平成一维：首页要回答的是"现在所有包裹什么状态"，不是"每个账号有什么"
-        const globalTasks = computed(() =>
-            users.value.flatMap((user) =>
-                (user.tasks || []).concat(user.archived_tasks || []).map((task) => ({
-                    ...task,
-                    account_display_name: user.display_name,
-                    account_username: user.username,
-                }))
-            )
-        );
-
-        const globalErrorTaskCount = computed(
-            () => globalTasks.value.filter((task) => taskState(task).key === 'error').length
-        );
-
-        const globalTrackingState = computed(() =>
-            summarizeTracking({
-                total: totalTaskCount.value,
-                active: activeTaskCount.value,
-                errors: globalErrorTaskCount.value,
-                emptyLabel: '还没有任务',
-                okLabel: '正常追踪',
-            })
-        );
-
-        const overviewFilter = ref('all');
-
-        const matchesOverviewFilter = (task, key) => {
-            const stateKey = taskState(task).key;
-            if (key === 'archived') return stateKey === 'archived';
-            if (key === 'alert') return stateKey === 'error';
-            if (key === 'paused') return stateKey === 'paused';
-            if (key === 'tracking') return ['ok', 'idle', 'fresh'].includes(stateKey);
-            return stateKey !== 'archived';
-        };
-
-        const overviewFilters = computed(() =>
-            [
-                { key: 'all', label: '全部' },
-                { key: 'alert', label: '异常' },
-                // 叫"正常"而不是"启用中"：异常任务其实也在启用状态、也在轮询，
-                // 若这一项叫"启用中"，全部报错时会显示"启用中 0"，看着像没任务在跑
-                { key: 'tracking', label: '正常' },
-                { key: 'paused', label: '已停用' },
-                { key: 'archived', label: '已归档' },
-            ].map((item) => ({
-                ...item,
-                count: globalTasks.value.filter((task) => matchesOverviewFilter(task, item.key)).length,
-            }))
-        );
-
-        // 异常排最前；同状态内按最近检查时间倒序，久没动静的沉到后面
-        const overviewTasks = computed(() =>
-            globalTasks.value
-                .filter((task) => matchesOverviewFilter(task, overviewFilter.value))
-                .sort((left, right) => {
-                    const byState = taskState(left).weight - taskState(right).weight;
-                    if (byState !== 0) return byState;
-                    return String(right.last_checked_at || '').localeCompare(String(left.last_checked_at || ''));
-                })
-        );
-
-        // ---------- 我的设置：管理员自己那份 ----------
+        // ---------- 首页：自己的单号在上，其他账号按账号分组 ----------
 
         const meAccount = computed(
             () => users.value.find((user) => user.id === viewerAccountId.value) || viewer.value?.account || null
         );
         const meTasks = computed(() => meAccount.value?.tasks || []);
-        const meArchivedTasks = computed(() => meAccount.value?.archived_tasks || []);
-        const meTaskCount = computed(() => Number(meAccount.value?.task_count || 0));
-        const meActiveTaskCount = computed(() => Number(meAccount.value?.active_task_count || 0));
         const meErrorTaskCount = computed(() => countErrorTasks(meTasks.value));
         // 设备数跟着输入框实时变，比保存后的账号字段更贴合"我现在填了几个"
         const meDeviceCount = computed(() => countBarkKeys(meForm.value.bark_keys));
 
-        const meTrackingState = computed(() =>
-            summarizeTracking({
-                total: meTaskCount.value,
-                active: meActiveTaskCount.value,
-                errors: meErrorTaskCount.value,
-                emptyLabel: '待添加任务',
-                okLabel: '追踪中',
-            })
+        // 账号列表的顺序（id 升序）就是分组顺序，不随状态跳动，方便从用户页跳过来找
+        const otherGroups = computed(() =>
+            users.value
+                .filter((user) => user.id !== viewerAccountId.value)
+                .map((user) => ({
+                    user,
+                    tasks: sortActive(user.tasks || []),
+                    errors: countErrorTasks(user.tasks || []),
+                }))
         );
+
+        // 已归档：自己的在前，其他账号的跟在后面（卡片上标归属账号）
+        const archivedTasks = computed(() => {
+            const mine = meAccount.value?.archived_tasks || [];
+            const others = users.value
+                .filter((user) => user.id !== viewerAccountId.value)
+                .flatMap((user) => user.archived_tasks || []);
+            return mine.concat(others);
+        });
+        const archivedOpen = ref(false);
+        const ownerName = (task) => {
+            const owner = users.value.find((user) => user.id === task.account_id);
+            return owner ? owner.display_name || owner.username : '';
+        };
+
+        // 其他账号分组里的「添加单号」表单，按账号各自展开
+        const groupAddOpen = ref({});
+        const toggleGroupAdd = (accountId) => {
+            groupAddOpen.value = { ...groupAddOpen.value, [accountId]: !groupAddOpen.value[accountId] };
+        };
 
         // 任务操作后不重建账号表单，否则会把正在编辑的账号字段冲掉
         const syncUserState = (state, { keepUserForm = false } = {}) => {
@@ -506,15 +422,12 @@ const app = createApp({
             }
         };
 
-        // 首页只读，编辑一律去编辑页：自己的任务进「我的设置」，别人的进「用户管理」并选中该账号
-        const openTaskEditor = (task) => {
-            if (viewerAccountId.value && Number(task.account_id) === viewerAccountId.value) {
-                page.value = 'me';
-            } else {
-                selectedUserId.value = task.account_id;
-                page.value = 'users';
-            }
-            window.scrollTo({ top: 0, behavior: 'smooth' });
+        // 用户页「在首页看这个账号的单号」：切到首页并滚到该账号的分组（自己的是「我的单号」）
+        const goToAccountTasks = async (accountId) => {
+            page.value = 'home';
+            await nextTick();
+            const anchor = document.getElementById(accountId === viewerAccountId.value ? 'account-me' : `account-${accountId}`);
+            anchor?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         };
 
         const redirectToLogin = () => {
@@ -712,7 +625,7 @@ const app = createApp({
                 const response = await fetch('/api/users', { cache: 'no-store' });
                 const state = await handleApiResponse(response);
                 if (!state) return;
-                // 用户管理页可能正编辑到一半，只有它选中的正是自己时才有必要重建那份表单
+                // 用户页可能正编辑到一半，只有它选中的正是自己时才有必要重建那份表单
                 syncUserState(state, { keepUserForm: selectedUserId.value !== viewerAccountId.value });
             } catch (error) {
                 /* 刷新失败不影响刚才那次保存的结果，静默忽略 */
@@ -772,8 +685,8 @@ const app = createApp({
             }
         };
 
-        // 任务类请求：成功后就地刷新账号列表，保留正在编辑的账号表单
-        const sendTaskRequest = async (url, method, body, errorText, scope = 'user') => {
+        // 任务类请求：成功后就地刷新账号列表，保留正在编辑的账号表单；返回接口结果（失败时为 undefined）
+        const sendTaskRequest = async (url, method, body, errorText) => {
             try {
                 const response = await fetch(url, {
                     method,
@@ -792,43 +705,26 @@ const app = createApp({
             }
         };
 
-        // scope 决定任务落在谁名下、提示显示在哪一页：'me' = 管理员自己，'user' = 用户管理里选中的账号
-        const taskOwnerId = (scope) => (scope === 'me' ? viewerAccountId.value : selectedUserId.value);
+        // 添加单号：落在 accountId 名下（首页顶部 = 自己，分组里 = 那个账号）
+        const createTask = (accountId, form) =>
+            sendTaskRequest(`/api/users/${accountId}/tasks`, 'POST', { ...form }, '添加追踪任务时发生错误。');
 
-        const createTask = async (scope = 'user') => {
-            const accountId = taskOwnerId(scope);
-            const form = scope === 'me' ? myTaskForm : newTaskForm;
-            if (!accountId || !form.value.tracking_number.trim()) return;
-            const result = await sendTaskRequest(
-                `/api/users/${accountId}/tasks`,
-                'POST',
-                { ...form.value },
-                '添加追踪任务时发生错误。',
-                scope
-            );
-            if (result?.status === 'success') {
-                form.value = buildNewTaskForm();
-            }
-        };
-
-        const saveTask = (task, scope = 'user') => {
+        const saveTask = (task) => {
             const draft = taskDrafts.value[task.id];
             if (!draft) return;
-            return sendTaskRequest(`/api/tasks/${task.id}`, 'PUT', { ...draft }, '保存追踪任务时发生错误。', scope);
+            return sendTaskRequest(`/api/tasks/${task.id}`, 'PUT', { ...draft }, '保存追踪任务时发生错误。');
         };
 
-        const toggleTask = (task, scope = 'user') =>
-            sendTaskRequest(`/api/tasks/${task.id}`, 'PUT', { enabled: !task.enabled }, '切换任务状态时发生错误。', scope);
+        const toggleTask = (task) =>
+            sendTaskRequest(`/api/tasks/${task.id}`, 'PUT', { enabled: !task.enabled }, '切换任务状态时发生错误。');
 
-        const archiveTask = (task, scope = 'user') =>
-            sendTaskRequest(`/api/tasks/${task.id}/archive`, 'POST', undefined, '归档追踪任务时发生错误。', scope);
+        const archiveTask = (task) =>
+            sendTaskRequest(`/api/tasks/${task.id}/archive`, 'POST', undefined, '归档追踪任务时发生错误。');
 
-        // 归档任务重新添加同单号 = storage 侧复活，保留首次登记时间与次数
-        const restoreTask = (task, scope = 'user') => {
-            const accountId = taskOwnerId(scope);
-            if (!accountId) return;
-            return sendTaskRequest(
-                `/api/users/${accountId}/tasks`,
+        // 取消归档 = 同单号重新添加到原账号名下（storage 侧复活，保留首次登记时间与次数、渠道与节点）
+        const restoreTask = (task) =>
+            sendTaskRequest(
+                `/api/users/${task.account_id}/tasks`,
                 'POST',
                 {
                     tracking_number: task.tracking_number,
@@ -836,12 +732,10 @@ const app = createApp({
                     check_interval: Number(task.check_interval || 300),
                     enabled: true,
                 },
-                '恢复追踪任务时发生错误。',
-                scope
+                '恢复追踪任务时发生错误。'
             );
-        };
 
-        const deleteTask = async (task, scope = 'user') => {
+        const deleteTask = async (task) => {
             const { confirm } = await confirmReady;
             const confirmed = await confirm({
                 title: '删除追踪任务',
@@ -850,12 +744,20 @@ const app = createApp({
                 danger: true,
             });
             if (!confirmed) return;
-            return sendTaskRequest(`/api/tasks/${task.id}`, 'DELETE', undefined, '删除追踪任务时发生错误。', scope);
+            return sendTaskRequest(`/api/tasks/${task.id}`, 'DELETE', undefined, '删除追踪任务时发生错误。');
         };
 
-        // 补录历史单号：'me' 补到管理员自己名下，'user' 补到用户管理里选中的账号
-        const openBackfill = async (scope = 'user') => {
-            const accountId = taskOwnerId(scope);
+        // 任务卡片的操作统一从这里走（卡片组件只管展示与草稿）
+        const taskActions = {
+            save: saveTask,
+            toggle: toggleTask,
+            archive: archiveTask,
+            restore: restoreTask,
+            remove: deleteTask,
+        };
+
+        // 补录历史单号：补到 accountId 名下
+        const openBackfill = async (accountId) => {
             if (!accountId) return;
             const { openBackfillDialog } = await forecastReady;
             await openBackfillDialog({
@@ -866,9 +768,9 @@ const app = createApp({
             });
         };
 
-        // 切到系统设置页时刷新 17TRACK 卡片（额度在服务端缓存，频繁切换也不会打到 17TRACK）
+        // 切到设置页时刷新 17TRACK 卡片与状态规则（额度在服务端缓存，频繁切换也不会打到 17TRACK）
         watch(page, (next) => {
-            if (next === 'env') {
+            if (next === 'settings') {
                 loadTrack17Card();
                 loadStatusRules();
             }
@@ -881,7 +783,6 @@ const app = createApp({
 
         watch(selectedUserId, (nextUserId) => {
             userForm.value = buildUserForm(users.value.find((user) => user.id === nextUserId) || {});
-            newTaskForm.value = buildNewTaskForm();
         });
 
         watch(remoteRefreshMode, (mode) => {
@@ -908,6 +809,7 @@ const app = createApp({
 
             socket.value.on('script_status', (data) => {
                 script.value.running = data.running;
+                script.value.known = true;
             });
             socket.value.on('bark_server_status', (data) => {
                 bark.value.running = data.running;
@@ -989,18 +891,10 @@ const app = createApp({
             users,
             selectedUserId,
             selectedUser,
-            selectedUserTasks,
-            selectedUserArchivedTasks,
-            selectedUserTaskCount,
-            selectedUserActiveTaskCount,
-            selectedUserErrorTaskCount,
-            selectedUserTrackingState,
             taskState,
-            taskTone,
-            overviewRowTone,
-            taskStateLabel,
+            sortActive,
             taskDrafts,
-            newTaskForm,
+            taskActions,
             userForm,
             newUserForm,
             createUserExpanded,
@@ -1008,24 +902,18 @@ const app = createApp({
             activeTaskCount,
             totalTaskCount,
             loginUsersCount,
-            globalBarkDeviceCount,
-            globalErrorTaskCount,
-            globalTrackingState,
-            overviewFilter,
-            overviewFilters,
-            overviewTasks,
-            openTaskEditor,
             viewerAccountId,
-            meAccount,
             meTasks,
-            meArchivedTasks,
-            meTaskCount,
-            meActiveTaskCount,
             meErrorTaskCount,
             meDeviceCount,
-            meTrackingState,
+            otherGroups,
+            archivedTasks,
+            archivedOpen,
+            ownerName,
+            groupAddOpen,
+            toggleGroupAdd,
+            goToAccountTasks,
             meForm,
-            myTaskForm,
             sendingMeTestPush,
             saveMe,
             sendMeTestPush,
@@ -1048,15 +936,8 @@ const app = createApp({
             saveUser,
             savePortalSub,
             sendUserTestPush,
-            milestoneInputs,
-            milestoneCount,
             openBackfill,
             createTask,
-            saveTask,
-            toggleTask,
-            archiveTask,
-            restoreTask,
-            deleteTask,
             trackerLogOutput,
             barkLogOutput,
             remoteBarkLogOutput,
@@ -1064,7 +945,7 @@ const app = createApp({
     }
 });
 
-// 任务时间线：折叠展开时才拉取（每次展开都重新拉第一页，保证看到的是最新的），可继续加载更多。
+// 推送与查询记录（任务时间线）：折叠展开时才拉取（每次展开都重新拉第一页，保证看到的是最新的），可继续加载更多。
 // 映射查不到的事件类型会抛错，显示成加载失败，不悄悄显示原值。
 app.component('task-timeline', {
     props: {
@@ -1108,7 +989,7 @@ app.component('task-timeline', {
     },
     template: `
         <details class="disclosure flush task-timeline" @toggle="onToggle">
-            <summary>时间线</summary>
+            <summary>推送与查询记录</summary>
             <div class="disclosure-body">
             <p v-if="loading && !events.length" class="hint">加载中…</p>
             <div v-else-if="failed && !events.length" class="empty">[[ failed ]]</div>
@@ -1133,32 +1014,213 @@ app.component('task-timeline', {
     `,
 });
 
-// 到达预测：挂载时拉一次，任务有更新（stamp 变了）再拉；渲染交给 forecast.js（与门户页同一份 DOM 结构），
-// 映射查不到的阶段 / 可信度会抛错，显示成加载失败，不悄悄显示原值。
+// 到达预测：展开着就在挂载时拉一次，收着的（已归档卡片）第一次展开才拉；任务有更新（stamp 变了）再拉。
+// 渲染交给 forecast.js（与门户页同一份 DOM 结构），映射查不到的阶段 / 可信度会抛错，显示成加载失败，不悄悄显示原值。
+// 拉到后 emit loaded（带卡片摘要行），失败 emit failed。
 app.component('task-forecast', {
     props: {
         taskId: { type: Number, required: true },
         stamp: { type: String, default: '' },
+        open: { type: Boolean, default: true },
     },
-    setup(props) {
+    emits: ['loaded', 'failed'],
+    setup(props, { emit }) {
         const body = ref(null);
+        const wanted = ref(props.open);
         const load = async () => {
-            if (!body.value) return;
+            if (!body.value || !wanted.value) return;
             const { renderForecast } = await forecastReady;
-            // 「设为该渠道」成功后交给根组件用 user_state 刷新列表（stamp 变了会再拉一次预测）
             await renderForecast(body.value, props.taskId, {
+                // 「设为该渠道」成功后交给根组件用 user_state 刷新列表（stamp 变了会再拉一次预测）
                 onUpdated: (result) => window.dispatchEvent(new CustomEvent('forecast-task-updated', { detail: result })),
+                onLoaded: (result) => emit('loaded', result),
+                onFailed: () => emit('failed'),
             });
+        };
+        const onToggle = (event) => {
+            if (!event.target.open || wanted.value) return;
+            wanted.value = true;
+            load();
         };
         onMounted(load);
         watch(() => [props.taskId, props.stamp], load);
-        return { body };
+        return { body, onToggle };
     },
     template: `
-        <details class="disclosure flush task-forecast" open>
+        <details class="disclosure flush task-forecast" :open="open" @toggle="onToggle">
             <summary>到达预测</summary>
             <div class="disclosure-body" ref="body"></div>
         </details>
+    `,
+});
+
+// 添加单号：单号 + 备注 + 渠道一行，查询间隔、发货前节点、启用开关和补录收在「更多」里。
+// submit(accountId, form) 返回接口结果，成功后清空；backfill(accountId) 打开补录对话框。
+app.component('task-add-form', {
+    props: {
+        accountId: { type: Number, required: true },
+        submit: { type: Function, required: true },
+        backfill: { type: Function, required: true },
+    },
+    setup(props) {
+        const form = ref(buildNewTaskForm());
+        const busy = ref(false);
+        const ready = computed(() => Boolean(form.value.tracking_number.trim()) && !busy.value);
+        const add = async () => {
+            if (!ready.value) return;
+            busy.value = true;
+            try {
+                const result = await props.submit(props.accountId, form.value);
+                if (result?.status === 'success') form.value = buildNewTaskForm();
+            } finally {
+                busy.value = false;
+            }
+        };
+        return { form, busy, ready, add, milestoneInputs: MILESTONE_INPUTS, milestoneCount };
+    },
+    template: `
+        <div>
+            <div class="field-row">
+                <input type="text" class="field" v-model="form.tracking_number" placeholder="单号" aria-label="单号" @keydown.enter="add" />
+                <input type="text" class="field" v-model="form.label" placeholder="备注（如：键盘）" aria-label="备注" @keydown.enter="add" />
+                <input type="text" class="field" maxlength="50" :list="'channels-' + accountId" v-model="form.channel" placeholder="渠道" aria-label="渠道" @keydown.enter="add" />
+                <button type="button" class="btn" :disabled="!ready" @click="add">添加</button>
+            </div>
+            <details class="disclosure flush u-mt-2">
+                <summary>更多<span class="summary-meta">间隔 [[ form.check_interval ]]s · 节点 [[ milestoneCount(form) ]]/3</span></summary>
+                <div class="disclosure-body">
+                    <div class="task-fields">
+                        <label class="task-field">
+                            <span>查询间隔（秒）</span>
+                            <input type="number" min="30" max="604800" class="field" v-model.number="form.check_interval" />
+                        </label>
+                        <label class="task-field" v-for="item in milestoneInputs" :key="item.stage">
+                            <span>[[ item.label ]]</span>
+                            <input type="text" class="field" inputmode="numeric" placeholder="YYYY-MM-DD HH:MM" v-model="form.milestones[item.stage]" />
+                        </label>
+                    </div>
+                    <p class="hint">下单 / 打包 / 出库是发货前节点：可以只填日期，时间按日本时间，用于预测「从下单算第几天」。</p>
+                    <label class="switch-row u-mt-3">
+                        <input type="checkbox" class="switch" v-model="form.enabled" />
+                        添加后立即启用
+                    </label>
+                    <p class="hint">再次添加同一个单号会复活它的归档记录，不会新建重复任务。</p>
+                    <div class="actions">
+                        <button type="button" class="btn-ghost btn-small" @click="backfill(accountId)">补录历史单号</button>
+                        <span class="hint">补几单过去的单号和渠道，到达预测就有历史可参考。</span>
+                    </div>
+                </div>
+            </details>
+        </div>
+    `,
+});
+
+// 任务卡片：首页的自己 / 其他账号 / 已归档共用这一份。
+// 头部（备注为主标题、单号、渠道与状态胶囊）→ 摘要行（当前步骤 · 第 N 天 · 预计签收，与推送正文同一写法）
+// → 到达预测（在途默认展开）→ 推送与查询记录（默认折叠）→ 就地编辑 → 操作。
+// draft 是根组件的任务草稿（taskDrafts[task.id]），actions 是根组件的 taskActions；owner 非空时标出归属账号。
+app.component('task-card', {
+    props: {
+        task: { type: Object, required: true },
+        draft: { type: Object, default: null },
+        state: { type: Object, required: true },
+        owner: { type: String, default: '' },
+        actions: { type: Object, required: true },
+    },
+    setup(props) {
+        const editing = ref(false);
+        // 摘要行：loading → ready（summary 有值）/ failed（预测区块里已经显示了失败原因，这里不再重复）
+        const summary = ref('');
+        const summaryState = ref('loading');
+        const onLoaded = (result) => {
+            summary.value = result.summary;
+            summaryState.value = 'ready';
+        };
+        const onFailed = () => {
+            summaryState.value = 'failed';
+        };
+        const save = async () => {
+            const result = await props.actions.save(props.task);
+            if (result?.status === 'success') editing.value = false;
+        };
+        return {
+            editing, summary, summaryState, onLoaded, onFailed, save,
+            milestoneInputs: MILESTONE_INPUTS, milestoneCount,
+        };
+    },
+    template: `
+        <article class="task-item inner" :id="'task-' + task.id">
+            <div class="task-item-head">
+                <div class="task-title">
+                    <strong>[[ task.label || task.tracking_number ]]</strong>
+                    <span v-if="task.label" class="task-meta num">[[ task.tracking_number ]]</span>
+                </div>
+                <span class="row wrap u-gap-2">
+                    <span v-if="owner" class="pill violet">[[ owner ]]</span>
+                    <span v-if="task.channel" class="pill cyan">[[ task.channel ]]</span>
+                    <span :class="['pill', state.tone]">[[ state.label ]]</span>
+                </span>
+            </div>
+            <p v-if="summaryState === 'ready'" class="callout info"><strong>[[ summary ]]</strong></p>
+            <p v-else-if="summaryState === 'loading' && !task.archived" class="callout info">摘要加载中…</p>
+            <template v-if="task.archived">
+                <p class="task-meta">首次登记 [[ task.first_seen_at ]] · 登记次数 [[ task.seen_count ]]</p>
+            </template>
+            <template v-else>
+                <p v-if="task.last_error" class="err-text task-meta">查询出错：[[ task.last_error ]]</p>
+                <p class="task-meta">最近结果 [[ task.last_status_display || task.last_tracking_info || '暂无记录' ]]</p>
+                <p class="task-meta">最近检查 [[ task.last_checked_at || '-' ]] · 最近推送 [[ task.last_push_at || '-' ]] · 间隔 [[ task.check_interval ]]s</p>
+            </template>
+            <task-forecast :task-id="task.id" :stamp="task.updated_at" :open="!task.archived" @loaded="onLoaded" @failed="onFailed"></task-forecast>
+            <task-timeline :task-id="task.id" :number="task.tracking_number"></task-timeline>
+            <div class="task-fields" v-if="editing && draft">
+                <label class="task-field">
+                    <span>日本邮政单号</span>
+                    <input type="text" class="field" v-model="draft.tracking_number" />
+                </label>
+                <label class="task-field">
+                    <span>备注名</span>
+                    <input type="text" class="field" v-model="draft.label" />
+                </label>
+                <label class="task-field">
+                    <span>查询间隔（秒）</span>
+                    <input type="number" min="30" max="604800" class="field" v-model.number="draft.check_interval" />
+                </label>
+                <label class="task-field">
+                    <span>渠道</span>
+                    <input type="text" class="field" maxlength="50" :list="'channels-' + task.account_id" v-model="draft.channel" />
+                </label>
+                <label class="switch-row">
+                    <input type="checkbox" class="switch" v-model="draft.atypical" />
+                    非常规件（如大件电器）：作为预测参考时降低权重
+                </label>
+                <details class="disclosure flush" open>
+                    <summary>发货前节点<span class="summary-meta">[[ milestoneCount(draft) ]]/3</span></summary>
+                    <div class="disclosure-body">
+                        <div class="task-fields">
+                            <label class="task-field" v-for="item in milestoneInputs" :key="item.stage">
+                                <span>[[ item.label ]]</span>
+                                <input type="text" class="field" inputmode="numeric" placeholder="YYYY-MM-DD HH:MM" v-model="draft.milestones[item.stage]" />
+                            </label>
+                        </div>
+                        <p class="hint">可以只填日期；时间按日本时间。留空保存即清除。</p>
+                    </div>
+                </details>
+            </div>
+            <div class="actions">
+                <template v-if="task.archived">
+                    <button type="button" class="btn btn-small" @click="actions.restore(task)">取消归档</button>
+                    <button type="button" class="btn-ghost btn-small danger" @click="actions.remove(task)">删除</button>
+                </template>
+                <template v-else>
+                    <button v-if="editing" type="button" class="btn btn-small" @click="save">保存</button>
+                    <button type="button" class="btn-ghost btn-small" @click="editing = !editing">[[ editing ? '收起编辑' : '编辑' ]]</button>
+                    <button type="button" class="btn-ghost btn-small" @click="actions.toggle(task)">[[ task.enabled ? '停用' : '启用' ]]</button>
+                    <button type="button" class="btn-ghost btn-small" @click="actions.archive(task)">归档</button>
+                    <button type="button" class="btn-ghost btn-small danger" @click="actions.remove(task)">删除</button>
+                </template>
+            </div>
+        </article>
     `,
 });
 

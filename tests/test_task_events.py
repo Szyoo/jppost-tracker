@@ -354,7 +354,7 @@ def test_portal_empty_timeline(client, db, task):
 def test_admin_page_has_timeline_component(client, db):
     login(client, "admin", ADMIN_PASSWORD)
     html = client.get("/").data.decode()
-    assert "<task-timeline" in html
+    assert "<task-card" in html  # 推送与查询记录挂在任务卡片组件里，见 test_home_layout
 
 
 def test_js_kind_map_matches_python():

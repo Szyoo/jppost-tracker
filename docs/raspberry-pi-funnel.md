@@ -204,7 +204,7 @@ curl "https://your-node.your-tailnet.ts.net/<key>/测试标题/测试内容"
 - 不要把 Flask 管理页 `6060` 直接公开到公网。
 - 如果修改了 `AUTO_START_BARK_SERVER`、`APP_PORT`、`BARK_BIND_ADDRESS` 这类启动参数，重启 Web 服务再生效。
 - 用户自己的单号、Bark Keys 和推送参数都保存在 SQLite，普通用户在自己的设置页就能改。
-- 每个账号保存过的不同单号会写进 `tracking_history`，首页和个人页都能看到单号档案。
+- 每个账号保存过的不同单号会写进 `tracking_history`，后台首页与个人页的「已归档」区都能看到单号档案。
 - 网页中的 Bark 健康检查优先使用 `BARK_SERVER_PUBLIC`，这样更接近手机真实访问路径。
 - 使用 systemd 常驻时，建议让服务在 `docker.service` 和 `tailscaled.service` 之后启动，仓库里的示例文件已经按这个顺序处理。
 - 某些环境下，树莓派本机访问自己的 `*.ts.net` Funnel 地址会超时；当前版本会在网页健康检查里自动回退到 `BARK_SERVER_INTERNAL`，并明确标注“本机回退”。

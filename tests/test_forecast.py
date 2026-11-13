@@ -480,7 +480,7 @@ def test_portal_form_channel_and_milestones(client, db, owner, task):
     assert db.get_task(task["id"])["channel"] == "渠道A"
     assert milestones_of(task["id"]) == {"ordered": ("2026-10-01", "manual")}
     html = client.get("/").data.decode()
-    assert '<option value="渠道A">' in html and "task-channel" in html
+    assert '<option value="渠道A">' in html and '<span class="pill cyan">渠道A</span>' in html
     # 归档区的「恢复」表单没有这些字段，不能把渠道和节点清掉
     db.archive_task(task["id"])
     client.post("/me/tasks", data={"tracking_number": NUM, "label": "", "check_interval": "300", "enabled": "1"})
@@ -491,7 +491,8 @@ def test_portal_form_channel_and_milestones(client, db, owner, task):
 def test_admin_page_has_forecast_component(client, db):
     login(client, "admin", ADMIN_PASSWORD)
     html = client.get("/").data.decode()
-    assert "<task-forecast" in html and "openBackfill" in html and "channel-options-me" in html
+    # 预测挂在任务卡片组件里（app.js 的 task-card），首页的卡片与添加表单（含补录入口）都用组件
+    assert "<task-card" in html and ':backfill="openBackfill"' in html and ":id=\"'channels-' + user.id\"" in html
 
 
 # --- /api/v1 ---

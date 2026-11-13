@@ -113,17 +113,6 @@ textarea.field {
   margin-bottom: var(--sp-4);
 }
 
-.overview-filters {
-  margin-bottom: var(--sp-4);
-}
-
-/* ---------- 首页任务总览（包的 .tbl.reflow）：时间线行并进上一行，不画分隔线 ---------- */
-
-.overview-timeline-row > td {
-  padding-top: 0;
-  border-top: 0;
-}
-
 /* ---------- 布局网格 ---------- */
 
 .layout-main-side {
@@ -138,12 +127,11 @@ textarea.field {
   gap: var(--sp-4);
 }
 
-/* ---------- 追踪任务 ---------- */
+/* ---------- 任务卡片（首页 / 门户页共用一套结构） ---------- */
 
 .task-list {
   display: grid;
   gap: var(--sp-3);
-  margin-bottom: var(--sp-4);
 }
 
 .task-item {
@@ -152,11 +140,19 @@ textarea.field {
   gap: var(--sp-2);
 }
 
+/* 头部：左边备注 + 单号，右边渠道与状态胶囊；窄屏胶囊换到下一行 */
 .task-item-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: var(--sp-3);
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-3);
+}
+
+.task-title {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
 }
 
 .task-item-head strong {
@@ -189,11 +185,6 @@ textarea.field {
   overflow-wrap: anywhere;
 }
 
-/* 渠道标签紧跟单号，状态胶囊仍靠右（head 是 space-between，auto 外边距先吃掉剩余空间） */
-.task-item-head .task-channel {
-  margin-inline-end: auto;
-}
-
 /* 「发货前节点」折叠区在三列字段网格里独占一整行 */
 .task-fields > .disclosure {
   grid-column: 1 / -1;
@@ -218,51 +209,11 @@ textarea.field {
   grid-column: 1 / -1;
 }
 
-.task-create {
-  padding: var(--sp-4);
-}
-
-.task-create .switch-row {
-  margin-top: var(--sp-3);
-}
-
-.task-create + .task-list {
-  margin-top: var(--sp-4);
-}
-
 .task-item .actions {
   margin-top: var(--sp-1);
 }
 
-/* ---------- 单号档案 ---------- */
-
-.history-list {
-  display: grid;
-  gap: var(--sp-3);
-}
-
-.history-item {
-  padding: var(--sp-3) var(--sp-4);
-  display: grid;
-  gap: 2px;
-}
-
-.history-item strong {
-  font-size: var(--fs-base);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.03em;
-}
-
-.history-item span {
-  font-size: var(--fs-sm);
-  color: var(--text-dim);
-}
-
-.history-item .actions {
-  margin-top: var(--sp-2);
-}
-
-/* ---------- 用户管理 ---------- */
+/* ---------- 用户页 ---------- */
 
 .users-layout {
   display: grid;
@@ -381,7 +332,7 @@ textarea.field {
 
 /* ---------- 服务控制 ---------- */
 
-/* 首页里这块是整行宽，卡片能并排就并排 */
+/* 设置页里这块是整行宽，卡片能并排就并排 */
 .service-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
