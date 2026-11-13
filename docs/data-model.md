@@ -163,7 +163,8 @@ pre_milestones —— 发货前节点
   两者之间的第一条「飞机进港」= `transit_arrived`；只有一条启运（一段航班）就没有这两个阶段。同单号多任务的重复事件按时刻去重。
 - **履历按段切分**：每条 cn_ems 事件落在「时间不晚于它的最晚已到阶段」所在的段（`forecast.segment_at`）。
 - **显示名**：中转段用系统设置 `TRANSIT_REGION_LABEL`（未设置 =「韩国」，显示「韩国段 / 到达韩国 / 离开韩国」；显式清空 = 通用名「中转段 / 到达中转地 / 离开中转地」）。
-  属 live 生效，Web 每次读进程环境变量；系统设置页在键从未出现过时显示默认值。
+  Web 每次读进程环境变量，追踪脚本每轮重读（没设置的键不放进设置字典，以区分「未设置」与「留空」）；系统设置页在键从未出现过时显示默认值。
+  阶段显示名带方向：`STAGE_META` 的 label 里 `{origin}` 换成始发国名、`{transit}` 换成中转地名（如「中国出口海关」「离开中国（出境）」）。
 - **按段加权**（`forecast.build_forecast`）：剩余阶段在仓库段时同渠道 1.0 / 其他 0.3；在国内 / 中转 / 日本段时同收寄网点 1.0 / 其他 0.3。
   理由：仓库段的耗时取决于发货渠道自己的打包与交运；揽收之后同一网点走的是同一条邮政线路（同一互换局、同一航线），
   耗时由邮政决定、与发货渠道无关，网点相同而渠道不同的样本同样有代表性。当前单没有收寄网点（没有始发国段数据）时全部按渠道比；
@@ -172,6 +173,36 @@ pre_milestones —— 发货前节点
 - **非常规件**（`tracking_tasks.atypical`）：样本权重再乘 `forecast.ATYPICAL_WEIGHT`（0.3）；同单号多个任务合并时任一任务标了就算；
   当前单自己是否非常规不影响别的样本。只在网页编辑（`PUT /api/tasks/<id>` 的 `atypical` 布尔、门户表单的复选框、归档任务在预测区块里切换），
   `/api/v1` 不暴露。
+
+### 合并履历与推送去重：route_nodes 与 notified_nodes
+
+```
+notified_nodes —— 已推送过的合并履历节点（推送去重）
+  id, task_id →tracking_tasks.id (ON DELETE CASCADE), tracking_number,
+  node_key,                      -- route_nodes 的节点 key
+  source,                        -- 先报这个节点的来源（cn_ems / jp_post）
+  notified_at
+  UNIQUE(task_id, tracking_number, node_key)
+```
+
+- **节点**（`route_nodes.build_nodes`，纯函数）：两个来源里含义相同的事件（`jp_kind` / `cn_kind` 对照，只有 `SHARED_KINDS` 参与）
+  换算到日本时间后相差 ≤2 分钟归为一个共有节点，其余各自成节点。key：共有节点 `<kind>@<成员最早时间>`，
+  独有节点 `<source>:<原文状态>@<record_at>`，发货前节点 `milestone:<stage>`（不推送）。
+  共有节点的 key 会随另一边晚到（早一分钟）而变，所以「推送过没有」按 `route_nodes.node_notified` 判断：
+  key 相同，或 kind 相同且任一成员时间与已记 key 的时间相差 ≤2 分钟。重复事件（同一来源两条「送交出口海关」）各自成节点。
+- **显示**：每段有主来源（仓库段发货前节点；国内段、中转段 cn_ems；日本段 jp_post；没有 cn_ems 数据时全按 jp_post）。
+  主来源节点都显示；另一来源的共有节点先显示、主来源到了合并；另一来源的独有事件不显示——唯一例外是「航班到达日本」
+  （landed_destination，日本段的起点，只有中国邮政会报）。
+- **推送**（`tracker.process_task`）：先同步 17TRACK 与日本邮政，把日本邮政履历落库，再算节点；
+  新节点 = 可见的承运方节点里没推送过的。首次（本任务本单号还没记过任何节点）只推最新一条、其余静默记下；
+  早于已推送节点里最晚那个的新节点（17TRACK 数据晚到补上的更早事件）静默记下不补发。同一轮的新节点合成一条推送，
+  成功后在 `update_task_state` 同一事务里记进 `notified_nodes`；失败不记，下轮按退避重推。没配 Bark Keys 时新节点直接记下。
+  `task_events` 的 `status_change` 照旧按日本邮政写，`push_ok` / `push_fail` 的 status 是推送的节点名；签收自动归档照旧看日本邮政的签收状态。
+- **上线迁移**：`notified_nodes` 首次建表时把所有现有任务当前的全部可推送节点记为已推送，不补发。
+- **命名**：始发国名按单号国家码（`forecast.COUNTRY_ZH`，没收录的显示代码本身）；互换局英文名查 `route_nodes.EXCHANGE_ZH`
+  （目前只有 WEIHAI → 威海国际互换局，未收录原样显示英文）；cn_ems【…】里的名字直接用；日本地名保留原文。
+  日本邮政状态的中文在 `jp_status.JP_STATUS_ZH`（外部数据，未收录的显示原文并记一次日志）；库里一律存原文，
+  `last_tracking_info` 的判重不变，网页显示用接口另带的 `last_status_display` / `status_display`。
 
 ### 17TRACK 登记状态（网页显示）
 
