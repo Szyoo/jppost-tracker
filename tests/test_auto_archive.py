@@ -42,7 +42,7 @@ def run_once(tracker, task_id, env=None):
 
 
 def kinds(task_id):
-    events, _ = storage.list_task_events(task_id, limit=100)
+    events, _ = storage.list_task_events(task_id, limit=100, merge=False)
     return [(e["kind"], e["status"]) for e in reversed(events)]
 
 

@@ -2028,8 +2028,40 @@ def _row_to_event(row):
     return event
 
 
-def list_task_events(task_id: int, *, limit: int = 20, before: int | None = None):
-    """按时间倒序分页。游标用事件 id：id 随写入单调递增，与 created_at 同序，
+PUSH_EVENT_KINDS = ("push_ok", "push_fail")
+
+
+def _merge_push_rows(rows: list) -> list:
+    """时间线里同一轮写入的「状态变化 → 推送」合成一行（rows 按 id 倒序）。
+    推送事件紧跟在它所在轮次的状态变化之后写入（同一单号、同一 created_at），
+    合并后保留推送的类型与标题（节点名），描述为「状态变化的地点 · 推送结果」；
+    id 取较早的状态变化那条，翻页游标（id < before）不会把被并掉的那条再翻出来。"""
+    result = []
+    index = 0
+    while index < len(rows):
+        row = rows[index]
+        partner = rows[index + 1] if index + 1 < len(rows) else None
+        if (
+            row["kind"] in PUSH_EVENT_KINDS
+            and partner is not None
+            and partner["kind"] == "status_change"
+            and partner["tracking_number"] == row["tracking_number"]
+            and partner["created_at"] == row["created_at"]
+        ):
+            combined = dict(row)
+            combined["id"] = partner["id"]
+            combined["detail"] = " · ".join(part for part in (partner.get("detail"), row.get("detail")) if part)
+            result.append(combined)
+            index += 2
+            continue
+        result.append(row)
+        index += 1
+    return result
+
+
+def list_task_events(task_id: int, *, limit: int = 20, before: int | None = None, merge: bool = True):
+    """按时间倒序分页。merge=True 时同一轮的「状态变化 → 推送」合成一行（见 _merge_push_rows），merge=False 返回原始事件。
+    游标用事件 id：id 随写入单调递增，与 created_at 同序，
     同一秒写入的多条也能稳定翻页。返回 (events, has_more)。"""
     limit = max(1, min(EVENT_PAGE_MAX, int(limit)))
     params: list = [int(task_id)]
@@ -2038,15 +2070,17 @@ def list_task_events(task_id: int, *, limit: int = 20, before: int | None = None
         query += " AND id < ?"
         params.append(int(before))
     query += " ORDER BY id DESC LIMIT ?"
-    params.append(limit + 1)
+    # 多取一条：本页最后一条推送的配对状态变化正好落在下一页时也能并进来
+    params.append(limit + 2)
     with closing(_connect()) as conn:
-        rows = conn.execute(query, params).fetchall()
-        events = [_row_to_event(row) for row in rows[:limit]]
+        rows = [dict(row) for row in conn.execute(query, params).fetchall()]
+        merged = _merge_push_rows(rows) if merge else rows
+        events = [_row_to_event(row) for row in merged[:limit]]
         cache: dict = {}
         for event in events:
             # 状态变化等事件存的是日本邮政原文 info；推送事件存的是节点名（原样显示）
             event["status_display"] = display_info(conn, event["tracking_number"], event["status"], cache)
-    return events, len(rows) > limit
+    return events, len(merged) > limit
 
 
 

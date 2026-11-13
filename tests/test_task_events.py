@@ -95,7 +95,7 @@ def run_once(tracker, task_id):
 
 
 def kinds(task_id):
-    events, _ = storage.list_task_events(task_id, limit=100)
+    events, _ = storage.list_task_events(task_id, limit=100, merge=False)
     return [(e["kind"], e["status"]) for e in reversed(events)]
 
 
@@ -148,7 +148,7 @@ def test_push_failure_logged_once_and_status_not_duplicated_on_retry(tracker, ta
     assert run_once(tracker, task["id"]) is True
     assert run_once(tracker, task["id"]) is True
     assert kinds(task["id"]) == [("status_change", info(R1)), ("push_fail", "日本收寄")]
-    events, _ = storage.list_task_events(task["id"])
+    events, _ = storage.list_task_events(task["id"], merge=False)
     assert events[0]["detail"] == "HTTP 500"
     assert storage.get_task(task["id"])["last_tracking_info"] == ""
 
@@ -442,3 +442,17 @@ def test_migration_from_v1_keeps_tasks_and_events_fk(tmp_path, monkeypatch):
     storage.delete_task(tasks[0]["id"])
     with sqlite3.connect(db_path) as c:
         assert c.execute("SELECT COUNT(*) FROM task_events").fetchone()[0] == 0
+
+
+def test_timeline_merges_status_change_and_push_of_same_round(tracker, task, monkeypatch):
+    """同一轮的「状态变化 → 推送」在时间线里合成一行：保留推送的类型与节点名，描述带上地点；翻页不会把被并掉的那条再翻出来。"""
+    net = Net(tracker, monkeypatch)
+    net.page = page_html(R1)
+    assert run_once(tracker, task["id"]) is False
+    raw, _ = storage.list_task_events(task["id"], merge=False)
+    assert [e["kind"] for e in raw] == ["push_ok", "status_change"]
+    events, has_more = storage.list_task_events(task["id"], limit=1)
+    assert not has_more
+    assert [(e["kind"], e["status"]) for e in events] == [("push_ok", "日本收寄")]
+    assert events[0]["id"] == raw[1]["id"]
+    assert raw[1]["detail"] in events[0]["detail"] and raw[0]["detail"] in events[0]["detail"]
