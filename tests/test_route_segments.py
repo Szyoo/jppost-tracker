@@ -83,7 +83,8 @@ def test_history_nodes_carry_segment(db):
     assert by_name["中国收寄"] == "domestic"
     assert by_name["中国→韩国 航班起飞"] == "domestic"
     assert by_name["到达韩国中转"] == "transit" and by_name["韩国→日本 航班起飞"] == "transit"
-    assert by_name["航班到达日本"] == "japan"
+    assert by_name["日本邮政接收（寄达地）"] == "japan"
+    assert by_name["韩国→日本 航班落地"] == "japan"
 
 
 # --- 中转地显示名 ---

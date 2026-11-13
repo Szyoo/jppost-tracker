@@ -45,7 +45,9 @@ CN_JAPAN = [
     ("2026-11-14T08:30:00+08:00", "到达境外自提点", ""),
     ("2026-11-14T06:05:00+08:00", "已到达【日本】投递局", ""),
     ("2026-11-13T15:10:00+08:00", "离开【日本】处理中心", ""),
+    ("2026-11-13T12:00:00+08:00", "寄达地海关允许进口", ""),
     ("2026-11-13T09:00:00+08:00", "境外进口海关留存待验", ""),
+    ("2026-11-13T08:59:00+08:00", "送交境外进口海关", ""),
 ]
 
 
@@ -97,11 +99,17 @@ def test_node_names_carry_direction_and_place():
         "提交中国出口海关查验（威海）",
         "中国出口海关放行（威海）",
         "离开威海国际互换局（出境）",
+        "离开揽收网点 威海市丹东路第二揽投部 → 威海国际互换局",
+        "威海国际互换局 发往机场",
         "交航（威海）",
+        "航空公司接收（威海）",
         "中国→韩国 航班起飞",
         "到达韩国中转",
         "韩国→日本 航班起飞",
-        "航班到达日本",
+        "韩国→日本 航班落地",
+        "日本邮政接收（寄达地）",
+        "提交日本进口海关（東京国際郵便局）",
+        "日本进口海关放行（東京国際郵便局）",
         "到达東京国際郵便局（入境）",
         "日本进口通关中（東京国際郵便局）",
         "离开東京国際郵便局",
@@ -111,6 +119,10 @@ def test_node_names_carry_direction_and_place():
     ):
         assert expected in names, expected
     assert not any(name.startswith("提交海关查验") for name in names)
+    # 显示给人的名字不是两边原文
+    raw = {status for _, status, _ in CN_EVENTS + CN_JAPAN} | {status for _, status, _ in JP_ROWS}
+    assert not raw & set(names)
+    assert names["韩国→日本 航班落地"]["segment"] == "japan"
 
 
 def test_names_without_transit_region_and_unknown_country():
@@ -133,7 +145,13 @@ def test_shared_nodes_merge_and_segment_primary():
     assert visible["已妥投（板橋北郵便局）"]["original"] == "お届け済み"
     # 段主来源：国内段的日本邮政独有事件（到达威海互换局）不显示；日本段的中国邮政独有事件（自提点）不显示
     hidden = {n["name"] for n in nodes if not n["visible"]}
-    assert "到达威海国际互换局" in hidden and "到达境外自提点" in hidden
+    assert "到达威海国际互换局" in hidden and "到达自提点" in hidden
+    # 先按语义再按时间：通关中（09:00）两边合并，提交进口海关（08:59，只有中国邮政）独立成节点；放行虽只有中国邮政也显示
+    assert visible["日本进口通关中（東京国際郵便局）"]["sources"] == ["cn_ems", "jp_post"]
+    assert visible["提交日本进口海关（東京国際郵便局）"]["sources"] == ["cn_ems"]
+    assert visible["日本进口海关放行（東京国際郵便局）"]["sources"] == ["cn_ems"]
+    collect = visible["离开揽收网点 威海市丹东路第二揽投部 → 威海国际互换局"]
+    assert collect["at"] == "2026-11-09 19:54" and collect["sources"] == ["cn_ems"]
     # 日本段的日期只有一天的「持ち出し中」与中国邮政的事件不强行合并，按日本邮政显示
     assert visible["板橋北郵便局 派送中"]["sources"] == ["jp_post"]
     assert visible["到达板橋北郵便局"]["detail"] == "预计投递日：11月14日 · 板橋北郵便局 · 東京都"
@@ -226,7 +244,7 @@ def test_shared_node_cn_first_pushes_once(cn_task, monkeypatch):
     run(tracker, task["id"])
     ready(fake, CN_EVENTS)  # 中国邮政先报
     run(tracker, task["id"])
-    assert len(net.pushes) == 2 and net.pushes[-1].startswith("11/13 07:17 到达日本国际互换局（入境）")
+    assert len(net.pushes) == 2 and net.pushes[-1].startswith("11/13 07:17 到达日本互换局（入境）")
     net.page = page_html(*JP_ROWS[:6])  # 日本邮政晚到
     run(tracker, task["id"])
     assert len(net.pushes) == 2
@@ -241,17 +259,18 @@ def test_unique_nodes_each_pushed_and_same_round_combined(cn_task, monkeypatch):
     net.page = page_html(*JP_ROWS[:1])
     run(tracker, task["id"])
     assert len(net.pushes) == 1
-    ready(fake, CN_EVENTS[-3:])  # 中国邮政独有：揽投部分拣、离开揽投部（同一轮两条）
+    ready(fake, CN_EVENTS[-3:])  # 中国邮政独有：揽投部分拣、离开揽投部（同一分钟，合成一个节点）
     run(tracker, task["id"])
     assert len(net.pushes) == 2
-    body = net.pushes[-1]
-    assert "本轮还有：" in body and body.count("威海市丹东路第二揽投部") == 2
+    assert net.pushes[-1].startswith("11/9 19:54 离开揽收网点 威海市丹东路第二揽投部 → 威海国际互换局\n")
+    assert "本轮还有：" not in net.pushes[-1]
     ready(fake, CN_EVENTS[-8:])  # 再来一批：出口海关等
     run(tracker, task["id"])
     assert len(net.pushes) == 3
     events, _ = storage.list_task_events(task["id"], limit=100)
     pushes = [e["status"] for e in events if e["kind"] == "push_ok"]  # 新的在前
-    assert pushes[0] == "邮件离开【山东省威海市国际互换局】，正在发往下一站"
+    assert pushes[0] == "威海国际互换局 发往机场"
+    assert "本轮还有：" in net.pushes[-1]
     assert "提交中国出口海关查验（威海）" in net.pushes[-1] and "中国出口海关放行（威海）" in net.pushes[-1]
 
 
@@ -269,7 +288,7 @@ def test_push_failure_retries_same_nodes(cn_task, monkeypatch):
     assert storage.notified_node_keys(task["id"], NUM) and len(storage.notified_node_keys(task["id"], NUM)) == 1
     net.push_ok = True
     assert run(tracker, task["id"]) is False
-    assert "本轮还有：" in net.pushes[-1]
+    assert net.pushes[-1] == net.pushes[-2]  # 重推的是同一批节点
     run(tracker, task["id"])
     assert len(net.pushes) == 3  # 1 次成功 + 1 次失败 + 1 次重推成功，之后不再推
 
@@ -372,7 +391,7 @@ def test_push_forecast_switch_and_failure(db, owner, monkeypatch):
     net.page = page_html(("2026/10/01 10:00", "引受", ""), ("2026/10/01 18:00", "通過", ""), ("2026/10/02 09:00", "到着", ""))
     assert run(tracker, task["id"], {"TRACK17_API_KEY": ""}) is False
     assert len(net.pushes) == 3 and "当前：" not in net.pushes[-1]
-    assert net.pushes[-1].startswith("10/2 09:00 到达日本派送局（到着）")
+    assert net.pushes[-1].startswith("10/2 09:00 到达派送局（到着）")
 
 
 def test_history_endpoint_and_display_fields(client, db, owner):
@@ -388,3 +407,49 @@ def test_history_endpoint_and_display_fields(client, db, owner):
     assert [node["name"] for node in history] == ["提交中国出口海关查验（威海）", "到达威海国际互换局", "中国收寄"]
     assert set(history[0]) == {"key", "at", "segment", "stage", "name", "sources", "original", "detail"}
     assert datetime.strptime(history[0]["at"], "%Y-%m-%d %H:%M")
+
+
+# --- 生产库副本发现的问题 ---
+
+def test_pairing_semantic_first_then_nearest():
+    """同一语义多个候选取时间最近的；语义不同即使时间更近也不配。"""
+    cn = cn_records([
+        ("2026-11-13T04:29:00+08:00", "送交境外进口海关", ""),
+        ("2026-11-13T04:30:00+08:00", "境外进口海关留存待验", ""),
+        ("2026-11-13T04:31:00+08:00", "境外进口海关留存待验", ""),
+    ])
+    jp = jp_records([("2026/11/13 04:30", "通関手続中", "東京国際郵便局 · 東京都")])
+    nodes = nodes_of(cn + jp)
+    merged = [n for n in nodes if n["sources"] == ["cn_ems", "jp_post"]]
+    assert len(merged) == 1 and merged[0]["at"] == "2026-11-13 04:30" and merged[0]["kind"] == "import_customs"
+    submit = next(n for n in nodes if n["kind"] == "import_customs_submit")
+    assert submit["sources"] == ["cn_ems"] and submit["name"] == "提交日本进口海关（東京国際郵便局）"
+
+
+def test_duplicate_jp_rows_across_tasks_keep_richer_detail():
+    rich = ("2026/11/14 06:05", "到着", "配達予定日：11月14日 · 板橋北郵便局 · 東京都")
+    plain = ("2026/11/14 06:05", "到着", "板橋北郵便局 · 東京都")
+    nodes = nodes_of(jp_records([plain, rich]))
+    assert [n["name"] for n in nodes] == ["到达板橋北郵便局"]
+    assert nodes[0]["detail"].startswith("预计投递日：11月14日")
+
+
+def test_unknown_cn_event_shown_raw_and_logged_once(capsys):
+    route_nodes._logged_unknown_cn.discard("某个新事件")
+    nodes = nodes_of(cn_records([("2026-11-09T18:31:38+08:00", "中国邮政已收取邮件", ""),
+                                 ("2026-11-09T20:00:00+08:00", "某个新事件", "")]))
+    nodes_of(cn_records([("2026-11-09T20:00:00+08:00", "某个新事件", "")]))
+    assert "某个新事件" in [n["name"] for n in nodes]
+    assert capsys.readouterr().out.count("未收录的中国邮政事件：某个新事件") == 1
+
+
+def test_one_flight_landing_named_and_in_japan():
+    one = [e for e in CN_EVENTS if e[0] < "2026-11-11"] + [("2026-11-11T02:00:00+08:00", "飞机进港", ""), CN_EVENTS[1]]
+    names = by_name(nodes_of(cn_records(one)))
+    assert names["中国→日本 航班起飞"]["segment"] == "domestic"
+    assert names["中国→日本 航班落地"]["segment"] == "japan" and names["中国→日本 航班落地"]["visible"]
+
+
+def test_date_only_node_sorted_before_later_stage_same_day():
+    names = [n["name"] for n in nodes_of(jp_records()) if n["visible"]]
+    assert names.index("板橋北郵便局 派送中") < names.index("已妥投（板橋北郵便局）")

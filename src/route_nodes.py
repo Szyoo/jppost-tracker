@@ -12,13 +12,15 @@
 - 显示：每段有「主来源」——仓库段用发货前节点，国内段 / 中转段用 cn_ems，日本段用 jp_post；
   没有 cn_ems 数据时国内段 / 中转段也用 jp_post（与只有日本邮政时一致）。
   主来源的节点都显示；另一来源的共有节点即使主来源还没报也先显示（标该来源），主来源到了就合并显示两边一致；
-  另一来源的独有事件不显示（主来源更密集）；唯一例外是「航班到达日本」（日本段的起点，只有中国邮政报）。
+  另一来源的独有事件不显示（主来源更密集）；例外是第二段航班落地与「日本邮政接收（寄达地）」（日本段的起点，只有中国邮政报）。
+- 显示给人的名字一律经过命名（kind_name / jp_name / cn_display），不直接用两边原文；没收录的外部状态显示原文并记一次日志。
 
 ## 命名
 始发国名按单号国家码（forecast.origin_country_name），中转地名取 TRANSIT_REGION_LABEL；
 互换局英文名查 EXCHANGE_ZH（未收录原样显示英文），cn_ems 的【…】里的名字直接用，日本地名保留原文。
 """
 import re
+from datetime import timedelta
 
 import forecast
 import jp_status
@@ -94,6 +96,11 @@ def cn_kind(status: str):
         return "depart_origin"
     if status.startswith("到达寄达地处理中心"):
         return "arrive_japan_exchange"
+    # 先按语义细分再兜底：「送交境外进口海关」是提交，「…留存待验」才是通关中
+    if status.startswith("送交境外进口海关"):
+        return "import_customs_submit"
+    if "寄达地海关" in status and ("允许进口" in status or "放行" in status):
+        return "import_customs_release"
     if "境外进口海关" in status:
         return "import_customs"
     if "【日本】" in status and status.startswith("离开") and "处理中心" in status:
@@ -126,11 +133,16 @@ KIND_STAGE = {
     "delivered": "delivered",
 }
 
-# 两边都可能报出的 kind（只有这些参与跨来源归并、算作「共有节点」）；
-# 只有日本邮政报的（到达始发国互换局、日本海关的提交 / 扣留 / 放行）按独有事件处理
+# 两边都可能报出的 kind（只有这些参与跨来源归并、算作「共有节点」，任一边报了就显示）；
+# 只有日本邮政报的（到达始发国互换局、日本海关扣留）按独有事件处理。
+# 日本海关放行（寄达地海关允许进口）多半只有中国邮政报，但信息重要，作为共有类型照样显示。
+# 同一来源内也要合并的类型（只在中国邮政内部）：揽收网点的「完成分拣」与「离开」通常同一分钟
+SAME_SOURCE_KINDS = frozenset({"left_collection"})
+
 SHARED_KINDS = frozenset({
     "accept", "export_customs_submit", "export_customs_hold", "export_customs_release", "depart_origin",
-    "arrive_japan_exchange", "import_customs", "depart_japan_exchange", "local_arrive", "out_for_delivery", "delivered",
+    "arrive_japan_exchange", "import_customs_submit", "import_customs", "import_customs_release",
+    "depart_japan_exchange", "local_arrive", "out_for_delivery", "delivered",
 })
 
 
@@ -174,7 +186,7 @@ class Context:
         self.origin = forecast.origin_country_name(tracking_number) or forecast.GENERIC_ORIGIN
         self.transit = str(transit_region or "").strip()
         self.origin_exchange = None
-        self.japan_exchange = None
+        self.japan_exchange = None  # 没有日本邮政的日本段数据时为 None（名字里不写互换局名）
         self.local_office = None
         cn_exchange = None
         for record in records:
@@ -194,9 +206,10 @@ class Context:
                 name = _bracket(record["status"])
                 if name and "国际互换局" in name and not cn_exchange:
                     cn_exchange = name
-        self.origin_exchange = self.origin_exchange or cn_exchange or f"{self.origin}国际互换局"
+        if not self.origin_exchange and cn_exchange:
+            self.origin_exchange = f"{_city_of(cn_exchange)}国际互换局"
+        self.origin_exchange = self.origin_exchange or f"{self.origin}国际互换局"
         self.city = _city_of(self.origin_exchange) if (self.origin_exchange != f"{self.origin}国际互换局") else ""
-        self.japan_exchange = self.japan_exchange or "日本国际互换局"
 
     def city_paren(self) -> str:
         return f"（{self.city}）" if self.city else ""
@@ -216,8 +229,9 @@ def _jp_place(detail, ctx: Context) -> str:
 def kind_name(kind: str, ctx: Context, jp_detail=None) -> str:
     """共有节点的显示名（不论哪边报的都一样），地点优先取日本邮政成员的 detail。"""
     place = _detail_parts(jp_detail)[0] if _detail_parts(jp_detail) else None
-    japan_exchange = place or ctx.japan_exchange
-    local = place or ctx.local_office or "日本派送局"
+    exchange = place or ctx.japan_exchange  # 没有日本邮政数据时不知道是哪个互换局
+    paren = f"（{exchange}）" if exchange else ""
+    local = place or ctx.local_office
     names = {
         "accept": f"{ctx.origin}收寄",
         "export_customs_submit": f"提交{ctx.origin}出口海关查验{ctx.city_paren()}",
@@ -225,15 +239,15 @@ def kind_name(kind: str, ctx: Context, jp_detail=None) -> str:
         "export_customs_release": f"{ctx.origin}出口海关放行{ctx.city_paren()}",
         "arrive_origin_exchange": f"到达{ctx.origin_exchange}",
         "depart_origin": f"离开{ctx.origin_exchange}（出境）",
-        "arrive_japan_exchange": f"到达{japan_exchange}（入境）",
-        "import_customs_submit": f"提交日本进口海关查验（{japan_exchange}）",
-        "import_customs_hold": f"日本进口海关扣留待验（{japan_exchange}）",
-        "import_customs_release": f"日本进口海关放行（{japan_exchange}）",
-        "import_customs": f"日本进口通关中（{japan_exchange}）",
-        "depart_japan_exchange": f"离开{japan_exchange}",
-        "local_arrive": f"到达{local}",
-        "out_for_delivery": f"{local} 派送中",
-        "delivered": f"已妥投（{local}）",
+        "arrive_japan_exchange": f"到达{exchange or '日本互换局'}（入境）",
+        "import_customs_submit": f"提交日本进口海关{paren}",
+        "import_customs_hold": f"日本进口海关扣留待验{paren}",
+        "import_customs_release": f"日本进口海关放行{paren}",
+        "import_customs": f"日本进口通关中{paren}",
+        "depart_japan_exchange": f"离开{exchange or '日本互换局'}",
+        "local_arrive": f"到达{local or '派送局'}",
+        "out_for_delivery": f"{local} 派送中" if local else "派送中",
+        "delivered": f"已妥投（{local}）" if local else "已妥投",
     }
     return names[kind]
 
@@ -250,28 +264,79 @@ def jp_name(status, detail, ctx: Context) -> str:
     return f"{zh}（{place}）" if place else zh
 
 
-def cn_name(record, ctx: Context, flights: dict) -> str:
-    """中国邮政一条事件的显示名。flights：{record_at: 航段名}，由 _flight_names 按序列算好。"""
-    status = str(record["status"] or "").strip()
-    kind = cn_kind(status)
-    if kind:
-        return kind_name(kind, ctx)
-    if record["record_at"] in flights.get(status, {}):
-        return flights[status][record["record_at"]]
-    city = _city_of(record.get("detail")) if record.get("detail") else ""
-    if status.startswith("已交承运商运输"):
-        return f"交航（{city}）" if city else "交航"
-    if status.startswith("航空公司接收"):
-        return f"航空公司接收（{city}）" if city else "航空公司接收"
-    if status == "到达寄达地":
-        return "航班到达日本"
+_logged_unknown_cn: set = set()
+
+
+def _unknown_cn(status: str) -> str:
+    """没收录的中国邮政事件：显示原文（外部数据无法穷举），同一进程同一描述只记一次日志，便于以后补表。"""
+    if status and status not in _logged_unknown_cn:
+        _logged_unknown_cn.add(status)
+        print(f"[汉化] 未收录的中国邮政事件：{status}", flush=True)
     return status
 
 
+def _exchange_display(name: str) -> str:
+    """「威海国际」→ 威海国际互换局；「山东省威海市国际互换局」→ 威海国际互换局；其他原样。"""
+    text = str(name or "").strip()
+    if "国际互换局" in text:
+        return f"{_city_of(text)}国际互换局"
+    if text.endswith("国际"):
+        return f"{text}互换局"
+    return text
+
+
+def cn_display(record, ctx: Context, flights: dict):
+    """中国邮政一条事件的 (显示名, 段覆盖, 是否总显示)。共有类型（cn_kind）的名字由 kind_name 统一给，这里不管。
+    - 揽收网点的分拣与离开（同一分钟两条）在 build_nodes 里合成「离开揽收网点 X → Y」；
+    - 「邮件离开【…国际互换局】」是出口直封之后的物理离开：「威海国际互换局 发往机场」；
+    - 航班按序列命名（_flight_names）：第二段航班的「飞机进港」是「韩国→日本 航班落地」，归日本段且总显示；
+    - 「到达寄达地」是「日本邮政接收（寄达地）」，日本段起点，总显示。
+    其余没收录的显示原文并记日志。"""
+    status = str(record["status"] or "").strip()
+    at = record["record_at"]
+    for prefix, named in flights.items():
+        if status.startswith(prefix) and at in named:
+            name, segment = named[at]
+            return name, segment, segment == "japan"
+    city = _city_of(record.get("detail")) if record.get("detail") else ctx.city
+    if status.startswith("已交承运商运输"):
+        return (f"交航（{city}）" if city else "交航"), None, False
+    if status.startswith("航空公司接收"):
+        return (f"航空公司接收（{city}）" if city else "航空公司接收"), None, False
+    if status.startswith("航空公司启运"):
+        return "航班起飞", None, False
+    if status.startswith("飞机进港"):
+        return "航班落地", None, False
+    if status == "到达寄达地":
+        return "日本邮政接收（寄达地）", "japan", True
+    if status.startswith("邮件离开【") and "国际互换局" in status:
+        return f"{_exchange_display(_bracket(status))} 发往机场", None, False
+    if forecast.record_stage("cn_ems", status) == "left_collection":
+        return f"离开揽收网点 {_bracket(status)}", None, False
+    if "境外自提点" in status:
+        return "到达自提点", None, False
+    match = re.match(r"^邮件到达【([^】]+)】", status)
+    if match:
+        return f"到达{match.group(1)}", None, False
+    return _unknown_cn(status), None, False
+
+
+def _left_collection_name(group) -> str:
+    """揽收网点的分拣 + 离开合成一个节点：「离开揽收网点 威海市丹东路第二揽投部 → 威海国际互换局」。"""
+    office = dest = None
+    for member in group:
+        name = _bracket(member["status"])
+        office = office or name
+        match = re.search(r"正在发往【([^】]+)】", member["status"])
+        if match:
+            dest = _exchange_display(match.group(1))
+    return f"离开揽收网点 {office} → {dest}" if dest else f"离开揽收网点 {office}"
+
+
 def _flight_names(cn_records, ctx: Context) -> dict:
-    """航班事件按序列命名：{描述: {record_at: 名字}}。两段航班：第一条启运「中国→韩国 航班起飞」、
-    其后第一条飞机进港「到达韩国中转」、第二条启运「韩国→日本 航班起飞」；之后的飞机进港「飞机抵达日本」。
-    一段航班：启运「中国→日本 航班起飞」，之后的飞机进港「飞机抵达日本」。"""
+    """航班事件按序列命名：{描述前缀: {record_at: (名字, 段覆盖)}}。
+    两段航班：第一条启运「中国→韩国 航班起飞」、其后第一条飞机进港「到达韩国中转」、第二条启运「韩国→日本 航班起飞」、
+    之后的飞机进港「韩国→日本 航班落地」（归日本段）。一段航班：启运「中国→日本 航班起飞」，之后的飞机进港「中国→日本 航班落地」。"""
     departs = sorted({r["record_at"] for r in cn_records if str(r["status"]).startswith("航空公司启运")})
     arrives = sorted({r["record_at"] for r in cn_records if str(r["status"]).startswith("飞机进港")})
     result = {"航空公司启运": {}, "飞机进港": {}}
@@ -280,19 +345,19 @@ def _flight_names(cn_records, ctx: Context) -> dict:
     transit = ctx.transit_name()
     if len(departs) >= 2:
         first, second = departs[0], departs[1]
-        result["航空公司启运"][first] = f"{ctx.origin}→{transit} 航班起飞"
-        result["航空公司启运"][second] = f"{transit}→日本 航班起飞"
+        result["航空公司启运"][first] = (f"{ctx.origin}→{transit} 航班起飞", None)
+        result["航空公司启运"][second] = (f"{transit}→日本 航班起飞", None)
         landed = [at for at in arrives if first <= at <= second]
         if landed:
-            result["飞机进港"][landed[0]] = f"到达{transit}中转"
+            result["飞机进港"][landed[0]] = (f"到达{transit}中转", None)
         for at in arrives:
             if at > second:
-                result["飞机进港"][at] = "飞机抵达日本"
+                result["飞机进港"][at] = (f"{transit}→日本 航班落地", "japan")
     else:
-        result["航空公司启运"][departs[0]] = f"{ctx.origin}→日本 航班起飞"
+        result["航空公司启运"][departs[0]] = (f"{ctx.origin}→日本 航班起飞", None)
         for at in arrives:
             if at > departs[0]:
-                result["飞机进港"][at] = "飞机抵达日本"
+                result["飞机进港"][at] = (f"{ctx.origin}→日本 航班落地", "japan")
     return result
 
 
@@ -303,13 +368,14 @@ def _fmt(moment, date_only=False) -> str:
 
 
 def _dedupe(records) -> list:
-    seen, result = set(), []
+    """同单号挂在多个任务下的重复记录：按 (来源, record_at, 状态) 去重，detail 取信息更多（更长）的那条
+    （日本邮政同一行有的任务抓到时带「配達予定日」、有的不带）。"""
+    best: dict = {}
     for record in records or []:
-        key = (record["source"], record["record_at"], record["status"], record.get("detail") or "")
-        if key not in seen:
-            seen.add(key)
-            result.append(record)
-    return result
+        key = (record["source"], record["record_at"], record["status"])
+        if key not in best or len(str(record.get("detail") or "")) > len(str(best[key].get("detail") or "")):
+            best[key] = record
+    return list(best.values())
 
 
 def _close(a, b) -> bool:
@@ -343,45 +409,58 @@ def build_nodes(records, milestones=None, *, tracking_number="", transit_region=
             kind = kind if kind in SHARED_KINDS else None
             name = jp_name(status, record.get("detail", ""), ctx)
             detail = jp_status.detail_zh(record.get("detail", ""))
+            segment_override, pinned = None, False
         else:
             kind = cn_kind(status)
             stage = forecast.record_stage("cn_ems", status, record.get("detail", ""))
-            name = cn_name(record, ctx, flights)
+            name, segment_override, pinned = cn_display(record, ctx, flights)
+            if kind is None and stage == "left_collection":
+                kind = "left_collection"
             detail = str(record.get("detail") or "")
         members.append({
             "source": record["source"], "moment": moment, "date_only": date_only, "kind": kind,
-            "stage": stage, "name": name, "detail": detail,
+            "stage": stage, "name": name, "detail": detail, "segment": segment_override, "pinned": pinned,
             "status": status, "record_at": record["record_at"],
         })
     members.sort(key=lambda m: (m["moment"], m["source"]))
 
-    # 共有节点：同 kind、不同来源、时间相近的归为一组；同来源的同类事件各自成组
+    # 归并：先按语义（同 kind）再按时间（≤ MATCH_SECONDS），同一语义多个候选取时间最近的。
+    # 跨来源的共有节点每组每个来源只一条（同来源的同类事件各自成节点）；
+    # 唯一的同来源合并是揽收网点的「完成分拣」与「离开」（SAME_SOURCE_KINDS），同一分钟的两条合成一个节点
     groups = []
     for member in members:
-        target = None
+        best, best_gap = None, None
         if member["kind"]:
             for group in groups:
                 if group[0]["kind"] != member["kind"]:
                     continue
-                if any(other["source"] == member["source"] for other in group):
+                if member["kind"] not in SAME_SOURCE_KINDS and any(other["source"] == member["source"] for other in group):
                     continue
-                if any(_close(other, member) for other in group):
-                    target = group
-                    break
-        if target is None:
+                close = [other for other in group if _close(other, member)]
+                if not close:
+                    continue
+                gap = min(abs((other["moment"] - member["moment"]).total_seconds()) for other in close)
+                if best_gap is None or gap < best_gap:
+                    best, best_gap = group, gap
+        if best is None:
             groups.append([member])
         else:
-            target.append(member)
+            best.append(member)
 
     nodes = []
     for group in groups:
         first = min(group, key=lambda m: m["moment"])
         jp_member = next((m for m in group if m["source"] == "jp_post"), None)
         kind = first["kind"]
-        segment = forecast.segment_at(stages, first["moment"]) or forecast.stage_segment(first["stage"] or "accepted")
+        segment = (first["segment"] or forecast.segment_at(stages, first["moment"])
+                   or forecast.stage_segment(first["stage"] or "accepted"))
         primary = SEGMENT_PRIMARY[segment] if has_cn else ("milestone" if segment == "warehouse" else "jp_post")
         sources = [m["source"] for m in sorted(group, key=lambda m: m["moment"])]
-        if kind:
+        if kind in SAME_SOURCE_KINDS:
+            key = f"{kind}@{_fmt(first['moment'], first['date_only'])}"
+            name = _left_collection_name(group)
+            visible = first["source"] == primary
+        elif kind:
             key = f"{kind}@{_fmt(first['moment'], first['date_only'])}"
             name = kind_name(kind, ctx, jp_member["detail"] if jp_member and first["stage"] not in forecast.ORIGIN_SIDE_STAGES else None)
             # 共有节点：主来源报了就显示，主来源没报、另一来源先报也先显示
@@ -389,8 +468,8 @@ def build_nodes(records, milestones=None, *, tracking_number="", transit_region=
         else:
             key = f"{first['source']}:{first['status']}@{first['record_at']}"
             name = first["name"]
-            # 例外：「航班到达日本」（landed_destination）是日本段的起点，只有中国邮政会报，日本段虽以日本邮政为主也显示
-            visible = first["source"] == primary or first["stage"] == "landed_destination"
+            # 例外（pinned）：第二段航班落地与「日本邮政接收（寄达地）」是日本段的起点，只有中国邮政会报，日本段虽以日本邮政为主也显示
+            visible = first["source"] == primary or first["pinned"]
         nodes.append({
             "key": key,
             "kind": kind,
@@ -415,7 +494,17 @@ def build_nodes(records, milestones=None, *, tracking_number="", transit_region=
             "stage": stage, "name": forecast.stage_label(stage), "sources": ["milestone"], "original": None,
             "detail": "", "visible": True, "times": [],
         })
-    nodes.sort(key=lambda node: (node["moment"], forecast.STAGE_ORDER.get(node["stage"] or "", 0)))
+    # 只有日期的节点（「持ち出し中」）按当天 12:00 算会排到当天更晚阶段（如上午妥投）之后：
+    # 排序时挪到同一天第一个阶段顺序更靠后的有时刻节点之前
+    order = lambda node: forecast.STAGE_ORDER.get(node["stage"] or "", -1)  # noqa: E731
+    def sort_moment(node):
+        if len(node["at"]) > 10 or node["stage"] is None:
+            return node["moment"]
+        later = [other["moment"] for other in nodes
+                 if len(other["at"]) > 10 and other["moment"].date() == node["moment"].date() and order(other) > order(node)]
+        return min([node["moment"], *[moment - timedelta(seconds=1) for moment in later]])
+
+    nodes.sort(key=lambda node: (sort_moment(node), order(node)))
     return nodes
 
 
