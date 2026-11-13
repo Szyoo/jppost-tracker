@@ -120,7 +120,7 @@ def test_status_change_records_intermediate_states_and_push_ok(tracker, task, mo
     net = Net(tracker, monkeypatch)
     net.page = page_html(R1)
     assert run_once(tracker, task["id"]) is False
-    assert kinds(task["id"]) == [("status_change", info(R1)), ("push_ok", info(R1))]
+    assert kinds(task["id"]) == [("status_change", info(R1)), ("push_ok", "日本收寄")]
 
     # 两次轮询之间走过两个状态：中间那条也要记下来，推送只推最新一条
     net.page = page_html(R1, R2, R3)
@@ -128,7 +128,7 @@ def test_status_change_records_intermediate_states_and_push_ok(tracker, task, mo
     assert kinds(task["id"])[2:] == [
         ("status_change", info(R2)),
         ("status_change", info(R3)),
-        ("push_ok", info(R3)),
+        ("push_ok", "到达東京"),
     ]
     assert len(net.pushes) == 2
 
@@ -145,7 +145,7 @@ def test_push_failure_logged_once_and_status_not_duplicated_on_retry(tracker, ta
     assert run_once(tracker, task["id"]) is True
     assert run_once(tracker, task["id"]) is True
     assert run_once(tracker, task["id"]) is True
-    assert kinds(task["id"]) == [("status_change", info(R1)), ("push_fail", info(R1))]
+    assert kinds(task["id"]) == [("status_change", info(R1)), ("push_fail", "日本收寄")]
     events, _ = storage.list_task_events(task["id"])
     assert events[0]["detail"] == "HTTP 500"
     assert storage.get_task(task["id"])["last_tracking_info"] == ""
@@ -154,15 +154,15 @@ def test_push_failure_logged_once_and_status_not_duplicated_on_retry(tracker, ta
     assert run_once(tracker, task["id"]) is False
     assert kinds(task["id"]) == [
         ("status_change", info(R1)),
-        ("push_fail", info(R1)),
-        ("push_ok", info(R1)),
+        ("push_fail", "日本收寄"),
+        ("push_ok", "日本收寄"),
     ]
 
     # 新状态再次推送失败：要重新记一条失败
     net.page = page_html(R1, R2)
     net.push_ok = False
     run_once(tracker, task["id"])
-    assert kinds(task["id"])[-2:] == [("status_change", info(R2)), ("push_fail", info(R2))]
+    assert kinds(task["id"])[-2:] == [("status_change", info(R2)), ("push_fail", "经过（東京）")]
 
 
 def test_query_error_only_logged_on_transitions(tracker, task, monkeypatch):

@@ -136,6 +136,14 @@ GROUPS = [
                 "wide": True,
             },
             {
+                "key": "PUSH_FORECAST",
+                "label": "推送附带到达预测",
+                "desc": "状态变化推送的正文末尾附上「当前：段·阶段（第 N 天）」与「预计签收：…」两行；预测算不出来时照常推送原文。",
+                "type": "bool",
+                "default": "1",
+                "apply": "tracker",
+            },
+            {
                 "key": "AUTO_ARCHIVE_DELIVERED",
                 "label": "签收后自动归档",
                 "desc": "物流记录出现签收状态（如「お届け先にお届け済み」）时，推送成功后自动归档该任务、停止轮询；推送失败会照常重试，成功后再归档。关闭后签收的任务照旧轮询。",
@@ -148,7 +156,7 @@ GROUPS = [
     {
         "key": "forecast",
         "title": "到达预测",
-        "desc": "预测区块与国内段履历的显示方式。",
+        "desc": "预测区块、合并履历与推送里的显示方式。",
         "fields": [
             {
                 "key": "TRANSIT_REGION_LABEL",
@@ -159,7 +167,7 @@ GROUPS = [
                 # 未设置（.env 与环境变量里都没有这个键）时取 default；显式留空表示用通用名，不回落到 default
                 "unset_default": True,
                 "placeholder": "留空显示为「中转段」",
-                "apply": "live",
+                "apply": "tracker",
             },
         ],
     },
@@ -311,7 +319,8 @@ def validate_value(key: str, text: str) -> str:
 
 
 def transit_region_label(environ=None) -> str:
-    """中转地显示名（TRANSIT_REGION_LABEL，live：每次读进程环境变量，后台保存时会同步写进去）。
+    """中转地显示名（TRANSIT_REGION_LABEL）。Web 每次读进程环境变量（后台保存时会同步写进去）；
+    追踪脚本传入每轮重读的设置（tracker.load_tracker_env，没设置的键不在里面）。
     未设置返回默认「韩国」，显式留空返回空串（前端显示「中转段」等通用名）。"""
     environ = os.environ if environ is None else environ
     field = ENV_FIELDS["TRANSIT_REGION_LABEL"]

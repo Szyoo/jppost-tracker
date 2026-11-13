@@ -40,7 +40,8 @@ def test_serialized_groups_carry_apply_label_and_tone():
 
 def test_tracker_rereads_exactly_the_tracker_fields():
     assert set(tracker.TRACKER_ENV_KEYS) == set(env_schema.TRACKER_ENV_KEYS)
-    assert {"BARK_SERVER_INTERNAL", "BARK_SERVER_PUBLIC", "BARK_SERVER", "REQUEST_TIMEOUT", "AUTO_ARCHIVE_DELIVERED", "TRACK17_API_KEY"} == set(env_schema.TRACKER_ENV_KEYS)
+    assert {"BARK_SERVER_INTERNAL", "BARK_SERVER_PUBLIC", "BARK_SERVER", "REQUEST_TIMEOUT", "AUTO_ARCHIVE_DELIVERED", "TRACK17_API_KEY",
+            "TRANSIT_REGION_LABEL", "PUSH_FORECAST"} == set(env_schema.TRACKER_ENV_KEYS)
     assert "REQUEST_TIMEOUT" in app_module.SYSTEM_ENV_KEYS
 
 

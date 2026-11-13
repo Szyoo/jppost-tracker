@@ -1021,7 +1021,7 @@ app.component('task-timeline', {
                     <div class="timeline-main">
                         <div class="timeline-head">
                             <span :class="['pill', event.meta.tone]">[[ event.meta.label ]]</span>
-                            <span class="timeline-title">[[ event.status || '—' ]]</span>
+                            <span class="timeline-title">[[ event.status_display || event.status || '—' ]]</span>
                             <time class="timeline-time">[[ event.created_at ]]</time>
                         </div>
                         <p v-if="extraText(event)" class="timeline-desc">[[ extraText(event) ]]</p>

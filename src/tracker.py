@@ -4,10 +4,13 @@ import time
 
 import requests
 from bs4 import BeautifulSoup
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 
 import bark
+import env_schema
+import forecast
 import track17
+from route_nodes import node_notified, push_line, pushable_nodes
 # 认定为「已签收」的状态（只做整串精确匹配）定义在 forecast，签收自动归档与到达预测的阶段映射共用同一份
 from forecast import DELIVERED_STATUSES
 from forecast import origin_country as forecast_origin_country
@@ -18,8 +21,13 @@ from storage import (
     ensure_storage,
     list_due_tasks,
     load_system_env,
+    mark_nodes_notified,
+    notified_node_keys,
     parse_bark_keys,
+    record_carrier_records,
     record_cn_records,
+    task_forecast,
+    task_nodes,
     task_has_event,
     track17_catchup_candidates,
     track17_state,
@@ -54,6 +62,17 @@ if hasattr(time, "tzset"):
         time.tzset()
     except Exception:
         pass
+
+
+def load_tracker_env() -> dict:
+    """每轮重读的系统设置。带 unset_default 的键（TRANSIT_REGION_LABEL）在 .env 与环境变量里都没出现时从结果里去掉，
+    这样读取方能区分「没设置（用默认）」与「显式留空（用通用名）」。"""
+    values = load_system_env(DOTENV_PATH, TRACKER_ENV_KEYS)
+    present = set(dotenv_values(DOTENV_PATH)) if os.path.exists(DOTENV_PATH) else set()
+    for key in TRACKER_ENV_KEYS:
+        if ENV_FIELDS[key].get("unset_default") and key not in present and key not in os.environ:
+            values.pop(key, None)
+    return values
 
 
 def _normalize_int(value, default: int) -> int:
@@ -101,14 +120,22 @@ def auto_archive_enabled(system_env: dict) -> bool:
     return ENV_FIELDS["AUTO_ARCHIVE_DELIVERED"]["default"] == "1"
 
 
-def build_push_message(config: dict, latest_info: str) -> tuple[str, str]:
-    """推送的标题与正文也必须带任务标识：同一账号的多个包裹会推到同一台设备上，
-    标题若都是"快递更新通知"，在手机通知栏里根本分不清是哪一件。"""
+def build_push_message(config: dict, nodes: list, forecast_lines=()) -> tuple[str, str]:
+    """一轮的新节点合成一条推送。标题 = 最新节点名 · 任务标识（同一账号多个包裹推到同一台设备，
+    标题必须分得清是哪一件）；正文第一行是最新节点（日本邮政来源带原文），其后列出本轮其余新节点，
+    有备注名时再带单号，末尾是到达预测的「当前 / 预计签收」两行（PUSH_FORECAST 关闭或预测失败时没有）。"""
     label = config["label"]
     number = config["tracking_number"]
+    latest = nodes[-1]
+    title = f"{latest['name']} · {label or number}"
+    lines = [push_line(latest)]
+    if len(nodes) > 1:
+        lines.append("本轮还有：")
+        lines.extend(push_line(node) for node in nodes[:-1])
     if label:
-        return f"快递更新 · {label}", f"{number} {latest_info}"
-    return f"快递更新 · {number}", latest_info
+        lines.append(f"单号 {number}")
+    lines.extend(forecast_lines or ())
+    return title, "\n".join(lines)
 
 
 def build_runtime_config(task: dict, system_env: dict) -> dict:
@@ -350,12 +377,50 @@ def catch_up_cn_legs(system_env: dict, *, timeout: int, now=None) -> int:
         return 0
 
 
+def transit_region(system_env: dict) -> str:
+    """中转地名：system_env 里没有这个键（.env 与环境变量都没设）时按默认，显式留空用通用名。"""
+    return env_schema.transit_region_label(system_env)
+
+
+def push_forecast_enabled(system_env: dict) -> bool:
+    """系统设置 PUSH_FORECAST：留空或不认识的值按默认（开）。"""
+    value = str(system_env.get("PUSH_FORECAST", "") or "").strip().lower()
+    if value in BOOL_TRUE:
+        return True
+    if value in BOOL_FALSE:
+        return False
+    return ENV_FIELDS["PUSH_FORECAST"]["default"] == "1"
+
+
+def select_new_nodes(task_id: int, number: str, region: str):
+    """这轮要推送的节点与要静默记下的节点：(new, silent)。
+    - 可推送节点：合并履历里可见的承运方节点（route_nodes.pushable_nodes）；
+    - 已推送过的（route_nodes.node_notified：同一节点另一边晚到也算推送过）跳过；
+    - 本任务本单号还没推送过任何节点（首次抓取）：只推最新一条，其余静默记下（沿用「首次只推最新」的语义）；
+    - 早于已推送节点里最晚那个的新节点（例如 17TRACK 数据晚到、补上了更早的国内段事件）静默记下，不补发。"""
+    nodes = pushable_nodes(task_nodes(task_id, region))
+    notified = notified_node_keys(task_id, number)
+    fresh = [node for node in nodes if not node_notified(node, notified)]
+    if not fresh:
+        return [], []
+    if not notified:
+        return fresh[-1:], fresh[:-1]
+    done = [node["moment"] for node in nodes if node_notified(node, notified)]
+    if not done:
+        return fresh, []
+    latest = max(done)
+    return [node for node in fresh if node["moment"] >= latest], [node for node in fresh if node["moment"] < latest]
+
+
 def process_task(task: dict, system_env: dict) -> bool:
     """处理一个任务。返回 True 表示这轮需要尽快重试（推送失败），
     由主循环按退避安排下一次，本函数绝不阻塞等待。
     所有回写都带上抓取时的单号：抓取期间单号被改了，这轮结果直接作废。
-    抓到履历的每条路径（无变化、未配推送、推送成功或失败）都把全部记录交给 carrier_records：
-    履历是事实，与推送成败无关，到达预测靠它积累经验。"""
+
+    每轮先同步两边（17TRACK 的中国邮政、日本邮政官网），把日本邮政履历写进 carrier_records，
+    再算合并履历（route_nodes），对「还没推送过、且在合并履历里可见」的新节点推送：同一轮多个新节点合成一条，
+    哪边先报就由那一轮推送，另一边晚到的同一节点不再推送（notified_nodes）。推送失败的节点不记，下轮按退避重推。
+    task_events 的 status_change 照旧按日本邮政履历写；签收自动归档照旧按日本邮政的签收状态判断。"""
     config = build_runtime_config(task, system_env)
     prefix = config["log_prefix"]
     task_id = config["task_id"]
@@ -368,7 +433,7 @@ def process_task(task: dict, system_env: dict) -> bool:
         update_task_state(task_id, error=error, tracking_number=number, query_ok=False)
         return False
 
-    # 始发国段与日本邮政互不影响：sync_cn_leg 自己兜住全部异常，不推送、只记录
+    # 始发国段与日本邮政互不影响：sync_cn_leg 自己兜住全部异常
     sync_cn_leg(task_id, number, system_env, timeout=config["request_timeout"], log_prefix=prefix)
 
     records = get_tracking_records(config)
@@ -382,30 +447,32 @@ def process_task(task: dict, system_env: dict) -> bool:
     ok_error = "" if push_enabled else NO_PUSH_HINT
     auto_archive_on = auto_archive_enabled(system_env)
 
-    if current_info == config["last_tracking_info"]:
-        print(f"{prefix} 暂无更新。")
-        # 已签收、上轮也已推送过，但从没自动归档过（开关后来才打开、或功能上线前就签收了的任务）：
+    jp_changed = current_info != config["last_tracking_info"]
+    new_records = records_since(records, config["last_tracking_info"]) if jp_changed else []
+    if jp_changed:
+        delivered = auto_archive_on and (
+            is_delivered(current_info) or any(is_delivered(record["info"]) for record in new_records)
+        )
+    else:
+        # 已签收、上轮也已处理过，但从没自动归档过（开关后来才打开、或功能上线前就签收了的任务）：
         # 这轮补归档。自动归档过又被用户取消归档的不再归档，尊重用户的选择。
-        catch_up = (
+        delivered = (
             auto_archive_on
             and is_delivered(current_info)
             and not task_has_event(task_id, number, "auto_archived")
         )
-        update_task_state(
-            task_id, latest_info=current_info, error=ok_error, tracking_number=number,
-            carrier_records=records, query_ok=True,
-            auto_archive=catch_up,
-        )
-        if catch_up:
-            print(f"{prefix} 已签收，自动归档，不再轮询。")
+
+    # 先把这轮的日本邮政履历落库，合并节点才算得上它；单号已被改走就整轮作废
+    if record_carrier_records(task_id, number, records) is None:
         return False
+    region = transit_region(system_env)
+    new_nodes, silent = select_new_nodes(task_id, number, region)
+    if silent:
+        mark_nodes_notified(task_id, number, silent)
 
-    new_records = records_since(records, config["last_tracking_info"])
-    delivered = auto_archive_on and (
-        is_delivered(current_info) or any(is_delivered(record["info"]) for record in new_records)
-    )
-
-    if not push_enabled:
+    if not push_enabled or not new_nodes:
+        if not jp_changed and not new_nodes:
+            print(f"{prefix} 暂无更新。")
         update_task_state(
             task_id,
             latest_info=current_info,
@@ -415,12 +482,22 @@ def process_task(task: dict, system_env: dict) -> bool:
             query_ok=True,
             new_records=new_records,
             auto_archive=delivered,
+            # 没配推送：新节点直接记下，以后配上 Keys 也不补发旧节点
+            notified_nodes=new_nodes,
         )
         if delivered:
-            print(f"{prefix} 已签收（未配置推送），自动归档，不再轮询。")
+            print(f"{prefix} 已签收，自动归档，不再轮询。")
         return False
 
-    title, body = build_push_message(config, current_info)
+    forecast_lines = []
+    if push_forecast_enabled(system_env):
+        try:
+            forecast_lines = forecast.push_forecast_lines(task_forecast(task_id, transit_region=region))
+        except Exception as exc:  # 预测失败绝不影响推送
+            print(f"{prefix} 推送附带的到达预测计算失败：{exc}")
+            forecast_lines = []
+    title, body = build_push_message(config, new_nodes, forecast_lines)
+    push_status = new_nodes[-1]["name"]
     pushed, reason = send_bark_notification(config, title, body)
     if pushed:
         # 签收的这轮先照常推送，推送成功后在同一次回写里归档：事件顺序为 status_change → push_ok → auto_archived
@@ -433,18 +510,18 @@ def process_task(task: dict, system_env: dict) -> bool:
             carrier_records=records,
             query_ok=True,
             new_records=new_records,
-            push_status=current_info,
+            push_status=push_status,
             push_detail=f"已推送到 {len(config['bark_keys'])} 个设备",
             auto_archive=delivered,
+            notified_nodes=new_nodes,
         )
         if delivered:
             print(f"{prefix} 已签收，推送成功后自动归档，不再轮询。")
         return False
 
-    # 推送失败时刻意不写入 latest_info：写了下一轮就会判定"无更新"而不再推送，
-    # 这条物流变化的通知就永久丢了。保持旧值，等重试成功再落库。
+    # 推送失败：节点不记为已推送，latest_info 也不写（保持旧值），下轮按退避重推同一批节点。
     # 状态变化事件照常记（storage 侧去重，重试时不会重复记）。
-    # 签收也一样：这轮不归档、保持启用，按退避重试推送，推送成功的那一轮再归档（签收通知不能丢）。
+    # 签收也一样：这轮不归档、保持启用，推送成功的那一轮再归档（签收通知不能丢）。
     update_task_state(
         task_id,
         error=f"推送失败（{reason}），稍后重试。",
@@ -452,7 +529,7 @@ def process_task(task: dict, system_env: dict) -> bool:
         carrier_records=records,
         query_ok=True,
         new_records=new_records,
-        push_status=current_info,
+        push_status=push_status,
         push_failed=reason,
     )
     return True
@@ -469,7 +546,7 @@ def main():
         while True:
             if time.time() - last_cn_catchup_at >= CN_CATCHUP_INTERVAL:
                 last_cn_catchup_at = time.time()
-                catchup_env = load_system_env(DOTENV_PATH, TRACKER_ENV_KEYS)
+                catchup_env = load_tracker_env()
                 catch_up_cn_legs(
                     catchup_env, timeout=_normalize_int(catchup_env.get("REQUEST_TIMEOUT", "15"), 15)
                 )
@@ -503,7 +580,7 @@ def main():
 
             # 每轮重读 .env：后台「系统设置」的修改与清空在下一轮即生效，
             # 文件里出现过的键以文件为准，不会回落到启动时继承的旧环境变量
-            system_env = load_system_env(DOTENV_PATH, TRACKER_ENV_KEYS)
+            system_env = load_tracker_env()
             for task in due_tasks:
                 task_id = int(task["id"])
                 interval = _task_interval(task)

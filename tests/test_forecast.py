@@ -663,14 +663,19 @@ def test_js_stage_map_matches_python():
     assert {key: {"label": label, "segment": segment} for key, label, segment in found} == forecast.STAGE_META
 
 
-def test_js_segment_basis_and_transit_maps_match_python():
+def test_js_segment_basis_and_node_source_maps_match_python():
     pairs = re.findall(r"(\w+): \{ label: '([^']+)' \}", _js_block("SEGMENT_META"))
     assert [key for key, _ in pairs] == list(forecast.SEGMENT_META)
     assert {key: {"label": label} for key, label in pairs} == forecast.SEGMENT_META
     pairs = re.findall(r"(\w+): \{ label: '([^']+)' \}", _js_block("BASIS_META"))
     assert {key: {"label": label} for key, label in pairs} == forecast.BASIS_META
-    pairs = re.findall(r"(\w+): '([^']+)'", _js_block("TRANSIT_STAGE_TEMPLATES"))
-    assert dict(pairs) == forecast.TRANSIT_STAGE_TEMPLATES
+    import route_nodes
+
+    pairs = re.findall(r"(\w+): \{ label: '([^']+)' \}", _js_block("NODE_SOURCE_META"))
+    assert {key: {"label": label} for key, label in pairs} == route_nodes.NODE_SOURCE_META
+    src = _js_source()
+    assert f"const GENERIC_ORIGIN = '{forecast.GENERIC_ORIGIN}';" in src
+    assert f"const GENERIC_TRANSIT = '{forecast.GENERIC_TRANSIT}';" in src
 
 
 def test_js_confidence_map_matches_python():

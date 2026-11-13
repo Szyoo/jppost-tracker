@@ -101,7 +101,7 @@ def test_delivered_push_ok_archives_after_push(tracker, task, net):
     assert kinds(task["id"])[2:] == [
         ("status_change", info(R2)),
         ("status_change", info(DELIVERED)),
-        ("push_ok", info(DELIVERED)),
+        ("push_ok", "已妥投（東京）"),
         ("auto_archived", info(DELIVERED)),
     ]
     assert len(net.pushes) == 2
@@ -133,8 +133,8 @@ def test_delivered_push_fail_keeps_task_until_push_succeeds(tracker, task, net):
     assert kinds(task["id"]) == [
         ("status_change", info(R1)),
         ("status_change", info(DELIVERED)),
-        ("push_fail", info(DELIVERED)),
-        ("push_ok", info(DELIVERED)),
+        ("push_fail", "已妥投（東京）"),
+        ("push_ok", "已妥投（東京）"),
         ("auto_archived", info(DELIVERED)),
     ]
 

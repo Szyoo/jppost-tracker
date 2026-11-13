@@ -364,9 +364,9 @@ def test_forecast_api_returns_cn_records_and_set_channel(client, db, owner):
     client.post("/login", data={"username": "ella", "password": "pw-ella"})
     body = client.get(f"/api/tasks/{task['id']}/forecast").get_json()
     assert body["forecast"]["suggested_channel"] == "渠道A"
-    records = body["cn_records"]
-    assert records[0] == {"record_at": "2026-11-13 07:17", "status": "到达寄达地处理中心", "detail": "", "segment": "japan"}
-    assert records[-1]["status"] == "中国邮政已收取邮件" and len(records) == len(CN_EVENTS)
+    history = body["history"]
+    assert history[0]["at"] == "2026-11-13 07:17" and history[0]["segment"] == "japan" and history[0]["sources"] == ["cn_ems"]
+    assert history[-1]["name"] == "中国收寄"
     # 「设为该渠道」按钮走现有编辑接口，只带 channel
     assert client.put(f"/api/tasks/{task['id']}", json={"channel": "渠道A"}).status_code == 200
     assert db.get_task(task["id"])["channel"] == "渠道A"

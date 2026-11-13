@@ -26,7 +26,7 @@
           <div class="timeline-main">
             <div class="timeline-head">
               <span class="pill {{ ev.kind_tone }}">{{ ev.kind_label }}</span>
-              <span class="timeline-title">{{ ev.status or '—' }}</span>
+              <span class="timeline-title">{{ ev.status_display or ev.status or '—' }}</span>
               <time class="timeline-time">{{ ev.created_at }}</time>
             </div>
             {%- set extra = [ev.detail, ('旧单号 ' ~ ev.tracking_number) if ev.tracking_number and ev.tracking_number != task.tracking_number else ''] | select | join(' · ') %}
@@ -167,7 +167,7 @@
                 <input name="enabled" type="checkbox" class="switch" {% if task.enabled %}checked{% endif %} />
                 启用追踪
               </label>
-              <p class="task-meta">最近结果 {{ task.last_error or task.last_tracking_info or '暂无记录' }}</p>
+              <p class="task-meta">最近结果 {{ task.last_error or task.last_status_display or task.last_tracking_info or '暂无记录' }}</p>
               <p class="task-meta">最近检查 {{ task.last_checked_at or '-' }} · 最近推送 {{ task.last_push_at or '-' }}</p>
               {{ task_forecast(task) }}
               {{ task_timeline(task) }}

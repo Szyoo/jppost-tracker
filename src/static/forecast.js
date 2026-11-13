@@ -15,28 +15,33 @@ export const STAGE_META = Object.freeze({
     ordered: { label: '下单寄出', segment: 'warehouse' },
     packed: { label: '打包完成', segment: 'warehouse' },
     handed_over: { label: '出库交运', segment: 'warehouse' },
-    accepted: { label: '引受', segment: 'domestic' },
+    accepted: { label: '{origin}收寄', segment: 'domestic' },
     left_collection: { label: '离开揽收网点', segment: 'domestic' },
-    origin_exchange: { label: '到达始发互换局', segment: 'domestic' },
-    origin_customs: { label: '始发国海关', segment: 'domestic' },
-    departed_origin: { label: '离开始发国', segment: 'domestic' },
+    origin_exchange: { label: '到达{origin}国际互换局', segment: 'domestic' },
+    origin_customs: { label: '{origin}出口海关', segment: 'domestic' },
+    departed_origin: { label: '离开{origin}（出境）', segment: 'domestic' },
     handed_to_airline: { label: '交航', segment: 'domestic' },
-    flight_departed: { label: '航班起飞', segment: 'domestic' },
-    transit_arrived: { label: '到达中转地', segment: 'transit' },
-    transit_departed: { label: '离开中转地', segment: 'transit' },
+    flight_departed: { label: '{origin}航班起飞', segment: 'domestic' },
+    transit_arrived: { label: '到达{transit}', segment: 'transit' },
+    transit_departed: { label: '离开{transit}', segment: 'transit' },
     landed_destination: { label: '航班到达日本', segment: 'japan' },
-    arrived_japan: { label: '到达日本', segment: 'japan' },
-    japan_customs: { label: '日本通关', segment: 'japan' },
+    arrived_japan: { label: '到达日本互换局（入境）', segment: 'japan' },
+    japan_customs: { label: '日本进口通关', segment: 'japan' },
     departed_exchange: { label: '离开日本互换局', segment: 'japan' },
     local_arrived: { label: '到达派送局', segment: 'japan' },
     out_for_delivery: { label: '派送中', segment: 'japan' },
     delivered: { label: '签收', segment: 'japan' },
 });
 
-// 与 forecast.TRANSIT_STAGE_TEMPLATES 一一对应：设了中转地名（如「韩国」）时中转段两个阶段的显示名
-export const TRANSIT_STAGE_TEMPLATES = Object.freeze({
-    transit_arrived: '到达{region}',
-    transit_departed: '离开{region}',
+// 与 forecast.GENERIC_ORIGIN / GENERIC_TRANSIT 一致：不知道始发国 / 中转地时的通用名
+const GENERIC_ORIGIN = '始发国';
+const GENERIC_TRANSIT = '中转地';
+
+// 与 route_nodes.NODE_SOURCE_META 一一对应：合并履历节点的来源小标
+export const NODE_SOURCE_META = Object.freeze({
+    milestone: { label: '手填' },
+    cn_ems: { label: '中邮' },
+    jp_post: { label: '日邮' },
 });
 
 // 与 forecast.CONFIDENCE_META 一一对应
@@ -80,17 +85,13 @@ export const stageMeta = (stage) => lookup(STAGE_META, stage, '阶段');
 export const segmentMeta = (segment) => lookup(SEGMENT_META, segment, '段');
 export const confidenceMeta = (key) => lookup(CONFIDENCE_META, key, '可信度');
 export const basisMeta = (key) => lookup(BASIS_META, key, '比较依据');
+export const nodeSourceMeta = (key) => lookup(NODE_SOURCE_META, key, '节点来源');
 export const track17StatusMeta = (key) => lookup(TRACK17_STATUS_META, key, '17TRACK 登记状态');
 
-// 阶段 / 段的显示名：设了中转地名时中转段换成「到达韩国」「韩国段」这类
-export const stageLabel = (stage, region = '') => {
-    const meta = stageMeta(stage);
-    const name = String(region || '').trim();
-    if (name && Object.prototype.hasOwnProperty.call(TRANSIT_STAGE_TEMPLATES, stage)) {
-        return TRANSIT_STAGE_TEMPLATES[stage].replace('{region}', name);
-    }
-    return meta.label;
-};
+// 阶段 / 段的显示名：{origin} 换成始发国名、{transit} 换成中转地名（forecast.origin_name / transit_region），不知道时用通用名
+export const stageLabel = (stage, { transit = '', origin = '' } = {}) => stageMeta(stage).label
+    .replace('{origin}', String(origin || '').trim() || GENERIC_ORIGIN)
+    .replace('{transit}', String(transit || '').trim() || GENERIC_TRANSIT);
 
 export const segmentLabel = (segment, region = '') => {
     const meta = segmentMeta(segment);
@@ -148,7 +149,8 @@ export const progressText = (forecast) => {
     const parts = [];
     if (forecast.origin) parts.push(`${lookup(ORIGIN_TEXT, forecast.origin.stage, '起点')}第 ${forecast.day} 天`);
     const stage = forecast.current.stage;
-    parts.push(`当前：${segmentLabel(stageMeta(stage).segment, forecast.transit_region)} · ${stageLabel(stage, forecast.transit_region)}（已等 ${formatDuration(forecast.current.waited_seconds)}）`);
+    const names = { transit: forecast.transit_region, origin: forecast.origin_name };
+    parts.push(`当前：${segmentLabel(stageMeta(stage).segment, forecast.transit_region)} · ${stageLabel(stage, names)}（已等 ${formatDuration(forecast.current.waited_seconds)}）`);
     return parts.join(' · ');
 };
 
@@ -186,7 +188,7 @@ const readJson = async (response, fallback) => {
     return result;
 };
 
-// 返回 { forecast, cnRecords, task, links, track17 }：cnRecords 是中国邮政始发国段记录（日本时间，按时间倒序，带 segment）；
+// 返回 { forecast, history, task, links, track17 }：history 是合并履历节点（日本时间，按时间倒序，带 segment / sources）；
 // task 是 { archived, atypical }；links 是 { jp_post, track17 }（track17 只有 CN 单号才有）；
 // track17 是登记状态 { status, registered_at, last_synced_at, error }，只在 CN 单号且配了密钥时有
 export const fetchForecast = async (taskId) => {
@@ -197,7 +199,7 @@ export const fetchForecast = async (taskId) => {
     const result = await readJson(response, '加载预测失败');
     return {
         forecast: result.forecast,
-        cnRecords: result.cn_records || [],
+        history: result.history || [],
         task: result.task || {},
         links: result.links || {},
         track17: result.track17 || null,
@@ -277,14 +279,6 @@ const extLink = (href, text) => {
     return link;
 };
 
-// 区块头一行：左边小标题，右边外链胶囊（panel-head 是设计包的两端对齐行）
-const blockHead = (title, link) => {
-    const head = el('div', 'panel-head');
-    head.append(el('h4', 'section-name', title));
-    if (link) head.append(link);
-    return head;
-};
-
 // 17TRACK 登记状态一行：状态胶囊 + 登记 / 同步时间 + 出错原因
 const buildTrack17Status = (view) => {
     const meta = track17StatusMeta(view.status);
@@ -300,32 +294,46 @@ const buildTrack17Status = (view) => {
 
 const segmentHeading = (segment, region) => el('h4', 'section-name', segment ? segmentLabel(segment, region) : '其他');
 
-// 国内段履历：中国邮政的始发国段记录（时间已换算成日本时间），按时间倒序、按段分组，默认收起。
-// 头部：17TRACK 跳转胶囊 + 登记状态（没配密钥时 track17View 为 null，只显示胶囊）
-const buildCnLegNode = (cnRecords, region, { trackUrl = null, track17View = null } = {}) => {
+// 合并履历：后端 route_nodes 合好的节点（日本时间，倒序，带 segment），按段分组，默认收起。
+// 每个节点标来源小标：两边都报了的显示「中邮·日邮 一致」。
+// 头部：日本邮政与 17TRACK 外链胶囊 + 17TRACK 登记状态（只有 CN 单号；没配密钥时只有胶囊）
+const buildHistoryNode = (history, region, { links = {}, track17View = null } = {}) => {
     const box = el('details', 'disclosure flush');
-    box.append(el('summary', '', `国内段履历（来自中国邮政，${cnRecords.length} 条）`));
+    box.append(el('summary', '', `合并履历（${history.length} 个节点）`));
     const body = el('div', 'disclosure-body');
-    body.append(blockHead('中国邮政', trackUrl ? extLink(trackUrl, '17TRACK') : null));
+    const head = el('div', 'panel-head');
+    head.append(el('h4', 'section-name', '履历来源'));
+    const pills = el('span');
+    if (links.jp_post) pills.append(extLink(links.jp_post, '日本邮政'));
+    if (links.track17) pills.append(' ', extLink(links.track17, '17TRACK'));
+    head.append(pills);
+    body.append(head);
     if (track17View) body.append(buildTrack17Status(track17View));
-    if (!cnRecords.length) body.append(el('p', 'hint', '还没有国内段记录。'));
-    for (const group of groupBySegment(cnRecords, (record) => record.segment || null)) {
+    if (!history.length) body.append(el('p', 'hint', '还没有履历。'));
+    for (const group of groupBySegment(history, (node) => node.segment || null)) {
         const list = el('ol', 'timeline compact');
-        for (const record of group.items) {
+        for (const node of group.items) {
             const row = el('li', 'timeline-item');
             row.append(el('span', 'dot idle'));
             const main = el('div', 'timeline-main');
-            const head = el('div', 'timeline-head');
-            const at = splitTime(record.record_at);
-            head.append(el('span', 'timeline-title', record.status), el('time', 'timeline-time', `${at.md} ${at.weekday} ${at.hm}`.trim()));
-            main.append(head);
-            if (record.detail) main.append(el('p', 'timeline-desc', record.detail));
+            const top = el('div', 'timeline-head');
+            const at = splitTime(node.at);
+            top.append(el('span', 'timeline-title', node.name));
+            if (node.sources.length > 1) {
+                top.append(el('span', 'pill ok', `${node.sources.map((source) => nodeSourceMeta(source).label).join('·')} 一致`));
+            } else {
+                top.append(el('span', 'pill', nodeSourceMeta(node.sources[0]).label));
+            }
+            top.append(el('time', 'timeline-time', `${at.md} ${at.weekday} ${at.hm}`.trim()));
+            main.append(top);
+            const desc = [node.original ? `原文：${node.original}` : '', node.detail || ''].filter(Boolean).join(' · ');
+            if (desc) main.append(el('p', 'timeline-desc', desc));
             row.append(main);
             list.append(row);
         }
         body.append(segmentHeading(group.segment, region), list);
     }
-    if (cnRecords.length) body.append(el('p', 'hint', '时间已换算成日本时间。'));
+    if (history.length) body.append(el('p', 'hint', '时间均为日本时间；每段以主来源为准（国内段、中转段看中国邮政，日本段看日本邮政）。'));
     box.append(body);
     return box;
 };
@@ -353,24 +361,21 @@ const buildAtypicalNode = (taskId, atypical, onUpdated) => {
     return label;
 };
 
-// 预测区块：进度一行 → 收寄网点与渠道推断 →（已比以往都慢）→ 剩余阶段列表 → 依据一行 → 国内段履历。
+// 预测区块：进度一行 → 收寄网点与渠道推断 →（非常规件开关）→ 合并履历 →（已比以往都慢）→ 剩余阶段列表 → 依据一行。
 // 全部用 textContent，不拼 HTML。映射查不到的阶段 / 可信度会抛错，由调用方显示成加载失败。
-// options：cnRecords 国内段记录；task { archived, atypical }；taskId + onUpdated(result) 用于「设为该渠道」与非常规件开关。
+// options：history 合并履历；task { archived, atypical }；links / track17 外链与登记状态；
+// taskId + onUpdated(result) 用于「设为该渠道」与非常规件开关。
 export const buildForecastNode = (forecast, {
-    cnRecords = [], task = {}, links = {}, track17 = null, taskId = null, onUpdated = null,
+    history = [], task = {}, links = {}, track17 = null, taskId = null, onUpdated = null,
 } = {}) => {
     const region = forecast.transit_region;
+    const names = { transit: region, origin: forecast.origin_name };
     const root = el('div', 'forecast-body');
-    // 日本邮政段与国内段对称：各自一个外链胶囊
-    if (links.jp_post) root.append(blockHead('日本邮政', extLink(links.jp_post, '日本邮政')));
     root.append(el('p', 'task-meta', progressText(forecast)));
     const office = buildOfficeNode(forecast, { taskId, onUpdated });
     if (office) root.append(office);
     if (taskId && task.archived) root.append(buildAtypicalNode(taskId, task.atypical, onUpdated));
-    // CN 单号（有 17TRACK 链接）总显示国内段区块，其余只在有记录时显示
-    if (cnRecords.length || links.track17) {
-        root.append(buildCnLegNode(cnRecords, region, { trackUrl: links.track17 || null, track17View: track17 }));
-    }
+    root.append(buildHistoryNode(history, region, { links, track17View: track17 }));
     if (!forecast.current || forecast.delivered) return root;
 
     if (forecast.confidence === 'none') {
@@ -388,7 +393,7 @@ export const buildForecastNode = (forecast, {
             row.append(el('span', 'dot idle'));
             const main = el('div', 'timeline-main');
             const head = el('div', 'timeline-head');
-            head.append(el('span', 'timeline-title', stageLabel(item.stage, region)));
+            head.append(el('span', 'timeline-title', stageLabel(item.stage, names)));
             if (item.maybe) head.append(el('span', 'pill warn', '可能出现'));
             head.append(el('time', 'timeline-time', formatEta(item)));
             const basis = basisMeta(item.basis).label;
@@ -417,8 +422,8 @@ const loadIcons = async () => {
 export const renderForecast = async (container, taskId, { onUpdated = null } = {}) => {
     container.replaceChildren(el('p', 'hint', '预测加载中…'));
     try {
-        const [{ forecast, cnRecords, task, links, track17 }] = await Promise.all([fetchForecast(taskId), loadIcons()]);
-        container.replaceChildren(buildForecastNode(forecast, { cnRecords, task, links, track17, taskId, onUpdated }));
+        const [{ forecast, history, task, links, track17 }] = await Promise.all([fetchForecast(taskId), loadIcons()]);
+        container.replaceChildren(buildForecastNode(forecast, { history, task, links, track17, taskId, onUpdated }));
     } catch (error) {
         container.replaceChildren(el('p', 'hint', error.message || '加载预测失败。'));
     }

@@ -14,6 +14,8 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 import env_schema
 import forecast
+import jp_status
+import route_nodes
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -219,6 +221,48 @@ def _row_to_account(row, *, include_secret: bool = False):
     return account
 
 
+# --- 显示：日本邮政状态的中文名（库里仍存原文） ---
+
+def _jp_detail(conn, number: str, record_at: str, status: str) -> str:
+    row = conn.execute(
+        "SELECT detail FROM carrier_records WHERE tracking_number = ? AND source = 'jp_post' AND record_at = ? AND status = ? LIMIT 1",
+        (number, record_at, status),
+    ).fetchone()
+    return row["detail"] if row else ""
+
+
+def _name_context(conn, number: str, cache: dict):
+    if number not in cache:
+        cache[number] = route_nodes.Context(_number_records(conn, number), number, env_schema.transit_region_label())
+    return cache[number]
+
+
+def display_info(conn, number: str, info, cache: dict | None = None) -> str:
+    """履历 info（「2026/11/09 18:31 引受」）→ 网页显示「2026/11/09 19:31 中国收寄」：
+    状态换成带方向与地点的中文名（route_nodes.jp_name，detail 从 carrier_records 取），时刻换算成日本时间。
+    不是履历格式的（推送事件里的节点名、错误文本）原样返回。"""
+    parsed = forecast.parse_record_info(info)
+    if parsed is None:
+        return str(info or "")
+    record_at, status = parsed
+    cache = {} if cache is None else cache
+    detail = _jp_detail(conn, number, record_at, status)
+    record = {"source": "jp_post", "record_at": record_at, "status": status, "detail": detail}
+    moment = forecast.record_time(record, number)
+    when = moment.strftime("%Y/%m/%d") if len(record_at) <= 10 else moment.strftime("%Y/%m/%d %H:%M")
+    return f"{when} {route_nodes.jp_name(status, detail, _name_context(conn, number, cache))}"
+
+
+def _decorate_tasks(conn, tasks: list) -> list:
+    """任务卡片的最新状态显示名（last_status_display）。"""
+    cache: dict = {}
+    for task in tasks:
+        if task is not None:
+            task["last_status_display"] = display_info(conn, task["tracking_number"], task["last_tracking_info"], cache) \
+                if task.get("last_tracking_info") else ""
+    return tasks
+
+
 def _row_to_task(row):
     if row is None:
         return None
@@ -403,6 +447,65 @@ def _ensure_track17_schema(conn):
     )
 
 
+def _ensure_notified_schema(conn):
+    """notified_nodes：已推送过的合并履历节点（route_nodes 的 node key），推送去重用。
+    同一节点不论日本邮政还是 17TRACK 先报，由先报的那一轮推送，另一边晚到不再推送（判重见 route_nodes.node_notified）。
+    推送失败的节点不记，下轮重试。随任务删除级联删除。
+
+    首次建表时（上线迁移）把所有现有任务当前已有的全部节点记为已推送，不补发，避免上线瞬间刷屏。"""
+    existed = _has_table(conn, "notified_nodes")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS notified_nodes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL,
+            tracking_number TEXT NOT NULL,
+            node_key TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT '',
+            notified_at TEXT NOT NULL,
+            UNIQUE(task_id, tracking_number, node_key),
+            FOREIGN KEY(task_id) REFERENCES tracking_tasks(id) ON DELETE CASCADE
+        )
+        """
+    )
+    if existed:
+        return
+    for row in conn.execute("SELECT id, tracking_number FROM tracking_tasks").fetchall():
+        nodes = _number_nodes(conn, row["tracking_number"], milestone_task_ids=[row["id"]])
+        _mark_nodes_notified(conn, row["id"], row["tracking_number"], route_nodes.pushable_nodes(nodes))
+
+
+def _mark_nodes_notified(conn, task_id: int, tracking_number: str, nodes):
+    stamp = _ts()
+    for node in nodes:
+        conn.execute(
+            "INSERT OR IGNORE INTO notified_nodes (task_id, tracking_number, node_key, source, notified_at)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (int(task_id), tracking_number, node["key"], node["sources"][0] if node["sources"] else "", stamp),
+        )
+
+
+def notified_node_keys(task_id: int, tracking_number: str) -> set:
+    with closing(_connect()) as conn:
+        return {
+            row[0] for row in conn.execute(
+                "SELECT node_key FROM notified_nodes WHERE task_id = ? AND tracking_number = ?",
+                (int(task_id), tracking_number),
+            ).fetchall()
+        }
+
+
+def mark_nodes_notified(task_id: int, tracking_number: str, nodes) -> bool:
+    """把节点记为已推送（不发推送，例如首次抓取时只推最新一条、其余静默记下）。带单号校验，单号被改走返回 False。"""
+    with closing(_connect()) as conn:
+        with conn:
+            row = conn.execute("SELECT tracking_number FROM tracking_tasks WHERE id = ?", (int(task_id),)).fetchone()
+            if row is None or row["tracking_number"] != tracking_number:
+                return False
+            _mark_nodes_notified(conn, task_id, tracking_number, nodes)
+    return True
+
+
 def _ensure_forecast_schema(conn):
     """到达预测用的一列三表：只加列、只新建；唯一的重建是 carrier_records 来源集合变了时只重建它自己
     （_migrate_carrier_sources，它是子表，不踩 data-model.md 的外键坑），tracking_tasks 永不重建。
@@ -456,6 +559,8 @@ def _ensure_forecast_schema(conn):
                 conn, row["task_id"], row["tracking_number"], [{"info": row["status"], "detail": row["detail"]}],
                 created_at=row["created_at"],
             )
+    # 排在履历回填之后：上线迁移要把已有的全部节点记为已推送
+    _ensure_notified_schema(conn)
 
 
 def _insert_carrier_records(conn, task_id: int, tracking_number: str, records, *, source: str = "jp_post",
@@ -804,7 +909,7 @@ def task_forecast(task_id: int, now=None, transit_region=None):
         transit_region = env_schema.transit_region_label()
     result = forecast.build_forecast(
         current, row["channel"], samples, now or datetime.now(),
-        current_office=office, transit_region=transit_region,
+        current_office=office, transit_region=transit_region, origin_name=forecast.origin_country_name(number),
     )
     if str(row["channel"] or "").strip():
         result.update({"collection_office": office, "suggested_channel": None, "office_multi_channel": False})
@@ -813,30 +918,31 @@ def task_forecast(task_id: int, now=None, transit_region=None):
     return result
 
 
-def task_cn_records(task_id: int) -> list:
-    """任务当前单号的中国邮政始发国段记录（所有任务下去重），按时间倒序：[{"record_at", "status", "detail", "segment"}]。
-    record_at 已是日本时间；segment 按本单号的阶段边界切分（forecast.segment_at）。任务不存在返回空列表。"""
+def _number_nodes(conn, tracking_number: str, *, milestone_task_ids, transit_region=None) -> list:
+    """一个单号的合并节点（route_nodes.build_nodes），发货前节点取 milestone_task_ids 里第一个任务的。"""
+    milestones = _read_milestones(conn, milestone_task_ids)
+    own = milestones.get(int(milestone_task_ids[0]), {}) if milestone_task_ids else {}
+    return route_nodes.build_nodes(
+        _number_records(conn, tracking_number),
+        {stage: item["at"] for stage, item in own.items()},
+        tracking_number=tracking_number,
+        transit_region=env_schema.transit_region_label() if transit_region is None else transit_region,
+    )
+
+
+def task_nodes(task_id: int, transit_region=None) -> list:
+    """任务当前单号的合并节点（含不可见的，带内部字段）；任务不存在返回空列表。tracker 推送用。"""
     with closing(_connect()) as conn:
         row = conn.execute("SELECT tracking_number FROM tracking_tasks WHERE id = ?", (int(task_id),)).fetchone()
         if row is None:
             return []
-        number = row["tracking_number"]
-        rows = conn.execute(
-            """
-            SELECT record_at, status, detail FROM carrier_records
-            WHERE tracking_number = ? AND source = 'cn_ems'
-            GROUP BY record_at, status, detail
-            ORDER BY record_at DESC, MAX(id) DESC
-            """,
-            (number,),
-        ).fetchall()
-        stages = forecast.stages_from_records(_number_records(conn, number), tracking_number=number)
-    result = []
-    for item in rows:
-        record = dict(item)
-        record["segment"] = forecast.segment_at(stages, forecast.parse_stored_time(record["record_at"]))
-        result.append(record)
-    return result
+        return _number_nodes(conn, row["tracking_number"], milestone_task_ids=[int(task_id)], transit_region=transit_region)
+
+
+def task_history(task_id: int, transit_region=None) -> list:
+    """网页的合并履历：可见节点，按时间倒序（route_nodes.public_node 的结构）。"""
+    nodes = [node for node in task_nodes(task_id, transit_region) if node["visible"]]
+    return [route_nodes.public_node(node) for node in reversed(nodes)]
 
 
 # --- v1 → v2 迁移 ---
@@ -1186,6 +1292,7 @@ def _attach_tasks(conn, accounts: list[dict]):
         task = _row_to_task(row)
         task["milestones"] = milestones.get(int(row["id"]), {})
         grouped.setdefault(int(row["account_id"]), []).append(task)
+    _decorate_tasks(conn, [task for tasks in grouped.values() for task in tasks])
 
     for account in accounts:
         tasks = grouped.get(int(account["id"]), [])
@@ -1257,7 +1364,7 @@ def list_tasks(account_id: int | None = None, *, include_archived: bool = False)
         query += " WHERE " + " AND ".join(conditions)
     query += " ORDER BY archived, enabled DESC, updated_at DESC, id DESC"
     with closing(_connect()) as conn:
-        return [_row_to_task(row) for row in conn.execute(query, params).fetchall()]
+        return _decorate_tasks(conn, [_row_to_task(row) for row in conn.execute(query, params).fetchall()])
 
 
 def list_due_tasks():
@@ -1304,7 +1411,7 @@ def list_due_tasks():
 def get_task(task_id: int):
     with closing(_connect()) as conn:
         row = conn.execute("SELECT * FROM tracking_tasks WHERE id = ?", (int(task_id),)).fetchone()
-        return _row_to_task(row)
+        return _decorate_tasks(conn, [_row_to_task(row)])[0]
 
 
 # --- 写入：账号 ---
@@ -1796,6 +1903,7 @@ def update_task_state(
     push_detail: str = "",
     auto_archive: bool = False,
     carrier_records=None,
+    notified_nodes=None,
 ):
     """tracker 回写轮询结果，并在同一事务里写时间线事件。
 
@@ -1810,6 +1918,7 @@ def update_task_state(
       来源记录标成 delivered_archived，再归档（archived=1、enabled=0），最后记 auto_archived 事件
       （排在本轮的 status_change / push_ok 之后）。任务已归档则跳过。
     - carrier_records：这次抓到的全部履历，同一事务里 INSERT OR IGNORE 进 carrier_records（到达预测的经验库）。
+    - notified_nodes：这次推送成功（或静默记下）的合并履历节点，同一事务里记进 notified_nodes。
       与事件一样受单号校验保护，单号被改了就不写。"""
     with closing(_connect()) as conn:
         with conn:
@@ -1843,6 +1952,8 @@ def update_task_state(
 
             if carrier_records:
                 _insert_carrier_records(conn, task_id, current["tracking_number"], carrier_records)
+            if notified_nodes:
+                _mark_nodes_notified(conn, task_id, current["tracking_number"], notified_nodes)
 
             wrote = False
             if query_ok is not None:
@@ -1925,7 +2036,11 @@ def list_task_events(task_id: int, *, limit: int = 20, before: int | None = None
     params.append(limit + 1)
     with closing(_connect()) as conn:
         rows = conn.execute(query, params).fetchall()
-    events = [_row_to_event(row) for row in rows[:limit]]
+        events = [_row_to_event(row) for row in rows[:limit]]
+        cache: dict = {}
+        for event in events:
+            # 状态变化等事件存的是日本邮政原文 info；推送事件存的是节点名（原样显示）
+            event["status_display"] = display_info(conn, event["tracking_number"], event["status"], cache)
     return events, len(rows) > limit
 
 

@@ -75,16 +75,15 @@ def test_segment_at_splits_by_stage_boundaries():
     assert forecast.segment_at({}, dt("2026-11-01 00:00")) is None
 
 
-def test_cn_records_carry_segment(db):
+def test_history_nodes_carry_segment(db):
     owner = db.create_account({"username": "ella", "password": "pw-ella", "role": "user"})
     task = db.create_task(owner["id"], {"tracking_number": NUM})
     db.record_cn_records(task["id"], NUM, cn_rows())
-    by_status = {}
-    for record in db.task_cn_records(task["id"]):
-        by_status.setdefault(record["status"], set()).add(record["segment"])
-    assert by_status["中国邮政已收取邮件"] == {"domestic"}
-    assert by_status["航空公司启运"] == {"domestic", "transit"}  # 第一条在国内段，第二条在中转段
-    assert by_status["到达寄达地处理中心"] == {"japan"}
+    by_name = {node["name"]: node["segment"] for node in db.task_history(task["id"], transit_region="韩国")}
+    assert by_name["中国收寄"] == "domestic"
+    assert by_name["中国→韩国 航班起飞"] == "domestic"
+    assert by_name["到达韩国中转"] == "transit" and by_name["韩国→日本 航班起飞"] == "transit"
+    assert by_name["航班到达日本"] == "japan"
 
 
 # --- 中转地显示名 ---
@@ -98,7 +97,17 @@ def test_transit_region_label_default_and_blank():
     assert forecast.segment_label("transit", "韩国") == "韩国段"
     assert forecast.stage_label("transit_arrived", "") == "到达中转地"
     assert forecast.segment_label("transit", "") == "中转段"
-    assert forecast.stage_label("accepted", "韩国") == "引受" and forecast.segment_label("japan", "韩国") == "日本段"
+    assert forecast.segment_label("japan", "韩国") == "日本段"
+
+
+def test_stage_labels_carry_direction_and_origin():
+    assert forecast.stage_label("origin_customs", origin_name="中国") == "中国出口海关"
+    assert forecast.stage_label("departed_origin", origin_name="中国") == "离开中国（出境）"
+    assert forecast.stage_label("accepted", origin_name="") == "始发国收寄"
+    assert forecast.stage_label("japan_customs") == "日本进口通关"
+    assert forecast.stage_label("arrived_japan") == "到达日本互换局（入境）"
+    assert forecast.origin_country_name(NUM) == "中国"
+    assert forecast.origin_country_name("EB000000001ZZ") == "ZZ"  # 没收录的国家码显示代码本身
 
 
 def test_task_forecast_carries_transit_region(db, monkeypatch):

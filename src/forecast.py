@@ -31,22 +31,24 @@ SEGMENTS = tuple(SEGMENT_META)
 
 # 阶段穷举，按时间先后排列（dict 保序，顺序即先后）。前三个是发货前节点（pre_milestones），其余来自承运方履历。
 # left_collection / handed_to_airline / flight_departed / transit_* / landed_destination 只有始发国段（cn_ems）才有。
+# 显示名带方向与地点：{origin} 换成始发国名（单号国家码，见 origin_country_name），{transit} 换成中转地名
+# （系统设置 TRANSIT_REGION_LABEL）；不知道时分别用 GENERIC_ORIGIN / GENERIC_TRANSIT。
 STAGE_META = {
     "ordered": {"label": "下单寄出", "segment": "warehouse"},
     "packed": {"label": "打包完成", "segment": "warehouse"},
     "handed_over": {"label": "出库交运", "segment": "warehouse"},
-    "accepted": {"label": "引受", "segment": "domestic"},
+    "accepted": {"label": "{origin}收寄", "segment": "domestic"},
     "left_collection": {"label": "离开揽收网点", "segment": "domestic"},
-    "origin_exchange": {"label": "到达始发互换局", "segment": "domestic"},
-    "origin_customs": {"label": "始发国海关", "segment": "domestic"},
-    "departed_origin": {"label": "离开始发国", "segment": "domestic"},
+    "origin_exchange": {"label": "到达{origin}国际互换局", "segment": "domestic"},
+    "origin_customs": {"label": "{origin}出口海关", "segment": "domestic"},
+    "departed_origin": {"label": "离开{origin}（出境）", "segment": "domestic"},
     "handed_to_airline": {"label": "交航", "segment": "domestic"},
-    "flight_departed": {"label": "航班起飞", "segment": "domestic"},
-    "transit_arrived": {"label": "到达中转地", "segment": "transit"},
-    "transit_departed": {"label": "离开中转地", "segment": "transit"},
+    "flight_departed": {"label": "{origin}航班起飞", "segment": "domestic"},
+    "transit_arrived": {"label": "到达{transit}", "segment": "transit"},
+    "transit_departed": {"label": "离开{transit}", "segment": "transit"},
     "landed_destination": {"label": "航班到达日本", "segment": "japan"},
-    "arrived_japan": {"label": "到达日本", "segment": "japan"},
-    "japan_customs": {"label": "日本通关", "segment": "japan"},
+    "arrived_japan": {"label": "到达日本互换局（入境）", "segment": "japan"},
+    "japan_customs": {"label": "日本进口通关", "segment": "japan"},
     "departed_exchange": {"label": "离开日本互换局", "segment": "japan"},
     "local_arrived": {"label": "到达派送局", "segment": "japan"},
     "out_for_delivery": {"label": "派送中", "segment": "japan"},
@@ -57,23 +59,28 @@ STAGE_ORDER = {stage: index for index, stage in enumerate(STAGES)}
 PRE_STAGES = ("ordered", "packed", "handed_over")
 # 「第 N 天」的起点候选，按优先级：有下单用下单，没有用出库，再没有用引受
 ORIGIN_STAGES = ("ordered", "handed_over", "accepted")
-# 中转段两个阶段的显示名模板（{region} = TRANSIT_REGION_LABEL），没设中转地名时用 STAGE_META 的通用名
-TRANSIT_STAGE_TEMPLATES = {"transit_arrived": "到达{region}", "transit_departed": "离开{region}"}
+GENERIC_ORIGIN = "始发国"
+GENERIC_TRANSIT = "中转地"
+
+# 国家码 → 中文国名（始发国名用）。国家码是外部数据无法穷举：没收录的直接显示代码本身
+COUNTRY_ZH = {
+    "CN": "中国", "JP": "日本", "KR": "韩国", "TW": "台湾", "HK": "香港", "MO": "澳门", "US": "美国",
+    "GB": "英国", "DE": "德国", "FR": "法国", "SG": "新加坡", "TH": "泰国", "VN": "越南", "AU": "澳大利亚",
+}
 
 
 def _check_stage_segments():
     """段归属穷举：每个阶段都有已定义的段，且段沿阶段顺序只前进不回头（分组显示依赖这一点）；
-    发货前节点恰好是仓库段；中转段的名称模板只覆盖中转段阶段。"""
+    发货前节点恰好是仓库段；显示名只用 {origin} / {transit} 两个占位符。"""
     last = -1
     for stage, meta in STAGE_META.items():
         index = SEGMENTS.index(meta["segment"])
         if index < last:
             raise ValueError(f"阶段 {stage} 的段顺序倒退")
         last = index
+        meta["label"].format(origin="", transit="")
     if {s for s, m in STAGE_META.items() if m["segment"] == "warehouse"} != set(PRE_STAGES):
         raise ValueError("仓库段必须恰好是发货前节点")
-    if {s for s, m in STAGE_META.items() if m["segment"] == "transit"} != set(TRANSIT_STAGE_TEMPLATES):
-        raise ValueError("中转段阶段与名称模板不一致")
 
 
 _check_stage_segments()
@@ -83,11 +90,18 @@ def stage_segment(stage: str) -> str:
     return STAGE_META[stage]["segment"]
 
 
-def stage_label(stage: str, transit_region: str = "") -> str:
-    region = str(transit_region or "").strip()
-    if region and stage in TRANSIT_STAGE_TEMPLATES:
-        return TRANSIT_STAGE_TEMPLATES[stage].format(region=region)
-    return STAGE_META[stage]["label"]
+def origin_country_name(tracking_number) -> str:
+    """单号国家码的中文国名（CN→中国）；没收录的用代码本身；不是两个字母返回空串。"""
+    code = origin_country(tracking_number)
+    return COUNTRY_ZH.get(code, code)
+
+
+def stage_label(stage: str, transit_region: str = "", origin_name: str = "") -> str:
+    """阶段显示名：{origin} / {transit} 换成始发国名与中转地名，不知道时用通用名。"""
+    return STAGE_META[stage]["label"].format(
+        origin=str(origin_name or "").strip() or GENERIC_ORIGIN,
+        transit=str(transit_region or "").strip() or GENERIC_TRANSIT,
+    )
 
 
 def segment_at(stages: dict, moment):
@@ -526,12 +540,12 @@ def _leave_seconds(sample_stages: dict, stage: str, t_stage):
 
 
 def build_forecast(current_stages: dict, current_channel: str, samples, now: datetime, *,
-                   current_office=None, transit_region: str = "") -> dict:
+                   current_office=None, transit_region: str = "", origin_name: str = "") -> dict:
     """预测剩余阶段。
 
     current_stages：当前单 {stage: datetime}；samples：[{"stages": {...}, "channel": str, "office": str|None, "atypical": bool}]
     （已按单号去重、排除当前单号）；current_office：当前单的收寄网点；now：当前时间（参数传入，便于测试）；
-    transit_region：中转地显示名（系统设置 TRANSIT_REGION_LABEL），只原样带进输出给前端拼段名与阶段名。
+    transit_region / origin_name：中转地名（系统设置 TRANSIT_REGION_LABEL）与始发国名，只原样带进输出给前端拼段名与阶段名。
     只输出聚合统计，不带样本的单号与账号。
 
     - 起点：ordered → handed_over → accepted 中最先存在的那个；「第 N 天」按自然日算：起点当天是第 1 天，
@@ -553,6 +567,7 @@ def build_forecast(current_stages: dict, current_channel: str, samples, now: dat
         "channel": channel,
         "collection_office": office,
         "transit_region": str(transit_region or "").strip(),
+        "origin_name": str(origin_name or "").strip(),
         "generated_at": format_time(now),
         "origin": {"stage": origin, "at": format_time(current_stages[origin])} if origin else None,
         "day": None,
@@ -669,3 +684,51 @@ def build_forecast(current_stages: dict, current_channel: str, samples, now: dat
     }
     result["confidence"] = _confidence(similar, len(qualified))
     return result
+
+
+# --- 推送里的预测两行 ---
+
+_WEEKDAYS = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+
+
+def _md(moment) -> str:
+    return f"{moment.month}/{moment.day}"
+
+
+def format_span(seconds) -> str:
+    """全程用时：「3 天 5 小时」「5 小时」「3 天」。"""
+    hours = max(0, int(seconds or 0)) // 3600
+    days, rest = divmod(hours, 24)
+    if days and rest:
+        return f"{days} 天 {rest} 小时"
+    return f"{days} 天" if days else f"{rest} 小时"
+
+
+def push_forecast_lines(result) -> list:
+    """推送正文末尾的预测两行（result 是 build_forecast 的输出，带 transit_region / origin_name）：
+    「当前：<段名>·<阶段名>（第 N 天）」与「预计签收：11/14 周六 18:30 前后（11/14 15:40–18:40）」。
+    可信度 none 或历史里没有签收时第二行是「预计签收：暂无可参考的历史」；overdue 时追加「已比以往都慢」；
+    已签收时第二行是「全程 X 天 Y 小时」。还没有任何阶段时返回空列表。"""
+    if not result or not result.get("current"):
+        return []
+    region = result.get("transit_region", "")
+    stage = result["current"]["stage"]
+    day = f"（第 {result['day']} 天）" if result.get("day") else ""
+    lines = [f"当前：{segment_label(stage_segment(stage), region)}·{stage_label(stage, region, result.get('origin_name', ''))}{day}"]
+    if result.get("delivered"):
+        if result.get("total_seconds") is not None:
+            lines.append(f"全程 {format_span(result['total_seconds'])}")
+        return lines
+    item = next((entry for entry in result.get("remaining", []) if entry["stage"] == "delivered"), None)
+    if result.get("confidence") == "none" or item is None:
+        second = "预计签收：暂无可参考的历史"
+    else:
+        eta = parse_stored_time(item["eta"])
+        low, high = parse_stored_time(item["eta_low"]), parse_stored_time(item["eta_high"])
+        high_text = f"{high:%H:%M}" if high.date() == low.date() else f"{_md(high)} {high:%H:%M}"
+        second = (f"预计签收：{_md(eta)} {_WEEKDAYS[eta.weekday()]} {eta:%H:%M} 前后"
+                  f"（{_md(low)} {low:%H:%M}–{high_text}）")
+    if result.get("overdue"):
+        second += " · 已比以往都慢"
+    lines.append(second)
+    return lines

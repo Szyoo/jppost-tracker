@@ -128,7 +128,7 @@
                       <td data-label="最近物流结果">
                         <div>
                           <div :class="{ 'err-text': task.last_error }">
-                            [[ task.last_error || task.last_tracking_info || '暂无物流记录' ]]
+                            [[ task.last_error || task.last_status_display || task.last_tracking_info || '暂无物流记录' ]]
                           </div>
                           <div class="hint">
                             检查 [[ task.last_checked_at || '从未' ]] · 推送 [[ task.last_push_at || '从未' ]] · 间隔 [[ task.check_interval ]]s
@@ -546,7 +546,7 @@
                     </div>
                   </details>
                 </div>
-                <p class="task-meta">最近结果 [[ task.last_error || task.last_tracking_info || '暂无记录' ]]</p>
+                <p class="task-meta">最近结果 [[ task.last_error || task.last_status_display || task.last_tracking_info || '暂无记录' ]]</p>
                 <p class="task-meta">最近检查 [[ task.last_checked_at || '-' ]] · 最近推送 [[ task.last_push_at || '-' ]]</p>
                 <task-forecast :task-id="task.id" :stamp="task.updated_at"></task-forecast>
                 <task-timeline :task-id="task.id" :number="task.tracking_number"></task-timeline>
@@ -707,7 +707,7 @@
                     </div>
                   </details>
                 </div>
-                <p class="task-meta">最近结果 [[ task.last_error || task.last_tracking_info || '暂无记录' ]]</p>
+                <p class="task-meta">最近结果 [[ task.last_error || task.last_status_display || task.last_tracking_info || '暂无记录' ]]</p>
                 <p class="task-meta">最近检查 [[ task.last_checked_at || '-' ]] · 最近推送 [[ task.last_push_at || '-' ]]</p>
                 <task-forecast :task-id="task.id" :stamp="task.updated_at"></task-forecast>
                 <task-timeline :task-id="task.id" :number="task.tracking_number"></task-timeline>

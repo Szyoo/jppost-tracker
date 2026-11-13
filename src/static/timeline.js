@@ -60,7 +60,7 @@ const buildRow = (event, currentNumber) => {
     pill.textContent = meta.label;
     const title = document.createElement('span');
     title.className = 'timeline-title';
-    title.textContent = event.status || '—';
+    title.textContent = event.status_display || event.status || '—';
     const time = document.createElement('time');
     time.className = 'timeline-time';
     time.textContent = event.created_at;

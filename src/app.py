@@ -55,7 +55,7 @@ from storage import (
     register_user,
     resolve_portal_account,
     set_account_portal_sub,
-    task_cn_records,
+    task_history,
     task_forecast,
     track17_number_view,
     track17_summary,
@@ -1420,7 +1420,7 @@ def api_task_events(task_id: int):
 @app.route('/api/tasks/<int:task_id>/forecast', methods=['GET'])
 @login_required
 def api_task_forecast(task_id: int):
-    """到达预测（结构见 forecast.build_forecast）+ 国内段履历 + 任务的 archived / atypical。本人或管理员可看；样本只以聚合统计出现。"""
+    """到达预测（结构见 forecast.build_forecast）+ 合并履历（route_nodes）+ 任务的 archived / atypical + 外链与 17TRACK 登记状态。本人或管理员可看；样本只以聚合统计出现。"""
     account = current_account()
     _, error = guard_task_access(task_id, account)
     if error:
@@ -1430,7 +1430,7 @@ def api_task_forecast(task_id: int):
     return jsonify({
         "status": "success",
         "forecast": task_forecast(task_id),
-        "cn_records": task_cn_records(task_id),
+        "history": task_history(task_id),
         # 任务自身的两个标记只给网页用（归档任务没有编辑表单，在预测区块里切换非常规件）；/api/v1 不带
         "task": {"archived": bool(task["archived"]), "atypical": bool(task["atypical"])},
         "links": links,
