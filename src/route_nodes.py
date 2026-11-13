@@ -721,6 +721,13 @@ def push_eligible(nodes) -> set:
     return keys
 
 
+def node_title(node) -> str:
+    """节点的显示名（推送标题与网页任务卡片的「当前步骤」共用）：还没归类的日本邮政新状态用「原文（未识别）」。"""
+    if node.get("role") == "unrecognized" and node.get("original"):
+        return f"{node['original']}（未识别）"
+    return node["name"]
+
+
 def public_node(node) -> dict:
     """接口返回用：去掉内部字段（datetime、成员时间）。"""
     return {key: node[key] for key in ("key", "at", "segment", "stage", "name", "sources", "original", "detail")}

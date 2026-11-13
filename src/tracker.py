@@ -12,7 +12,7 @@ import bark
 import env_schema
 import forecast
 import track17
-from route_nodes import ONCE_ROLES, node_notified, push_eligible, pushable_nodes
+from route_nodes import ONCE_ROLES, node_notified, node_title, push_eligible, pushable_nodes
 # 认定为「已签收」的状态（只做整串精确匹配）定义在 forecast，签收自动归档与到达预测的阶段映射共用同一份
 from forecast import DELIVERED_STATUSES
 from forecast import origin_country as forecast_origin_country
@@ -127,8 +127,7 @@ def push_title(config: dict, node: dict) -> str:
     """推送标题：「节点名 · 备注」，没有备注时用单号后 4 位（同一账号多个包裹推到同一台设备，要分得清是哪一件）。
     还没归类的日本邮政新状态用「原文（未识别）」。"""
     tag = config["label"] or str(config["tracking_number"] or "")[-4:]
-    name = f"{node['original']}（未识别）" if node.get("role") == "unrecognized" and node.get("original") else node["name"]
-    return f"{name} · {tag}"
+    return f"{node_title(node)} · {tag}"
 
 
 def _node_when(node) -> str:

@@ -17,7 +17,7 @@ import subprocess
 import threading
 
 from collections import deque
-from datetime import timedelta
+from datetime import datetime, timedelta
 from functools import wraps
 
 from flask import Flask, abort, g, send_from_directory, render_template, request, jsonify, redirect, session, url_for
@@ -62,6 +62,7 @@ from storage import (
     set_account_portal_sub,
     task_history,
     task_forecast,
+    task_nodes,
     track17_number_view,
     track17_summary,
     update_account,
@@ -1216,7 +1217,7 @@ def api_update_user(user_id: int):
         data.pop("role", None)
     current = current_account()
     if current and int(current["id"]) == int(user_id):
-        # 防止管理员在用户管理里把自己锁在门外
+        # 防止管理员在用户页里把自己锁在门外
         if "login_enabled" in data and not _bool_from_input(data.get("login_enabled"), default=True):
             return jsonify({"status": "error", "message": "不能关闭当前登录账号自己的登录。"}), 400
         if "role" in data and str(data.get("role") or "").strip().lower() != "admin":
@@ -1423,19 +1424,37 @@ def api_task_events(task_id: int):
     })
 
 
+# 任务卡片摘要行在还没有任何节点、也算不出正文时的写法（与预测区块「还没有物流记录」一致）
+SUMMARY_EMPTY = "还没有物流记录"
+
+
+def task_summary(task_id: int, result, now=None) -> str:
+    """任务卡片的摘要行：「当前步骤 · 推送正文」，如「到达派送局 · 第 5 天 · 预计明天上午签收」。
+    当前步骤是最新的可见合并节点（显示名与推送标题同一规则，route_nodes.node_title）；
+    正文就是 forecast.push_body 的一行（可信度 none 只写「第 N 天」、overdue 写「比以往都慢」、已签收写「全程 X 天」），
+    网页上总是带预计签收（不看 PUSH_FORECAST，那个开关只管推送）。"""
+    nodes = [node for node in task_nodes(task_id) if node["visible"]]
+    step = route_nodes.node_title(nodes[-1]) if nodes else ""
+    body = forecast.push_body(result, now or datetime.now())
+    return " · ".join(part for part in (step, body) if part) or SUMMARY_EMPTY
+
+
 @app.route('/api/tasks/<int:task_id>/forecast', methods=['GET'])
 @login_required
 def api_task_forecast(task_id: int):
-    """到达预测（结构见 forecast.build_forecast）+ 合并履历（route_nodes）+ 任务的 archived / atypical + 外链与 17TRACK 登记状态。本人或管理员可看；样本只以聚合统计出现。"""
+    """到达预测（结构见 forecast.build_forecast）+ 卡片摘要行 + 合并履历（route_nodes）+ 任务的 archived / atypical
+    + 外链与 17TRACK 登记状态。本人或管理员可看；样本只以聚合统计出现。"""
     account = current_account()
     _, error = guard_task_access(task_id, account)
     if error:
         return error
     task = get_task(task_id)
     links, track17_view = task_links_and_track17(task)
+    result = task_forecast(task_id)
     return jsonify({
         "status": "success",
-        "forecast": task_forecast(task_id),
+        "forecast": result,
+        "summary": task_summary(task_id, result),
         "history": task_history(task_id),
         # 任务自身的两个标记只给网页用（归档任务没有编辑表单，在预测区块里切换非常规件）；/api/v1 不带
         "task": {"archived": bool(task["archived"]), "atypical": bool(task["atypical"])},
