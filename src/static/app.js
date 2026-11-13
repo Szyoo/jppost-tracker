@@ -102,6 +102,91 @@ const app = createApp({
             return (Number(quota.quota_used || 0) / Number(quota.quota_total)) * 100;
         });
 
+        // 状态规则：切到系统设置页时拉一次；编辑后立即生效（来源记为手工）
+        const statusRules = ref([]);
+        const statusRuleOptions = ref({ sources: {}, kinds: {}, stages: {} });
+        const statusRuleDrafts = ref({});
+        // 规则状态穷举（storage.STATUS_RULE_STATES）+ 来源（ai / manual / code）
+        const STATUS_RULE_STATE_META = {
+            pending: { label: '待归类', tone: 'cyan' },
+            failed: { label: '归类失败', tone: 'err' },
+        };
+        const STATUS_RULE_ORIGIN_META = {
+            ai: { label: '自动归类', tone: 'ok' },
+            manual: { label: '手工', tone: 'violet' },
+            code: { label: '已并入代码', tone: 'ok' },
+        };
+        const statusRuleState = (rule) => {
+            if (rule.status === 'done') return STATUS_RULE_ORIGIN_META[rule.origin];
+            return STATUS_RULE_STATE_META[rule.status];
+        };
+        const loadStatusRules = async () => {
+            try {
+                const response = await fetch('/api/admin/status-rules', { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
+                const result = await handleApiResponse(response);
+                if (!result || result.status !== 'success') return;
+                statusRules.value = result.rules;
+                statusRuleOptions.value = result.options;
+            } catch (error) {
+                notify('读取状态规则时发生错误。', 'error');
+            }
+        };
+        const editStatusRule = (rule) => {
+            statusRuleDrafts.value = {
+                ...statusRuleDrafts.value,
+                [rule.id]: { name_zh: rule.name_zh || rule.raw_status, kind: rule.kind || '', stage: rule.stage || '', push: Boolean(rule.push) },
+            };
+        };
+        const cancelStatusRule = (rule) => {
+            const drafts = { ...statusRuleDrafts.value };
+            delete drafts[rule.id];
+            statusRuleDrafts.value = drafts;
+        };
+        const sendStatusRuleRequest = async (url, method, body, errorText) => {
+            try {
+                const response = await fetch(url, {
+                    method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: body === undefined ? undefined : JSON.stringify(body),
+                });
+                const result = await handleApiResponse(response);
+                if (!result) return null;
+                notify(result.message, result.status === 'success' ? 'success' : 'error');
+                return result.status === 'success' ? result : null;
+            } catch (error) {
+                notify(errorText, 'error');
+                return null;
+            }
+        };
+        const saveStatusRule = async (rule) => {
+            const draft = statusRuleDrafts.value[rule.id];
+            if (!draft) return;
+            const result = await sendStatusRuleRequest(`/api/admin/status-rules/${rule.id}`, 'PUT', {
+                name_zh: draft.name_zh, kind: draft.kind || null, stage: draft.stage || null, push: Boolean(draft.push),
+            }, '保存状态规则时发生错误。');
+            if (!result) return;
+            cancelStatusRule(rule);
+            await loadStatusRules();
+        };
+        const reclassifyStatusRule = async (rule) => {
+            if (await sendStatusRuleRequest(`/api/admin/status-rules/${rule.id}/reclassify`, 'POST', undefined, '重新归类时发生错误。')) {
+                await loadStatusRules();
+            }
+        };
+        const deleteStatusRule = async (rule) => {
+            const { confirm } = await confirmReady;
+            const confirmed = await confirm({
+                title: '删除状态规则',
+                message: `确认删除「${rule.raw_status}」的规则？这个状态以后再出现时会重新登记为待归类。`,
+                confirmLabel: '删除',
+                danger: true,
+            });
+            if (!confirmed) return;
+            if (await sendStatusRuleRequest(`/api/admin/status-rules/${rule.id}`, 'DELETE', undefined, '删除状态规则时发生错误。')) {
+                await loadStatusRules();
+            }
+        };
+
         const resetEnv = () => {
             envVars.value = { ...originalEnvVars.value };
             envApplyNote.value = '';
@@ -783,7 +868,10 @@ const app = createApp({
 
         // 切到系统设置页时刷新 17TRACK 卡片（额度在服务端缓存，频繁切换也不会打到 17TRACK）
         watch(page, (next) => {
-            if (next === 'env') loadTrack17Card();
+            if (next === 'env') {
+                loadTrack17Card();
+                loadStatusRules();
+            }
         });
 
         window.addEventListener('forecast-task-updated', (event) => {
@@ -880,6 +968,16 @@ const app = createApp({
             originalEnvVars,
             track17Card,
             track17UsagePct,
+            statusRules,
+            statusRuleOptions,
+            statusRuleDrafts,
+            statusRuleState,
+            loadStatusRules,
+            editStatusRule,
+            cancelStatusRule,
+            saveStatusRule,
+            reclassifyStatusRule,
+            deleteStatusRule,
             extLinkIcon,
             envGroups,
             envFieldLocked,

@@ -7,6 +7,7 @@ import requests
 from bs4 import BeautifulSoup
 from dotenv import dotenv_values, load_dotenv
 
+import ai_classify
 import bark
 import env_schema
 import forecast
@@ -26,6 +27,7 @@ from storage import (
     notified_node_keys,
     parse_bark_keys,
     record_carrier_records,
+    register_unrecognized_statuses,
     record_cn_records,
     task_forecast,
     task_nodes,
@@ -122,9 +124,11 @@ def auto_archive_enabled(system_env: dict) -> bool:
 
 
 def push_title(config: dict, node: dict) -> str:
-    """推送标题：「节点名 · 备注」，没有备注时用单号后 4 位（同一账号多个包裹推到同一台设备，要分得清是哪一件）。"""
+    """推送标题：「节点名 · 备注」，没有备注时用单号后 4 位（同一账号多个包裹推到同一台设备，要分得清是哪一件）。
+    还没归类的日本邮政新状态用「原文（未识别）」。"""
     tag = config["label"] or str(config["tracking_number"] or "")[-4:]
-    return f"{node['name']} · {tag}"
+    name = f"{node['original']}（未识别）" if node.get("role") == "unrecognized" and node.get("original") else node["name"]
+    return f"{name} · {tag}"
 
 
 def _node_when(node) -> str:
@@ -470,6 +474,12 @@ def process_task(task: dict, system_env: dict) -> bool:
     # 先把这轮的日本邮政履历落库，合并节点才算得上它；单号已被改走就整轮作废
     if record_carrier_records(task_id, number, records) is None:
         return False
+    # 内置表认不出、也还没有规则的状态登记为待归类（后台归类见 ai_classify），失败不影响追踪
+    try:
+        for status in register_unrecognized_statuses(number):
+            print(f"{prefix} 新状态待归类：{status}")
+    except Exception as exc:
+        print(f"{prefix} 登记待归类状态失败：{exc}")
     region = transit_region(system_env)
     new_nodes, silent = select_new_nodes(task_id, number, region)
     # 本轮没有要推的：不推的新节点直接记下；有要推的：其余节点随推送成功一起记，推送失败整批下轮重算
@@ -587,6 +597,8 @@ def main():
             # 每轮重读 .env：后台「系统设置」的修改与清空在下一轮即生效，
             # 文件里出现过的键以文件为准，不会回落到启动时继承的旧环境变量
             system_env = load_tracker_env()
+            # 待归类的新状态：低频顺带处理几条（自己限频、兜住全部异常）
+            ai_classify.run_once(system_env)
             for task in due_tasks:
                 task_id = int(task["id"])
                 interval = _task_interval(task)

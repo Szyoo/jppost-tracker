@@ -3,9 +3,12 @@
 库里一律存原文（last_tracking_info 的判重、阶段映射都按原文），只在显示与推送时翻译。
 状态字符串是日本邮政的外部数据，无法穷举：表里没有的状态原样显示，并在日志里记一次（同一进程同一状态只记一次），
 方便以后补表——这不违反「文案穷举、不写兜底」的原则，那条原则管的是本项目自己定义的枚举。
-本模块是纯函数（日志只是 print），不 import 本项目其他模块。
+表里没有、但已有生效的状态规则（status_rules，后台归类或管理员补的）时用规则里的中文名。
+本模块是纯函数（日志只是 print），只 import 叶子模块 status_rules。
 """
 import re
+
+import status_rules
 
 # 日本邮政状态 → 中文。地名、局名不翻译（在 detail 里，原样保留）
 JP_STATUS_ZH = {
@@ -66,6 +69,9 @@ def status_zh(status) -> str:
     text = str(status or "").strip()
     if text in JP_STATUS_ZH:
         return JP_STATUS_ZH[text]
+    rule = status_rules.lookup("jp_post", text)
+    if rule:
+        return rule["name_zh"]
     _log_unknown(text)
     return text
 
@@ -101,5 +107,8 @@ def info_push(info) -> str:
         return str(info or "")
     if is_known(status):
         return f"{prefix}{JP_STATUS_ZH[status]}（{status}）"
+    rule = status_rules.lookup("jp_post", status)
+    if rule:
+        return f"{prefix}{rule['name_zh']}（{status}）"
     _log_unknown(status)
     return f"{prefix}{status}"

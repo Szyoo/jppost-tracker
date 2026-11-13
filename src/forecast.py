@@ -1,7 +1,7 @@
 """到达预测：承运方履历 → 阶段，再用历史单号的阶段耗时估计剩余阶段的到达时间。
 
-本模块是纯函数，不碰数据库与网络（storage 负责取数，再交给 build_forecast），也不 import 本项目其他模块，
-所以 storage / tracker 都可以放心 import 它。时间一律是日本时间的 naive datetime（容器 TZ=Asia/Tokyo）。
+本模块是纯函数，不碰数据库与网络（storage 负责取数，再交给 build_forecast），只 import 叶子模块 status_rules
+（内置表认不出的状态查已生效的状态规则），所以 storage / tracker 都可以放心 import 它。时间一律是日本时间的 naive datetime（容器 TZ=Asia/Tokyo）。
 
 阶段（STAGE_META）、可信度（CONFIDENCE_META）都是穷举：前端 src/static/forecast.js 各有一份，
 测试比对两边一致；前端遇到未知 key 直接报错，不显示原值。
@@ -9,6 +9,8 @@
 """
 import re
 from datetime import datetime, timedelta, timezone
+
+import status_rules
 
 # 认定为「已签收」的状态（履历表「配達状況」一栏）。只做整串精确匹配，
 # 「お届け先にお伺いしましたがご不在」「ご不在のため持ち戻り」「お届け予定」之类都不算：
@@ -309,11 +311,20 @@ CARRIER_SOURCES = {
 }
 
 
-def record_stage(source: str, status, detail=""):
-    """一条承运方记录对应的阶段 key；认不出返回 None。来源不在 CARRIER_SOURCES 里抛 ValueError。"""
+def builtin_stage(source: str, status, detail=""):
+    """只按代码内置映射算阶段（不查状态规则）；认不出返回 None。来源不在 CARRIER_SOURCES 里抛 ValueError。"""
     if source not in CARRIER_SOURCES:
         raise ValueError(f"未定义的承运方来源：{source}")
     return CARRIER_SOURCES[source](str(status or "").strip(), str(detail or ""))
+
+
+def record_stage(source: str, status, detail=""):
+    """一条承运方记录对应的阶段 key：先按内置映射，认不出再查已生效的状态规则（status_rules），都没有返回 None。"""
+    stage = builtin_stage(source, status, detail)
+    if stage is not None:
+        return stage
+    rule = status_rules.lookup(source, status)
+    return rule["stage"] if rule else None
 
 
 # --- 时区 ---

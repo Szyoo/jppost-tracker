@@ -96,6 +96,9 @@ bash install_bark.sh
 | GET | `/api/tasks/<id>/forecast` | 登录（本人或管理员） | 到达预测 `{"forecast", "history", "task", "links", "track17"}`：`forecast` 结构见「到达预测」；`history` 是合并履历节点 `[{"key", "at", "segment", "stage", "name", "sources", "original", "detail"}]`（日本时间、倒序，见「合并履历与推送」）；`task` 是 `{"archived", "atypical"}`；`links` 是 `{"jp_post", "track17"}` 外链（17TRACK 只给 CN 单号）；`track17` 是登记状态 `{"status", "registered_at", "last_synced_at", "error"}`（`status`：`unregistered` 未登记 / `pending` 已登记待数据 / `synced` 已同步 / `error` 出错），只在 CN 单号且配了密钥时有，否则 `null` |
 | POST | `/api/tasks/backfill` | 登录（管理员可带 `account_id` 替别人补录） | 补录历史单号：`{"lines": "单号 渠道 [下单日期]\n…"}`，最多 30 行；CN 单号在配了 17TRACK 时顺带登记，结果里带 `cn_note`（如「国内段稍后补上」） |
 | GET | `/api/admin/track17` | 管理员 | 17TRACK 卡片：`{"configured", "console_url", "quota", "quota_ok", "numbers"}`；额度在进程内缓存 5 分钟（只缓存成功结果），请求失败 `quota_ok=false`；`numbers` 是已登记单号数及其中待数据 / 已同步 / 出错个数、最近同步时间、最近一条错误。不回显密钥 |
+| GET | `/api/admin/status-rules` | 管理员 | 状态规则列表 `{"rules", "options"}`（`options` 是来源、事件类型、阶段的可选值），见「没收录的状态」 |
+| PUT/DELETE | `/api/admin/status-rules/<id>` | 管理员 | 修改规则 `{"name_zh", "kind", "stage", "push"}`（校验后立即生效，来源记为手工）/ 删除规则 |
+| POST | `/api/admin/status-rules/<id>/reclassify` | 管理员 | 重置为待归类，由追踪脚本重新归类 |
 | GET/PUT | `/api/me` | 登录 | 查看 / 修改自己的资料与 Bark 设置 |
 | POST | `/me/update`、`/me/tasks`、`/me/tasks/<id>/update`、`/me/tasks/<id>/archive`、`/me/tasks/<id>/delete`、`/me/test-push` | 登录 | 个人页的表单提交版本 |
 
@@ -224,6 +227,21 @@ archive 响应 `{"result": "archived" | "already_archived", "tracking": {…}}`�
   系统设置 `PUSH_FORECAST` 关闭时不写预计签收；预测算不出来时正文用节点时间，照常推送。
 - 网页上任务卡片的最新状态、时间线里的日本邮政状态也显示同样的中文名（接口另带 `last_status_display` / `status_display`）。
 
+### 没收录的状态
+
+承运方的状态是外部数据，代码内置表（日本邮政汉化表、中国邮政事件命名、阶段映射）收不全。查找顺序：代码内置表 →
+已并入代码的规则（`src/status_rules.py` 的 `CODE_RULES`）→ 数据库 `status_rules` 表里已生效的规则 → 未识别。
+- 未识别的状态在追踪时登记为待归类（`pending`，每个「来源 + 原文」一行，带一条样例详情）。在有结果之前：
+  日本邮政的按原文推送，标题是「原文（未识别）· 备注」；中国邮政的不推送。
+- 追踪脚本每分钟顺带处理几条待归类的状态：交给兼容 Anthropic Messages 的接口（`CLAUDE_BRIDGE_URL` / `CLAUDE_BRIDGE_API_KEY`，
+  模型 `AI_MODEL`），要求只返回 `{"name_zh", "kind", "stage", "push"}`；`kind`（能与另一来源合并的事件类型）与 `stage`（阶段）
+  只认现有枚举，中文名限 30 字、去掉换行。校验通过即生效（`done`），不需要人工确认；失败记下原因，3 次后标为 `failed`，按未识别处理。
+  原文只作为数据交给接口，接口返回不合格的一律不采用。接口没配置或 `AI_CLASSIFY=0` 时不调用。
+- 规则生效后：命名、阶段、合并与推送都按规则走；已经推送过的节点不补推、不重推。学到新规则时在追踪日志里记一行。
+- 系统设置页的「状态规则」区块列出所有规则，可手工修改（立即生效，标为「手工」）、删除（以后再出现时重新登记）或重新归类。
+- `python scripts/export_status_rules.py [--db data/app.db] [--write]`：把已生效的规则导出成 `CODE_RULES` 的条目
+  （默认打印，`--write` 直接写进 `src/status_rules.py` 的标记之间），用来把学到的规则并入源码。
+
 预测用全部账号的历史单号（按单号去重、排除当前单号）里「当前阶段 → 后续各阶段」的耗时，只跟离开当前阶段比当前已等时间更久的历史比，
 权重按剩余阶段所在的段：仓库段同渠道 1.0、其他 0.3；国内 / 中转 / 日本段同收寄网点 1.0、其他 0.3（同一揽收网点之后走同一条邮政线路，与发货渠道无关；
 当前单或样本缺收寄网点时退回按渠道比）；任务标了「非常规件」（如大件电器）的样本再乘 0.3（同单号任一任务标了就算）。
@@ -267,7 +285,10 @@ archive 响应 `{"result": "archived" | "already_archived", "tracking": {…}}`�
 | `REQUEST_TIMEOUT` | `15` | 追踪脚本抓取官网、向 Bark 推送时单次请求的超时（秒） |
 | `AUTO_ARCHIVE_DELIVERED` | `1` | 签收后自动归档；`0` 时签收的任务照旧轮询 |
 | `TRANSIT_REGION_LABEL` | `韩国` | 中转段的显示名（预测、合并履历、推送）；未设置按「韩国」，设为空则显示「中转段」 |
-| `PUSH_FORECAST` | `1` | 推送正文末尾附「当前 / 预计签收」两行；`0` 时不附 |
+| `PUSH_FORECAST` | `1` | 推送正文写预计签收（「第 N 天 · 预计 11/14（周六）上午签收」）；`0` 时只写「第 N 天」 |
+| `AI_CLASSIFY` | `1` | 自动归类没收录的状态（接口没配置时不调用），见「没收录的状态」 |
+| `CLAUDE_BRIDGE_URL` / `CLAUDE_BRIDGE_API_KEY` | 空 | 归类接口：兼容 Anthropic Messages 的根地址（请求 `<地址>/v1/messages`）与 `x-api-key` 密钥 |
+| `AI_MODEL` | `claude-haiku-5-5` | 归类用的模型 |
 | `TRACK17_API_KEY` | 空 | 物流聚合查询服务 17TRACK 的 API 密钥，用于补充始发国段轨迹（只对中国寄出、单号以 `CN` 结尾的件）；留空则关闭该功能，其余不受影响 |
 | `BARK_BIND_ADDRESS` / `BARK_EXECUTABLE` | `0.0.0.0:8080` / 自动查找 | 本地 Bark Server 监听地址与可执行文件 |
 | `LOCAL_BARK_ENABLED` | `1` | `0` 时不管理本地 Bark 子进程（Bark 独立部署时） |
@@ -292,12 +313,13 @@ archive 响应 `{"result": "archived" | "already_archived", "tracking": {…}}`�
 | 追踪脚本 | `REQUEST_TIMEOUT`、`TRACK17_API_KEY`、`PUSH_FORECAST`、`AUTO_ARCHIVE_DELIVERED` | 追踪脚本下次查询时生效 |
 | 追踪脚本 | `AUTO_START_TRACKER` | 重启 Web 后生效（脚本意外退出后是否自动重启读取当前值） |
 | 到达预测 | `TRANSIT_REGION_LABEL` | 控制台保存即生效，追踪脚本下次查询时生效 |
+| 新状态自动归类 | `AI_CLASSIFY`、`CLAUDE_BRIDGE_URL`、`CLAUDE_BRIDGE_API_KEY`、`AI_MODEL` | 追踪脚本下次查询时生效 |
 | 本地 Bark 服务 | `LOCAL_BARK_ENABLED` | 保存即生效（不会停掉已运行的子进程） |
 | 本地 Bark 服务 | `BARK_BIND_ADDRESS` | 下次启动本地 Bark 时生效 |
 | 本地 Bark 服务 | `AUTO_START_BARK_SERVER` | 重启 Web 后生效 |
 | Web 服务 | `APP_PORT` | 重启 Web 后生效 |
 
-提交时按字段类型校验（开关、整数及范围、`http(s)://` 地址），不合法的一项都不写。密钥字段（`TRACK17_API_KEY`）不回显明文：页面上只显示是否已配置（系统设置页另有 17TRACK 卡片：额度用量、登记单号统计与控制台跳转），原样提交占位符表示不改，清空保存即删除。写回 `.env` 用不加引号的 `KEY=value` 形式（兼容按原样加载 env 文件的容器运行时），含空白、`#`、引号、反斜杠、`$`、反引号的值会被拒绝；留空即清空，`.env` 里出现过的键以文件为准，不回退到启动时的环境变量。
+提交时按字段类型校验（开关、整数及范围、`http(s)://` 地址），不合法的一项都不写。密钥字段（`TRACK17_API_KEY`、`CLAUDE_BRIDGE_API_KEY`）不回显明文：页面上只显示是否已配置（系统设置页另有 17TRACK 卡片：额度用量、登记单号统计与控制台跳转），原样提交占位符表示不改，清空保存即删除。写回 `.env` 用不加引号的 `KEY=value` 形式（兼容按原样加载 env 文件的容器运行时），含空白、`#`、引号、反斜杠、`$`、反引号的值会被拒绝；留空即清空，`.env` 里出现过的键以文件为准，不回退到启动时的环境变量。
 
 日志写在 `logs/tracker.log`、`logs/bark.log`、`logs/remote_bark.log`，单个文件超过 2 MB 自动轮转，保留 `.1`～`.3` 三份旧文件。
 

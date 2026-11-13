@@ -28,10 +28,12 @@ import track17
 from szyyw_auth import login_url, sso_enabled
 from szyyw_auth.flask import current_identity, is_anonymous
 
+import ai_classify
 import api_v1
 import bark
 import env_schema
 import forecast
+import route_nodes
 from storage import (
     BACKFILL_MAX_LINES,
     BACKFILL_RESULT_META,
@@ -40,6 +42,7 @@ from storage import (
     build_tracking_url,
     create_account,
     create_task,
+    delete_status_rule,
     delete_task,
     ensure_storage,
     EVENT_KIND_META,
@@ -47,12 +50,14 @@ from storage import (
     get_account_by_username,
     get_task,
     list_accounts,
+    list_status_rules,
     list_task_events,
     load_system_env,
     normalize_api_tracking_number,
     parse_bark_keys,
     record_carrier_records,
     register_user,
+    reset_status_rule,
     resolve_portal_account,
     set_account_portal_sub,
     task_history,
@@ -60,6 +65,7 @@ from storage import (
     track17_number_view,
     track17_summary,
     update_account,
+    update_status_rule,
     update_task,
     verify_account_password,
 )
@@ -1484,6 +1490,59 @@ def api_admin_track17():
         payload["quota"] = quota
         payload["quota_ok"] = quota is not None
     return jsonify(payload)
+
+
+# --- 状态规则（没收录的承运方状态） ---
+
+STATUS_RULE_SOURCE_LABELS = {"jp_post": "日本邮政", "cn_ems": "中国邮政"}
+if tuple(STATUS_RULE_SOURCE_LABELS) != route_nodes.RULE_SOURCES:
+    raise ValueError("STATUS_RULE_SOURCE_LABELS 与 route_nodes.RULE_SOURCES 不一致")
+
+
+def status_rule_options() -> dict:
+    """管理页编辑规则用的下拉选项：来源、合并类型（ai_classify.KIND_HINTS 的说明）、阶段（中文名）。"""
+    return {
+        "sources": STATUS_RULE_SOURCE_LABELS,
+        "kinds": dict(ai_classify.KIND_HINTS),
+        "stages": {stage: forecast.stage_label(stage, env_schema.transit_region_label(), "")
+                   for stage in route_nodes.RULE_STAGES},
+    }
+
+
+@app.route('/api/admin/status-rules', methods=['GET'])
+@admin_required
+def api_admin_status_rules():
+    return jsonify({"status": "success", "rules": list_status_rules(), "options": status_rule_options()})
+
+
+@app.route('/api/admin/status-rules/<int:rule_id>', methods=['PUT'])
+@admin_required
+def api_admin_update_status_rule(rule_id: int):
+    """管理员编辑规则 {name_zh, kind, stage, push}：校验后立即生效，来源记为 manual。"""
+    try:
+        rule = update_status_rule(rule_id, request.get_json(silent=True) or {})
+    except ValueError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
+    if rule is None:
+        return jsonify({"status": "error", "message": "规则不存在。"}), 404
+    return jsonify({"status": "success", "message": "规则已保存并生效。", "rule": rule})
+
+
+@app.route('/api/admin/status-rules/<int:rule_id>/reclassify', methods=['POST'])
+@admin_required
+def api_admin_reclassify_status_rule(rule_id: int):
+    rule = reset_status_rule(rule_id)
+    if rule is None:
+        return jsonify({"status": "error", "message": "规则不存在。"}), 404
+    return jsonify({"status": "success", "message": "已重置为待归类，追踪脚本会重新归类。", "rule": rule})
+
+
+@app.route('/api/admin/status-rules/<int:rule_id>', methods=['DELETE'])
+@admin_required
+def api_admin_delete_status_rule(rule_id: int):
+    if not delete_status_rule(rule_id):
+        return jsonify({"status": "error", "message": "规则不存在。"}), 404
+    return jsonify({"status": "success", "message": "规则已删除。"})
 
 
 def task_links_and_track17(task: dict):

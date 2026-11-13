@@ -197,7 +197,7 @@ notified_nodes —— 已推送过的合并履历节点（推送去重）
   「境外进口海关留存待验」才是通关中，不会互配）。中国邮政内部唯一的同来源合并是揽收网点的「完成分拣」与「离开」
   （同一分钟，合成「离开揽收网点 X → Y」）。同单号多任务的重复记录按 (来源, record_at, 状态) 去重，detail 取信息更多的。
   只有日期的节点（「持ち出し中」）排在当天阶段顺序更靠后的有时刻节点之前。
-- **命名不用原文**：显示给人的名字一律经过命名（kind_name / jp_name / cn_display）；没收录的外部状态显示原文并记一次日志。
+- **命名不用原文**：显示给人的名字一律经过命名（kind_name / jp_name / cn_display）；没收录的外部状态先查状态规则（见下节），没有规则的显示原文并记一次日志。
 - **推送**（`tracker.process_task`）：先同步 17TRACK 与日本邮政，把日本邮政履历落库，再算节点；
   新节点 = 可见的承运方节点里没推送过的。只推白名单（`route_nodes.PUSH_ROLES`，节点的 `role` 由成员语义决定）：
   收寄、出口海关扣留、出境、航班到达日本（「日本邮政接收（寄达地）」与到达日本互换局只认最早那个，`ONCE_ROLES`）、
@@ -210,6 +210,32 @@ notified_nodes —— 已推送过的合并履历节点（推送去重）
   （目前只有 WEIHAI → 威海国际互换局，未收录原样显示英文）；cn_ems【…】里的名字直接用；日本地名保留原文。
   日本邮政状态的中文在 `jp_status.JP_STATUS_ZH`（外部数据，未收录的显示原文并记一次日志）；库里一律存原文，
   `last_tracking_info` 的判重不变，网页显示用接口另带的 `last_status_display` / `status_display`。
+
+### 没收录的状态：status_rules
+
+```
+status_rules —— 内置表认不出的承运方状态的归类规则（只新建，不改动已有表）
+  id, source (jp_post / cn_ems), raw_status,
+  kind,                          -- route_nodes.KIND_STAGE 的 key 或 NULL（独有事件）
+  stage,                         -- 承运方阶段（forecast.STAGES 去掉发货前节点）或 NULL
+  name_zh,                       -- 中文名（≤30 字，无换行）
+  push,                          -- 0/1：是否推送
+  origin (ai / manual / code), status (pending / done / failed),
+  attempts, last_error, sample_detail, created_at, updated_at
+  UNIQUE(source, raw_status)
+```
+
+- **查找顺序**：代码内置表（`jp_status.JP_STATUS_ZH`、`route_nodes` 的 jp_kind / cn_kind / cn_display、`forecast` 的阶段映射）→
+  `status_rules.CODE_RULES`（已并入代码的规则）→ 本表里 `status = 'done'` 的行 → 未识别。`storage._number_records` 每次读履历时
+  把生效的行同步进 `status_rules` 模块（进程内副本），纯函数模块从那里查。
+- **登记**：追踪每轮落库后，本单号履历里内置表认不出（`route_nodes.recognized`）的状态各插一行 `pending`。
+- **未识别时**：日本邮政的推送角色是 `unrecognized`，按原文推送（标题「原文（未识别）」）；中国邮政的不推送。
+- **归类**（`ai_classify`）：追踪主循环每分钟最多处理 3 条 `pending`，结果经 `route_nodes.validate_rule` 校验后直接 `done`；
+  只改仍是 `pending` 的行（期间管理员改过的不覆盖）。失败 `attempts + 1`，满 3 次 `failed`（继续按未识别处理）。
+- **生效后不重推**：规则可能把独有事件归到共有类型，节点 key 随之改变；节点带 `member_keys`（各成员作为独有节点时的 key），
+  `node_notified` 也认这些旧 key，所以已推送过的不会被当成新节点。
+- **管理**：管理员可改（`origin = manual`，立即 `done`）、删（以后再出现时重新登记）、重新归类（回到 `pending`、attempts 归零）。
+  `scripts/export_status_rules.py` 把 `done` 的行导出成 `CODE_RULES` 条目并入源码。
 
 ### 17TRACK 登记状态（网页显示）
 

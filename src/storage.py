@@ -16,6 +16,7 @@ import env_schema
 import forecast
 import jp_status
 import route_nodes
+import status_rules
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -823,6 +824,8 @@ def _write_milestones(conn, task_id: int, milestones: dict, source: str):
 
 
 def _number_records(conn, tracking_number: str) -> list:
+    """本单号的承运方履历。顺手把生效的状态规则同步进内存：节点名、阶段都是读履历之后算的。"""
+    _load_status_rules(conn)
     return [
         dict(row) for row in conn.execute(
             "SELECT source, record_at, status, detail FROM carrier_records WHERE tracking_number = ?",
@@ -1176,6 +1179,8 @@ def ensure_storage(dotenv_path: str):
                 _migrate_portal_sub_column(conn)
                 # 机器接口的两张表与墓碑触发器：只新建、不改动已有表
                 _ensure_api_schema(conn)
+                # 状态规则：只新建（排在预测之前：预测的迁移会读履历、查规则）
+                _ensure_status_rules_schema(conn)
                 # 到达预测：渠道列、承运方履历、发货前节点（只加列、只新建）
                 _ensure_forecast_schema(conn)
                 if conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] == 0:
@@ -2558,3 +2563,162 @@ def api_archive_tracking(caller_id: int, account_id: int, number: str):
             task_row = conn.execute("SELECT * FROM tracking_tasks WHERE id = ?", (task_id,)).fetchone()
             view = _api_view(conn, task_row, ref)
     return "archived", view
+
+
+# --- 状态规则（没收录的承运方状态） ---
+
+# 规则状态穷举：pending 待归类 / done 已生效 / failed 归类失败（按「未识别」处理，可在管理页手工补或重新归类）
+STATUS_RULE_STATES = ("pending", "done", "failed")
+# 规则来源穷举：ai 后台归类 / manual 管理员手填或改过 / code 并入代码内置表（导出脚本用）
+STATUS_RULE_ORIGINS = ("ai", "manual", "code")
+# 后台归类失败这么多次后放弃（status=failed）
+STATUS_RULE_MAX_ATTEMPTS = 3
+_SAMPLE_DETAIL_MAX = 200
+
+
+def _sql_enum(values) -> str:
+    return ", ".join(f"'{value}'" for value in values)
+
+
+def _ensure_status_rules_schema(conn):
+    """status_rules：内置表认不出的承运方状态的归类规则（中文名、合并类型、阶段、推不推送），每个 (来源, 原文) 一行。
+    只新建，不改动已有表。生效（status=done）的规则由 _load_status_rules 同步进 status_rules 模块。"""
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS status_rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source TEXT NOT NULL CHECK(source IN ({_sql_enum(route_nodes.RULE_SOURCES)})),
+            raw_status TEXT NOT NULL,
+            kind TEXT,
+            stage TEXT,
+            name_zh TEXT NOT NULL DEFAULT '',
+            push INTEGER NOT NULL DEFAULT 0,
+            origin TEXT NOT NULL DEFAULT 'ai' CHECK(origin IN ({_sql_enum(STATUS_RULE_ORIGINS)})),
+            status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ({_sql_enum(STATUS_RULE_STATES)})),
+            attempts INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT NOT NULL DEFAULT '',
+            sample_detail TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(source, raw_status)
+        )
+        """
+    )
+
+
+def _load_status_rules(conn):
+    """把生效的规则同步进 status_rules 模块（表还没建时什么都不做）。读履历算节点 / 阶段之前调用。"""
+    try:
+        rows = conn.execute(
+            "SELECT source, raw_status, name_zh, kind, stage, push FROM status_rules WHERE status = 'done'"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return
+    status_rules.set_rules([dict(row) for row in rows])
+
+
+def register_unrecognized_statuses(tracking_number: str) -> list:
+    """本单号履历里内置表认不出、也还没有规则的状态，各插一行 pending（样例详情取当条的 detail）。返回新插入的原文。"""
+    added = []
+    with closing(_connect()) as conn:
+        with conn:
+            for record in _number_records(conn, tracking_number):
+                status = str(record["status"] or "").strip()
+                if not status or route_nodes.recognized(record["source"], status):
+                    continue
+                now = _ts()
+                cursor = conn.execute(
+                    "INSERT OR IGNORE INTO status_rules (source, raw_status, sample_detail, created_at, updated_at)"
+                    " VALUES (?, ?, ?, ?, ?)",
+                    (record["source"], status, str(record.get("detail") or "")[:_SAMPLE_DETAIL_MAX], now, now),
+                )
+                if cursor.rowcount:
+                    added.append(status)
+    return added
+
+
+def _status_rule_view(row) -> dict:
+    view = dict(row)
+    view["push"] = bool(view["push"])
+    return view
+
+
+def list_status_rules(status: str | None = None, limit: int | None = None) -> list:
+    """规则列表（新的在前）；status 给定时只列该状态的（pending 按先来先处理排序）。"""
+    sql = "SELECT * FROM status_rules"
+    params: list = []
+    if status is not None:
+        sql += " WHERE status = ?"
+        params.append(status)
+    sql += " ORDER BY id ASC" if status == "pending" else " ORDER BY updated_at DESC, id DESC"
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(int(limit))
+    with closing(_connect()) as conn:
+        return [_status_rule_view(row) for row in conn.execute(sql, params).fetchall()]
+
+
+def get_status_rule(rule_id: int):
+    with closing(_connect()) as conn:
+        row = conn.execute("SELECT * FROM status_rules WHERE id = ?", (int(rule_id),)).fetchone()
+    return _status_rule_view(row) if row else None
+
+
+def finish_status_rule(rule_id: int, result: dict):
+    """后台归类成功：写入结果并生效（origin=ai、status=done）。只改仍是 pending 的行（归类期间管理员改过的不覆盖）。
+    result 先经 route_nodes.validate_rule 校验，不合法抛 ValueError。返回更新后的规则，没更新返回 None。"""
+    rule = route_nodes.validate_rule(result)
+    with closing(_connect()) as conn:
+        with conn:
+            cursor = conn.execute(
+                "UPDATE status_rules SET name_zh = ?, kind = ?, stage = ?, push = ?, origin = 'ai', status = 'done',"
+                " last_error = '', updated_at = ? WHERE id = ? AND status = 'pending'",
+                (rule["name_zh"], rule["kind"], rule["stage"], int(rule["push"]), _ts(), int(rule_id)),
+            )
+    return get_status_rule(rule_id) if cursor.rowcount else None
+
+
+def fail_status_rule(rule_id: int, error: str):
+    """后台归类失败：attempts+1、记 last_error，满 STATUS_RULE_MAX_ATTEMPTS 次改为 failed。只改 pending 的行。"""
+    with closing(_connect()) as conn:
+        with conn:
+            conn.execute(
+                "UPDATE status_rules SET attempts = attempts + 1, last_error = ?,"
+                " status = CASE WHEN attempts + 1 >= ? THEN 'failed' ELSE status END, updated_at = ?"
+                " WHERE id = ? AND status = 'pending'",
+                (str(error or "")[:500], STATUS_RULE_MAX_ATTEMPTS, _ts(), int(rule_id)),
+            )
+    return get_status_rule(rule_id)
+
+
+def update_status_rule(rule_id: int, data: dict):
+    """管理员编辑：校验后写入并生效（origin=manual、status=done）。不合法抛 ValueError；不存在返回 None。"""
+    rule = route_nodes.validate_rule(data)
+    with closing(_connect()) as conn:
+        with conn:
+            cursor = conn.execute(
+                "UPDATE status_rules SET name_zh = ?, kind = ?, stage = ?, push = ?, origin = 'manual', status = 'done',"
+                " last_error = '', updated_at = ? WHERE id = ?",
+                (rule["name_zh"], rule["kind"], rule["stage"], int(rule["push"]), _ts(), int(rule_id)),
+            )
+    return get_status_rule(rule_id) if cursor.rowcount else None
+
+
+def reset_status_rule(rule_id: int):
+    """重新归类：清空结果，回到 pending（attempts 归零），由后台再归类一次。不存在返回 None。"""
+    with closing(_connect()) as conn:
+        with conn:
+            cursor = conn.execute(
+                "UPDATE status_rules SET name_zh = '', kind = NULL, stage = NULL, push = 0, origin = 'ai',"
+                " status = 'pending', attempts = 0, last_error = '', updated_at = ? WHERE id = ?",
+                (_ts(), int(rule_id)),
+            )
+    return get_status_rule(rule_id) if cursor.rowcount else None
+
+
+def delete_status_rule(rule_id: int) -> bool:
+    """删除规则；状态以后再出现时会重新登记为 pending。"""
+    with closing(_connect()) as conn:
+        with conn:
+            cursor = conn.execute("DELETE FROM status_rules WHERE id = ?", (int(rule_id),))
+    return bool(cursor.rowcount)

@@ -254,6 +254,83 @@
               </dl>
             </template>
           </section>
+          <!-- 状态规则：内置表认不出的承运方状态的归类（后台自动归类或手工填写，保存即生效）；数据来自 /api/admin/status-rules -->
+          <section class="inner u-mb-4">
+            <div class="panel-head">
+              <h3 class="panel-title">状态规则</h3>
+              <button type="button" class="btn-ghost btn-small" @click="loadStatusRules">刷新</button>
+            </div>
+            <p class="hint">承运方出现内置表里没有的状态时登记在这里，由后台自动归类（见下方「新状态自动归类」）后直接生效；也可以手工修改，改过的标为「手工」。</p>
+            <div class="table-wrap bleed" v-if="statusRules.length">
+              <table class="tbl reflow">
+                <thead>
+                  <tr>
+                    <th>来源</th>
+                    <th>原文</th>
+                    <th>中文名</th>
+                    <th>阶段</th>
+                    <th>推送</th>
+                    <th>状态</th>
+                    <th class="col-actions" aria-label="操作"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="rule in statusRules" :key="rule.id">
+                    <td data-label="来源">[[ statusRuleOptions.sources[rule.source] || rule.source ]]</td>
+                    <td data-label="原文">
+                      <div>
+                        <strong>[[ rule.raw_status ]]</strong>
+                        <div class="hint" v-if="rule.sample_detail">[[ rule.sample_detail ]]</div>
+                      </div>
+                    </td>
+                    <template v-if="statusRuleDrafts[rule.id]">
+                      <td data-label="中文名"><input type="text" class="field" maxlength="30" v-model="statusRuleDrafts[rule.id].name_zh" /></td>
+                      <td data-label="阶段">
+                        <select class="field" v-model="statusRuleDrafts[rule.id].stage">
+                          <option value="">（不参与阶段判定）</option>
+                          <option v-for="(label, key) in statusRuleOptions.stages" :key="key" :value="key">[[ label ]]</option>
+                        </select>
+                        <select class="field" v-model="statusRuleDrafts[rule.id].kind">
+                          <option value="">（独有事件，不与另一来源合并）</option>
+                          <option v-for="(label, key) in statusRuleOptions.kinds" :key="key" :value="key">[[ label ]]</option>
+                        </select>
+                      </td>
+                      <td data-label="推送">
+                        <label class="switch-row"><input type="checkbox" class="switch" v-model="statusRuleDrafts[rule.id].push" />推送</label>
+                      </td>
+                      <td data-label="状态"></td>
+                      <td class="col-actions">
+                        <button type="button" class="btn btn-small" @click="saveStatusRule(rule)">保存</button>
+                        <button type="button" class="btn-ghost btn-small" @click="cancelStatusRule(rule)">取消</button>
+                      </td>
+                    </template>
+                    <template v-else>
+                      <td data-label="中文名">[[ rule.name_zh || '—' ]]</td>
+                      <td data-label="阶段">
+                        <div>
+                          <div>[[ rule.stage ? (statusRuleOptions.stages[rule.stage] || rule.stage) : '—' ]]</div>
+                          <div class="hint" v-if="rule.kind">[[ statusRuleOptions.kinds[rule.kind] || rule.kind ]]</div>
+                        </div>
+                      </td>
+                      <td data-label="推送">[[ rule.status === 'done' ? (rule.push ? '推送' : '不推送') : '—' ]]</td>
+                      <td data-label="状态">
+                        <div>
+                          <span :class="['pill', statusRuleState(rule).tone]">[[ statusRuleState(rule).label ]]</span>
+                          <div class="hint" v-if="rule.last_error">[[ rule.last_error ]]（[[ rule.attempts ]] 次）</div>
+                        </div>
+                      </td>
+                      <td class="col-actions">
+                        <button type="button" class="btn-ghost btn-small" @click="editStatusRule(rule)">编辑</button>
+                        <button type="button" class="btn-ghost btn-small" @click="reclassifyStatusRule(rule)" :disabled="rule.status === 'pending'">重新归类</button>
+                        <button type="button" class="btn-ghost btn-small danger" @click="deleteStatusRule(rule)">删除</button>
+                      </td>
+                    </template>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div v-else class="empty">还没有遇到内置表以外的状态。</div>
+          </section>
           <form @submit.prevent="saveEnv">
             <div class="env-groups stagger">
               <section v-for="group in envGroups" :key="group.key" class="env-group inner">

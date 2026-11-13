@@ -65,3 +65,13 @@ def gate(user, role="user", sub="", **extra):
         headers["X-Portal-Sub"] = sub or f"sub-{user}"
     headers.update(extra)
     return headers
+
+
+@pytest.fixture(autouse=True)
+def _reset_status_rules():
+    """状态规则的进程内副本是模块级的：每个测试前后清空，免得上一个测试的规则漏到纯函数测试里。"""
+    import status_rules
+
+    status_rules.set_rules([])
+    yield
+    status_rules.set_rules([])

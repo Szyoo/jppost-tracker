@@ -1,7 +1,11 @@
 """合并履历：把日本邮政（jp_post）、中国邮政（cn_ems）与发货前节点合成一条按段分组的「节点」列表，
 并给每个节点起带方向与地点的中文名。推送（tracker）与网页显示共用这一份。
 
-纯函数：不碰数据库与网络，只 import forecast 与 jp_status。
+纯函数：不碰数据库与网络，只 import forecast、jp_status 与 status_rules。
+
+## 没收录的状态
+查找顺序：代码内置表 → 已生效的状态规则（status_rules，后台归类或管理员补的：中文名、合并类型、阶段、推不推送）→ 未识别。
+未识别的日本邮政状态按原文推送（推送角色 unrecognized），中国邮政的不推送；判断「是否内置认得」见 recognized。
 
 ## 节点与归并
 - 两个来源里含义相同的事件（KIND 对照：jp_post 状态 + 所在地 ↔ cn_ems 描述），换算到日本时间后相差 ≤ MATCH_SECONDS，
@@ -24,6 +28,7 @@ from datetime import timedelta
 
 import forecast
 import jp_status
+import status_rules
 
 # 两个来源同一事件的最大时间差（秒，换算到日本时间后比较）
 MATCH_SECONDS = 120
@@ -79,11 +84,20 @@ def jp_kind(status: str, stage):
         return "out_for_delivery"
     if status in DELIVERED:
         return "delivered"
-    return None
+    return _rule_kind("jp_post", status) if not jp_status.is_known(status) else None
+
+
+def _rule_kind(source: str, status: str):
+    rule = status_rules.lookup(source, status)
+    return rule["kind"] if rule else None
 
 
 def cn_kind(status: str):
-    """中国邮政事件描述 → kind；对不上日本邮政的返回 None。"""
+    """中国邮政事件描述 → kind；对不上日本邮政的返回 None（内置认不出的再查状态规则）。"""
+    return _cn_builtin_kind(status) or (_rule_kind("cn_ems", status) if not cn_recognized(status) else None)
+
+
+def _cn_builtin_kind(status: str):
     if status.startswith("中国邮政已收取"):
         return "accept"
     if status.startswith("送交出口海关"):
@@ -161,6 +175,8 @@ PUSH_ROLES = {
     "out_for_delivery": "派送中",
     "delivered": "已妥投 / 窗口领取",
     "anomaly": "日本邮政异常（不在带回、局内保管、退回、调查中、转寄、再次投递）",
+    "learned": "状态规则里标了推送、又不属于上面各类的新状态",
+    "unrecognized": "还没归类的日本邮政新状态（按原文推送，标题「原文（未识别）」）",
 }
 # 一单只推一次的角色：「日本邮政接收（寄达地）」与「到达東京…（入境）」是同一件事，先到的推，后到的只记录
 ONCE_ROLES = frozenset({"arrived_japan"})
@@ -182,12 +198,19 @@ _KIND_ROLE = {
 }
 
 
-if not set(_KIND_ROLE.values()) | {"anomaly", "arrived_japan"} <= set(PUSH_ROLES):
+if not set(_KIND_ROLE.values()) | {"anomaly", "arrived_japan", "learned", "unrecognized"} <= set(PUSH_ROLES):
     raise ValueError("推送角色未在 PUSH_ROLES 里定义")
 
 
 def push_role(source: str, status: str, raw_kind):
-    """一条事件的推送角色（PUSH_ROLES 的 key）；不推的返回 None。"""
+    """一条事件的推送角色（PUSH_ROLES 的 key）；不推的返回 None。
+    内置认不出的状态：有生效规则按规则的 push（推的话按规则 kind 归到对应角色，没有对应角色算 learned）；
+    没有规则时日本邮政的按原文推（unrecognized），中国邮政的不推。"""
+    if not builtin_known(source, status):
+        rule = status_rules.lookup(source, status)
+        if rule:
+            return (_KIND_ROLE.get(rule["kind"]) or "learned") if rule["push"] else None
+        return "unrecognized" if source == "jp_post" else None
     if raw_kind in _KIND_ROLE:
         return _KIND_ROLE[raw_kind]
     if source == "jp_post" and status in JP_ANOMALY_STATUSES:
@@ -369,7 +392,90 @@ def cn_display(record, ctx: Context, flights: dict):
     match = re.match(r"^邮件到达【([^】]+)】", status)
     if match:
         return f"到达{match.group(1)}", None, False
+    if _cn_builtin_kind(status):  # 共有类型的名字由 kind_name 给，这里用不上
+        return status, None, False
+    rule = status_rules.lookup("cn_ems", status)
+    if rule:
+        return rule["name_zh"], None, False
     return _unknown_cn(status), None, False
+
+
+# cn_display 按前缀命名的事件（不论有没有 kind）
+_CN_NAMED_PREFIXES = ("航空公司启运", "飞机进港", "已交承运商运输", "航空公司接收", "邮件到达【")
+
+
+def cn_recognized(status) -> bool:
+    """中国邮政事件是否由代码内置规则认得（有 kind、有阶段或有专门的命名）。"""
+    status = str(status or "").strip()
+    return bool(
+        _cn_builtin_kind(status)
+        or forecast.builtin_stage("cn_ems", status)
+        or status.startswith(_CN_NAMED_PREFIXES)
+        or status == "到达寄达地"
+        or (status.startswith("邮件离开【") and "国际互换局" in status)
+        or "境外自提点" in status
+    )
+
+
+def builtin_known(source: str, status) -> bool:
+    """状态是否由代码内置的命名 / 映射认得（不看状态规则）：日本邮政看 jp_status 的汉化表，中国邮政见 cn_recognized。"""
+    if source == "jp_post":
+        return jp_status.is_known(status)
+    return cn_recognized(status)
+
+
+def recognized(source: str, status) -> bool:
+    """状态是否已认得（不需要登记为待归类）：内置认得，或规则已并入代码（status_rules.CODE_RULES）。"""
+    return builtin_known(source, status) or status_rules.in_code(source, status)
+
+
+# --- 状态规则的合法取值（status_rules 表与后台归类共用） ---
+
+# kind：KIND_STAGE 的 key（能与另一来源归并的事件类型）；None 表示独有事件
+RULE_KINDS = tuple(KIND_STAGE)
+# stage：承运方履历的阶段（不含发货前节点）；None 表示不参与阶段判定
+RULE_STAGES = tuple(stage for stage in forecast.STAGES if stage not in forecast.PRE_STAGES)
+RULE_SOURCES = ("jp_post", "cn_ems")
+RULE_NAME_MAX = 30
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]+")
+
+
+def validate_rule(data) -> dict:
+    """校验并规整一条状态规则 {name_zh, kind, stage, push}，不合法抛 ValueError（文案可直接给管理员看）。
+    name_zh 去掉换行与控制字符、去首尾空白、限长 RULE_NAME_MAX；kind / stage 必须是枚举值或空；push 只认布尔或 0/1。"""
+    if not isinstance(data, dict):
+        raise ValueError("规则必须是对象。")
+    name = _CONTROL_CHARS.sub(" ", str(data.get("name_zh") or "")).strip()
+    if not name:
+        raise ValueError("中文名不能为空。")
+    if len(name) > RULE_NAME_MAX:
+        raise ValueError(f"中文名不能超过 {RULE_NAME_MAX} 个字。")
+    kind = data.get("kind") or None
+    if kind is not None and kind not in RULE_KINDS:
+        raise ValueError(f"未知的事件类型：{kind}")
+    stage = data.get("stage") or None
+    if stage is not None and stage not in RULE_STAGES:
+        raise ValueError(f"未知的阶段：{stage}")
+    push = data.get("push")
+    if isinstance(push, bool):
+        push_value = push
+    elif push in (0, 1) and not isinstance(push, float):
+        push_value = bool(push)
+    else:
+        raise ValueError("是否推送只能是是或否。")
+    return {"name_zh": name, "kind": kind, "stage": stage, "push": push_value}
+
+
+def _check_code_rules():
+    """并入代码的规则同样要合法：来源、枚举、中文名，且与规整后的值一致（导出脚本写进去的就是规整后的）。"""
+    for (source, raw), rule in status_rules.CODE_RULES.items():
+        if source not in RULE_SOURCES or not str(raw).strip():
+            raise ValueError(f"CODE_RULES 的键不合法：{(source, raw)}")
+        if validate_rule(rule) != rule:
+            raise ValueError(f"CODE_RULES 的规则不合法：{(source, raw)}")
+
+
+_check_code_rules()
 
 
 def _left_collection_name(group) -> str:
@@ -538,6 +644,8 @@ def build_nodes(records, milestones=None, *, tracking_number="", transit_region=
             "visible": visible,
             "times": [(_fmt(m["moment"], m["date_only"])) for m in group],
             "role": next((m["role"] for m in group if m["role"]), None),
+            # 各成员作为独有节点时的 key：状态规则生效后事件可能归到共有类型、key 随之改变，判重时也认旧 key
+            "member_keys": [f"{m['source']}:{m['status']}@{m['record_at']}" for m in group],
         })
 
     for stage, at in (milestones or {}).items():
@@ -547,7 +655,7 @@ def build_nodes(records, milestones=None, *, tracking_number="", transit_region=
         nodes.append({
             "key": f"milestone:{stage}", "kind": None, "at": str(at), "moment": moment, "segment": "warehouse",
             "stage": stage, "name": forecast.stage_label(stage), "sources": ["milestone"], "original": None,
-            "detail": "", "visible": True, "times": [], "role": None,
+            "detail": "", "visible": True, "times": [], "role": None, "member_keys": [],
         })
     # 只有日期的节点（「持ち出し中」）按当天 12:00 算会排到当天更晚阶段（如上午妥投）之后：
     # 排序时挪到同一天第一个阶段顺序更靠后的有时刻节点之前
@@ -576,9 +684,9 @@ def _parse_key_time(key):
 
 
 def node_notified(node, notified_keys) -> bool:
-    """节点是否已推送过：key 完全相同；或共有节点同 kind 且任一成员时间与已记录 key 的时间相差 ≤ MATCH_SECONDS
-    （另一边晚到、时间差一分钟的同一节点不会被当成新节点）。"""
-    if node["key"] in notified_keys:
+    """节点是否已推送过：key 完全相同；或任一成员作为独有节点的 key 记过（状态规则生效后归到共有类型的事件）；
+    或共有节点同 kind 且任一成员时间与已记录 key 的时间相差 ≤ MATCH_SECONDS（另一边晚到、时间差一分钟的同一节点不会被当成新节点）。"""
+    if node["key"] in notified_keys or any(key in notified_keys for key in node.get("member_keys", ())):
         return True
     if not node["kind"]:
         return False
