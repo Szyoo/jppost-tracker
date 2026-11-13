@@ -504,7 +504,9 @@ def build_nodes(records, milestones=None, *, tracking_number="", transit_region=
                  if len(other["at"]) > 10 and other["moment"].date() == node["moment"].date() and order(other) > order(node)]
         return min([node["moment"], *[moment - timedelta(seconds=1) for moment in later]])
 
-    nodes.sort(key=lambda node: (sort_moment(node), order(node)))
+    # 先算好排序键：list.sort 排序期间列表本身是空的，键函数里不能再读 nodes
+    keys = {id(node): (sort_moment(node), order(node)) for node in nodes}
+    nodes.sort(key=lambda node: keys[id(node)])
     return nodes
 
 
