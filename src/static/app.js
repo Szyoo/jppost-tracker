@@ -76,21 +76,31 @@ const app = createApp({
 
         const envDirtyCount = computed(() => Object.keys(envChangedEntries.value).length);
 
-        // 17TRACK 剩余额度：密钥已配置时在系统设置页显示，查询失败就不显示
-        const track17Quota = ref(null);
-        const loadTrack17Quota = async () => {
-            track17Quota.value = null;
-            if (!originalEnvVars.value.TRACK17_API_KEY) return;
+        // 17TRACK 卡片：切到系统设置页、或改了密钥后拉一次（额度由服务端缓存 5 分钟）
+        const track17Card = ref(null);
+        const extLinkIcon = ref('');
+        const loadTrack17Card = async () => {
             try {
-                const response = await fetch('/api/admin/track17/quota', { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
-                const result = await response.json();
-                if (response.ok && result.status === 'success' && typeof result.quota?.quota_remain === 'number') {
-                    track17Quota.value = result.quota;
-                }
+                const { iconSvg } = await import('@szyyw/design/icons.js');
+                extLinkIcon.value = iconSvg('external-link');
             } catch (error) {
-                track17Quota.value = null;
+                extLinkIcon.value = '';
+            }
+            try {
+                const response = await fetch('/api/admin/track17', { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
+                const result = await response.json();
+                track17Card.value = response.ok && result.status === 'success'
+                    ? result
+                    : { configured: true, quota_ok: false, numbers: { registered: 0, pending: 0, synced: 0, error: 0 } };
+            } catch (error) {
+                track17Card.value = { configured: true, quota_ok: false, numbers: { registered: 0, pending: 0, synced: 0, error: 0 } };
             }
         };
+        const track17UsagePct = computed(() => {
+            const quota = track17Card.value?.quota;
+            if (!quota || !quota.quota_total) return 0;
+            return (Number(quota.quota_used || 0) / Number(quota.quota_total)) * 100;
+        });
 
         const resetEnv = () => {
             envVars.value = { ...originalEnvVars.value };
@@ -150,6 +160,7 @@ const app = createApp({
             label: task.label || '',
             check_interval: Number(task.check_interval || 300),
             channel: task.channel || '',
+            atypical: Boolean(task.atypical),
             milestones: buildMilestones(task.milestones || {}),
         });
 
@@ -510,7 +521,7 @@ const app = createApp({
                 if (result.status === 'success' && result.env_vars) {
                     envVars.value = { ...result.env_vars };
                     originalEnvVars.value = { ...result.env_vars };
-                    if ('TRACK17_API_KEY' in changed) loadTrack17Quota();
+                    if ('TRACK17_API_KEY' in changed) loadTrack17Card();
                 }
                 if (result.status === 'success' && result.bark_help) {
                     barkHelp.value = { ...result.bark_help };
@@ -770,9 +781,9 @@ const app = createApp({
             });
         };
 
-        // 切到系统设置页时查一次额度（不在每次渲染时查：17TRACK 接口有频率限制）
+        // 切到系统设置页时刷新 17TRACK 卡片（额度在服务端缓存，频繁切换也不会打到 17TRACK）
         watch(page, (next) => {
-            if (next === 'env' && track17Quota.value === null) loadTrack17Quota();
+            if (next === 'env') loadTrack17Card();
         });
 
         window.addEventListener('forecast-task-updated', (event) => {
@@ -867,7 +878,9 @@ const app = createApp({
             barkHelp,
             envVars,
             originalEnvVars,
-            track17Quota,
+            track17Card,
+            track17UsagePct,
+            extLinkIcon,
             envGroups,
             envFieldLocked,
             envBoolValue,

@@ -91,11 +91,11 @@ bash install_bark.sh
 | POST | `/api/users/<id>/test_push` | 管理员 | 向该账号的设备发测试推送 |
 | POST | `/api/users/<id>/tasks` | 管理员 | 为账号添加追踪任务 |
 | POST | `/api/admin/accounts/<id>/portal-user` | 管理员 | 设置 / 清除账号的统一登录映射 |
-| PUT/DELETE | `/api/tasks/<id>` | 登录（本人或管理员） | 修改 / 删除任务 |
+| PUT/DELETE | `/api/tasks/<id>` | 登录（本人或管理员） | 修改 / 删除任务；PUT 只改带了的字段，`atypical`（布尔）标记非常规件 |
 | POST | `/api/tasks/<id>/archive` | 登录（本人或管理员） | 归档任务 |
-| GET | `/api/tasks/<id>/forecast` | 登录（本人或管理员） | 到达预测 `{"forecast", "cn_records"}`（结构见「到达预测」；`cn_records` 是中国邮政始发国段 `[{"record_at", "status", "detail"}]`，日本时间、倒序） |
+| GET | `/api/tasks/<id>/forecast` | 登录（本人或管理员） | 到达预测 `{"forecast", "cn_records", "task", "links", "track17"}`：`forecast` 结构见「到达预测」；`cn_records` 是中国邮政始发国段 `[{"record_at", "status", "detail", "segment"}]`（日本时间、倒序，`segment` 按阶段边界切分）；`task` 是 `{"archived", "atypical"}`；`links` 是 `{"jp_post", "track17"}` 外链（17TRACK 只给 CN 单号）；`track17` 是登记状态 `{"status", "registered_at", "last_synced_at", "error"}`（`status`：`unregistered` 未登记 / `pending` 已登记待数据 / `synced` 已同步 / `error` 出错），只在 CN 单号且配了密钥时有，否则 `null` |
 | POST | `/api/tasks/backfill` | 登录（管理员可带 `account_id` 替别人补录） | 补录历史单号：`{"lines": "单号 渠道 [下单日期]\n…"}`，最多 30 行；CN 单号在配了 17TRACK 时顺带登记，结果里带 `cn_note`（如「国内段稍后补上」） |
-| GET | `/api/admin/track17/quota` | 管理员 | 17TRACK 剩余额度；没配密钥 404、查询失败 502 |
+| GET | `/api/admin/track17` | 管理员 | 17TRACK 卡片：`{"configured", "console_url", "quota", "quota_ok", "numbers"}`；额度在进程内缓存 5 分钟（只缓存成功结果），请求失败 `quota_ok=false`；`numbers` 是已登记单号数及其中待数据 / 已同步 / 出错个数、最近同步时间、最近一条错误。不回显密钥 |
 | GET/PUT | `/api/me` | 登录 | 查看 / 修改自己的资料与 Bark 设置 |
 | POST | `/me/update`、`/me/tasks`、`/me/tasks/<id>/update`、`/me/tasks/<id>/archive`、`/me/tasks/<id>/delete`、`/me/test-push` | 登录 | 个人页的表单提交版本 |
 
@@ -189,17 +189,24 @@ archive 响应 `{"result": "archived" | "already_archived", "tracking": {…}}`�
 追踪脚本每次抓到日本邮政履历都把全部记录存进承运方履历表（长期保留），读取时映射成阶段：
 发货前（下单寄出 `ordered`、打包完成 `packed`、出库交运 `handed_over`，来自网页手填或调用方）→ 引受 `accepted` →
 离开揽收网点 `left_collection` → 到达始发互换局 `origin_exchange` → 始发国海关 `origin_customs` → 离开始发国 `departed_origin` →
-交航 `handed_to_airline` → 航班起飞 `flight_departed` → 航班到达日本 `landed_destination` → 到达日本 `arrived_japan` →
+交航 `handed_to_airline` → 航班起飞 `flight_departed` → 到达中转地 `transit_arrived` → 离开中转地 `transit_departed` →
+航班到达日本 `landed_destination` → 到达日本 `arrived_japan` →
 日本通关 `japan_customs` → 离开日本互换局 `departed_exchange` → 到达派送局 `local_arrived` → 派送中 `out_for_delivery` → 签收 `delivered`。
 同名状态（国際交換局に到着 等）按详情最后一段是否以都 / 道 / 府 / 県结尾区分日本与始发国；认不出的状态不算阶段。
 日本邮政页面上始发国那几行的时刻是始发国当地时间，按单号后两位国家码换算成日本时间（目前只有 `CN`）。
 
 配置了 `TRACK17_API_KEY` 时，单号以 `CN` 结尾的件另经 17TRACK 取中国邮政的始发国段轨迹（每个单号只登记一次，按登记扣额度；
-查轨迹不扣额度），离开揽收网点 / 交航 / 航班起飞 / 航班到达日本这几个阶段只有它才有；与日本邮政同含义的阶段两边取最早。
+查轨迹不扣额度），离开揽收网点 / 交航 / 航班起飞 / 中转段 / 航班到达日本这几个阶段只有它才有；与日本邮政同含义的阶段两边取最早。
+经第三地中转的两段航班：第一条「飞机进港」= 到达中转地，第二条「航空公司启运」= 离开中转地；只有一段航班的单没有这两个阶段。
+
+每个阶段归属一个段：仓库段 `warehouse`（下单 / 打包 / 出库）、国内段 `domestic`（引受…航班起飞）、中转段 `transit`、日本段 `japan`（航班到达日本及之后）。
+网页按段分组显示；中转段的显示名取系统设置 `TRANSIT_REGION_LABEL`（未设置按「韩国」，显示「韩国段」「到达韩国」「离开韩国」；清空则显示「中转段」「到达中转地」「离开中转地」）。
 始发国段只记录、参与预测，不推送。
 
 预测用全部账号的历史单号（按单号去重、排除当前单号）里「当前阶段 → 后续各阶段」的耗时，只跟离开当前阶段比当前已等时间更久的历史比，
-同渠道权重 1.0、其他渠道 0.3，给出加权中位数与区间（≥3 单用 20%–80% 分位，否则最小–最大）。只输出聚合统计，不暴露其他单号。
+权重按剩余阶段所在的段：仓库段同渠道 1.0、其他 0.3；国内 / 中转 / 日本段同收寄网点 1.0、其他 0.3（同一揽收网点之后走同一条邮政线路，与发货渠道无关；
+当前单或样本缺收寄网点时退回按渠道比）；任务标了「非常规件」（如大件电器）的样本再乘 0.3（同单号任一任务标了就算）。
+给出加权中位数与区间（≥3 单用 20%–80% 分位，否则最小–最大）。只输出聚合统计，不暴露其他单号。
 历史太少时用「补录历史单号」（网页任务列表里的按钮或 `POST /api/tasks/backfill`）补几单过去的单号与渠道。
 
 `forecast` 对象：
@@ -211,9 +218,11 @@ archive 响应 `{"result": "archived" | "already_archived", "tracking": {…}}`�
 | `delivered` / `total_seconds` | 是否已签收；已签收时起点到签收的全程秒数 |
 | `current` | 当前阶段 `{"stage", "at", "waited_seconds"}`；还没有任何记录为 `null` |
 | `arrived` | 已到达阶段 `[{"stage", "at"}]`，按时间先后 |
-| `remaining` | 剩余阶段预测 `[{"stage", "median_seconds", "low_seconds", "high_seconds", "eta", "eta_low", "eta_high", "occurrence", "maybe", "samples"}]`；`maybe` 表示出现率低于 0.5 |
-| `confidence` | `none`（没有可参考样本）/ `borrowed`（同渠道 0 单，只借鉴其他渠道）/ `rough`（同渠道 1–4 单）/ `solid`（同渠道 ≥5 单） |
-| `samples` | 参考样本数 `{"same_channel", "other"}` |
+| `remaining` | 剩余阶段预测 `[{"stage", "segment", "basis", "median_seconds", "low_seconds", "high_seconds", "eta", "eta_low", "eta_high", "occurrence", "maybe", "samples"}]`；`basis` 是该段的比较依据（`channel` 同渠道 / `office` 同收寄网点），`samples` 为 `{"total", "similar", "atypical"}`；`maybe` 表示出现率低于 0.5 |
+| `basis` | 可信度用的比较依据：剩余阶段里第一个阶段所在段的依据（仓库段 `channel`，邮政各段 `office`，当前单缺收寄网点时 `channel`） |
+| `confidence` | 按 `basis` 数「同类」合格样本：`none`（没有可参考样本）/ `borrowed`（同类 0 单，只借鉴其他单）/ `rough`（同类 1–4 单）/ `solid`（同类 ≥5 单） |
+| `samples` | 参考样本数 `{"total", "same_channel", "same_office", "similar", "atypical", "similar_atypical"}`：合格样本总数、同渠道、同收寄网点、按 `basis` 的同类、非常规件、同类里的非常规件 |
+| `transit_region` | 中转地显示名（系统设置 `TRANSIT_REGION_LABEL`），空串表示用通用名 |
 | `overdue` | 已比历史上离开当前阶段最慢的还久（这时按全部样本估计，剩余时长多为 0） |
 | `channel` / `generated_at` | 当前单的渠道、计算时间 |
 | `collection_office` | 收寄网点（从中国邮政「邮件离开【X】，正在发往…」「邮件已在【X】完成分拣」提取，互换局除外）；没有始发国段时为 `null` |
@@ -236,6 +245,7 @@ archive 响应 `{"result": "archived" | "already_archived", "tracking": {…}}`�
 | `BARK_HEALTH_PATH` / `BARK_HEALTH_TIMEOUT` | `/ping` / `15` | Bark 健康检查路径；探测与测试推送的超时（秒） |
 | `REQUEST_TIMEOUT` | `15` | 追踪脚本抓取官网、向 Bark 推送时单次请求的超时（秒） |
 | `AUTO_ARCHIVE_DELIVERED` | `1` | 签收后自动归档；`0` 时签收的任务照旧轮询 |
+| `TRANSIT_REGION_LABEL` | `韩国` | 到达预测里中转段的显示名；未设置按「韩国」，设为空则显示「中转段」 |
 | `TRACK17_API_KEY` | 空 | 物流聚合查询服务 17TRACK 的 API 密钥，用于补充始发国段轨迹（只对中国寄出、单号以 `CN` 结尾的件）；留空则关闭该功能，其余不受影响 |
 | `BARK_BIND_ADDRESS` / `BARK_EXECUTABLE` | `0.0.0.0:8080` / 自动查找 | 本地 Bark Server 监听地址与可执行文件 |
 | `LOCAL_BARK_ENABLED` | `1` | `0` 时不管理本地 Bark 子进程（Bark 独立部署时） |
@@ -259,12 +269,13 @@ archive 响应 `{"result": "archived" | "already_archived", "tracking": {…}}`�
 | Bark 健康检查 | `BARK_HEALTH_PATH`、`BARK_HEALTH_TIMEOUT` | 保存即生效 |
 | 追踪脚本 | `REQUEST_TIMEOUT`、`TRACK17_API_KEY`、`AUTO_ARCHIVE_DELIVERED` | 追踪脚本下次查询时生效 |
 | 追踪脚本 | `AUTO_START_TRACKER` | 重启 Web 后生效（脚本意外退出后是否自动重启读取当前值） |
+| 到达预测 | `TRANSIT_REGION_LABEL` | 保存即生效 |
 | 本地 Bark 服务 | `LOCAL_BARK_ENABLED` | 保存即生效（不会停掉已运行的子进程） |
 | 本地 Bark 服务 | `BARK_BIND_ADDRESS` | 下次启动本地 Bark 时生效 |
 | 本地 Bark 服务 | `AUTO_START_BARK_SERVER` | 重启 Web 后生效 |
 | Web 服务 | `APP_PORT` | 重启 Web 后生效 |
 
-提交时按字段类型校验（开关、整数及范围、`http(s)://` 地址），不合法的一项都不写。密钥字段（`TRACK17_API_KEY`）不回显明文：页面上只显示是否已配置（以及 17TRACK 剩余额度，查询失败则不显示），原样提交占位符表示不改，清空保存即删除。写回 `.env` 用不加引号的 `KEY=value` 形式（兼容按原样加载 env 文件的容器运行时），含空白、`#`、引号、反斜杠、`$`、反引号的值会被拒绝；留空即清空，`.env` 里出现过的键以文件为准，不回退到启动时的环境变量。
+提交时按字段类型校验（开关、整数及范围、`http(s)://` 地址），不合法的一项都不写。密钥字段（`TRACK17_API_KEY`）不回显明文：页面上只显示是否已配置（系统设置页另有 17TRACK 卡片：额度用量、登记单号统计与控制台跳转），原样提交占位符表示不改，清空保存即删除。写回 `.env` 用不加引号的 `KEY=value` 形式（兼容按原样加载 env 文件的容器运行时），含空白、`#`、引号、反斜杠、`$`、反引号的值会被拒绝；留空即清空，`.env` 里出现过的键以文件为准，不回退到启动时的环境变量。
 
 日志写在 `logs/tracker.log`、`logs/bark.log`、`logs/remote_bark.log`，单个文件超过 2 MB 自动轮转，保留 `.1`～`.3` 三份旧文件。
 

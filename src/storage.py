@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 from dotenv import dotenv_values
 from werkzeug.security import check_password_hash, generate_password_hash
 
+import env_schema
 import forecast
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
@@ -225,6 +226,7 @@ def _row_to_task(row):
     task["check_interval"] = _normalize_check_interval(task.get("check_interval"))
     task["enabled"] = bool(task.get("enabled"))
     task["archived"] = bool(task.get("archived"))
+    task["atypical"] = bool(task.get("atypical"))
     task["seen_count"] = int(task.get("seen_count") or 0)
     task["tracking_url"] = build_tracking_url(task.get("tracking_number", ""))
     return task
@@ -406,6 +408,7 @@ def _ensure_forecast_schema(conn):
     （_migrate_carrier_sources，它是子表，不踩 data-model.md 的外键坑），tracking_tasks 永不重建。
 
     - tracking_tasks.channel：渠道名，空串 = 未标注（ADD COLUMN，幂等）。
+    - tracking_tasks.atypical：非常规件（0/1），作为预测样本时降权（ADD COLUMN，幂等）。
     - carrier_records：承运方履历，长期保留、不清理（task_events 有 180 天 / 500 条的清理，不能当经验库）。
       存原始状态，阶段在读取时由 forecast.record_stage 计算，以后改映射规则对历史数据自动生效。
     - pre_milestones：发货前节点（下单 / 打包 / 出库），每个任务每个阶段一行。
@@ -415,6 +418,9 @@ def _ensure_forecast_schema(conn):
     carrier_records 为空而 task_events 里有 status_change 时，把它们解析回填一次（INSERT OR IGNORE，重复执行无害）。"""
     if not _has_column(conn, "tracking_tasks", "channel"):
         conn.execute("ALTER TABLE tracking_tasks ADD COLUMN channel TEXT NOT NULL DEFAULT ''")
+    # 非常规件：作为预测样本时降权（forecast.ATYPICAL_WEIGHT）。ADD COLUMN 幂等，不重建 tracking_tasks
+    if not _has_column(conn, "tracking_tasks", "atypical"):
+        conn.execute("ALTER TABLE tracking_tasks ADD COLUMN atypical INTEGER NOT NULL DEFAULT 0")
     _migrate_carrier_sources(conn)
     if not _has_table(conn, "carrier_records"):
         conn.execute(_CARRIER_RECORDS_TABLE_SQL.format(name="carrier_records"))
@@ -513,6 +519,62 @@ TRACK17_CATCHUP_DAYS = 3
 TRACK17_BATCH = 40
 # 认为始发国段已经完整（不再补抓）的事件：中国邮政记到「到达寄达地」
 TRACK17_DONE_STATUS = "到达寄达地"
+
+
+# 单号在 17TRACK 的登记状态穷举（网页显示用，前端 forecast.js 有一份一致的映射）：
+# unregistered 未登记（含登记失败前从没成功过、且没有错误记录）/ pending 已登记、还没查到中国邮政事件 /
+# synced 已查到并写入事件 / error 最近一次请求出错（登记或查询，原因在 last_error）
+TRACK17_STATUS_META = {
+    "unregistered": {"label": "未登记", "tone": "neutral"},
+    "pending": {"label": "已登记待数据", "tone": "info"},
+    "synced": {"label": "已同步", "tone": "ok"},
+    "error": {"label": "出错", "tone": "err"},
+}
+
+
+def track17_status(row) -> str:
+    """track17_numbers 的一行（或 None）→ TRACK17_STATUS_META 的 key。出错优先于其他状态。"""
+    if row is None:
+        return "unregistered"
+    if str(row["last_error"] or "").strip():
+        return "error"
+    if not row["registered_at"]:
+        return "unregistered"
+    return "synced" if row["last_synced_at"] else "pending"
+
+
+def track17_number_view(tracking_number: str) -> dict:
+    """网页显示用：{"status", "registered_at", "last_synced_at", "error"}。"""
+    row = track17_state(tracking_number)
+    return {
+        "status": track17_status(row),
+        "registered_at": row["registered_at"] if row else None,
+        "last_synced_at": row["last_synced_at"] if row else None,
+        "error": (str(row["last_error"] or "").strip() or None) if row else None,
+    }
+
+
+def track17_summary() -> dict:
+    """管理员 17TRACK 卡片的统计：已登记单号数及其中各状态个数、最近一次同步时间、最近一条错误（没有为 None）。"""
+    with closing(_connect()) as conn:
+        rows = [dict(row) for row in conn.execute("SELECT * FROM track17_numbers").fetchall()]
+    registered = [row for row in rows if row["registered_at"]]
+    counts = {"pending": 0, "synced": 0, "error": 0}
+    for row in registered:
+        counts[track17_status(row)] += 1
+    synced_times = [row["last_synced_at"] for row in rows if row["last_synced_at"]]
+    errors = [row for row in rows if str(row["last_error"] or "").strip()]
+    latest_error = max(errors, key=lambda row: row["last_attempt_at"] or "") if errors else None
+    return {
+        "registered": len(registered),
+        **counts,
+        "last_synced_at": max(synced_times) if synced_times else None,
+        "last_error": {
+            "tracking_number": latest_error["tracking_number"],
+            "error": latest_error["last_error"],
+            "at": latest_error["last_attempt_at"],
+        } if latest_error else None,
+    }
 
 
 def track17_state(tracking_number: str):
@@ -680,10 +742,11 @@ def _forecast_number_stages(conn, tracking_number: str, *, milestone_task_ids, r
 
 def _forecast_samples(conn, exclude_number: str) -> list:
     """历史样本：所有账号所有任务（含归档）按单号去重。同单号多个任务：阶段时间取最早，
-    渠道取最近更新的那条非空渠道。排除当前单号。只返回阶段、渠道与收寄网点，不带单号与账号。"""
+    渠道取最近更新的那条非空渠道，任一任务标了非常规件就算非常规。排除当前单号。
+    只返回阶段、渠道、收寄网点与非常规标记，不带单号与账号。"""
     tasks_by_number: dict = {}
     for row in conn.execute(
-        "SELECT id, tracking_number, channel FROM tracking_tasks ORDER BY updated_at DESC, id DESC"
+        "SELECT id, tracking_number, channel, atypical FROM tracking_tasks ORDER BY updated_at DESC, id DESC"
     ).fetchall():
         tasks_by_number.setdefault(row["tracking_number"], []).append(row)
     numbers = set(tasks_by_number)
@@ -701,7 +764,13 @@ def _forecast_samples(conn, exclude_number: str) -> list:
         if not stages:
             continue
         channel = next((row["channel"] for row in rows if str(row["channel"] or "").strip()), "")
-        samples.append({"stages": stages, "channel": channel, "office": forecast.collection_office(records)})
+        samples.append({
+            "stages": stages,
+            "channel": channel,
+            "office": forecast.collection_office(records),
+            # 同单号多个任务：任一任务标了非常规就算
+            "atypical": any(int(row["atypical"] or 0) for row in rows),
+        })
     return samples
 
 
@@ -715,8 +784,9 @@ def _office_channels(samples) -> dict:
     return result
 
 
-def task_forecast(task_id: int, now=None):
-    """任务的到达预测（结构见 forecast.build_forecast，另加 collection_office / suggested_channel / office_multi_channel）；
+def task_forecast(task_id: int, now=None, transit_region=None):
+    """任务的到达预测（结构见 forecast.build_forecast，另加 suggested_channel / office_multi_channel）；
+    transit_region 不传时读系统设置 TRANSIT_REGION_LABEL（env_schema.transit_region_label）；
     任务不存在返回 None。
     当前单的阶段：本单号在所有任务下的承运方履历（日本邮政与中国邮政的公开数据）+ 本任务自己的发货前节点
     （别的账号同单号任务的节点不并进来，免得把别人的下单时间显示给这个人）。
@@ -729,8 +799,13 @@ def task_forecast(task_id: int, now=None):
         records = _number_records(conn, number)
         current = _forecast_number_stages(conn, number, milestone_task_ids=[int(task_id)], records=records)
         samples = _forecast_samples(conn, number)
-    result = forecast.build_forecast(current, row["channel"], samples, now or datetime.now())
     office = forecast.collection_office(records)
+    if transit_region is None:
+        transit_region = env_schema.transit_region_label()
+    result = forecast.build_forecast(
+        current, row["channel"], samples, now or datetime.now(),
+        current_office=office, transit_region=transit_region,
+    )
     if str(row["channel"] or "").strip():
         result.update({"collection_office": office, "suggested_channel": None, "office_multi_channel": False})
     else:
@@ -739,12 +814,13 @@ def task_forecast(task_id: int, now=None):
 
 
 def task_cn_records(task_id: int) -> list:
-    """任务当前单号的中国邮政始发国段记录（所有任务下去重），按时间倒序：[{"record_at", "status", "detail"}]。
-    record_at 已是日本时间。任务不存在返回空列表。"""
+    """任务当前单号的中国邮政始发国段记录（所有任务下去重），按时间倒序：[{"record_at", "status", "detail", "segment"}]。
+    record_at 已是日本时间；segment 按本单号的阶段边界切分（forecast.segment_at）。任务不存在返回空列表。"""
     with closing(_connect()) as conn:
         row = conn.execute("SELECT tracking_number FROM tracking_tasks WHERE id = ?", (int(task_id),)).fetchone()
         if row is None:
             return []
+        number = row["tracking_number"]
         rows = conn.execute(
             """
             SELECT record_at, status, detail FROM carrier_records
@@ -752,9 +828,15 @@ def task_cn_records(task_id: int) -> list:
             GROUP BY record_at, status, detail
             ORDER BY record_at DESC, MAX(id) DESC
             """,
-            (row["tracking_number"],),
+            (number,),
         ).fetchall()
-    return [dict(item) for item in rows]
+        stages = forecast.stages_from_records(_number_records(conn, number), tracking_number=number)
+    result = []
+    for item in rows:
+        record = dict(item)
+        record["segment"] = forecast.segment_at(stages, forecast.parse_stored_time(record["record_at"]))
+        result.append(record)
+    return result
 
 
 # --- v1 → v2 迁移 ---
@@ -1558,6 +1640,12 @@ def update_task(task_id: int, data: dict, *, actor_role: str = "admin", actor_id
                 conn.execute(
                     "UPDATE tracking_tasks SET channel = ? WHERE id = ?",
                     (forecast.normalize_channel(data.get("channel")), int(task_id)),
+                )
+            if "atypical" in data:
+                if not isinstance(data["atypical"], bool):
+                    raise ValueError("非常规件标记必须是布尔值。")
+                conn.execute(
+                    "UPDATE tracking_tasks SET atypical = ? WHERE id = ?", (int(data["atypical"]), int(task_id))
                 )
             if data.get("milestones") is not None:
                 _write_milestones(conn, task_id, normalize_milestones(data["milestones"]), "manual")

@@ -136,7 +136,8 @@ def test_forecast_basic_prediction_and_weights():
     assert result["current"] == {"stage": "arrived_japan", "at": "2026-11-10 10:00", "waited_seconds": 7200}
     assert result["origin"] == {"stage": "accepted", "at": "2026-11-05 10:00"}
     assert result["day"] == 6  # 11/5 是第 1 天
-    assert result["samples"] == {"same_channel": 2, "other": 1}
+    assert result["samples"] == {"total": 3, "same_channel": 2, "same_office": 0, "similar": 2, "atypical": 0, "similar_atypical": 0}
+    assert result["basis"] == "channel"  # 当前单没有收寄网点：邮政段退回按渠道
     assert result["confidence"] == "rough"
     assert result["overdue"] is False
     customs, delivered = result["remaining"]
@@ -147,7 +148,8 @@ def test_forecast_basic_prediction_and_weights():
     assert customs["eta"] == "2026-11-11 06:00"
     assert (customs["low_seconds"], customs["high_seconds"]) == (8 * 3600, 18 * 3600)
     assert customs["occurrence"] == 1.0 and customs["maybe"] is False
-    assert customs["samples"] == {"same_channel": 2, "other": 1}
+    assert customs["samples"] == {"total": 3, "similar": 2, "atypical": 0}
+    assert customs["segment"] == "japan" and customs["basis"] == "channel"
     assert delivered["stage"] == "delivered" and delivered["median_seconds"] == 48 * 3600
 
 
@@ -162,7 +164,7 @@ def test_forecast_conditioning_drops_fast_samples():
     """已等 15 小时：10 小时就通关的样本不合格，只剩更慢的。"""
     now = dt("2026-11-11 01:00")
     result = forecast.build_forecast(CURRENT, "A", [sample_of(10, 40), sample_of(20, 50), sample_of(30, 60)], now)
-    assert result["samples"] == {"same_channel": 2, "other": 0}
+    assert (result["samples"]["total"], result["samples"]["same_channel"]) == (2, 2)
     assert result["remaining"][0]["median_seconds"] == 5 * 3600  # (20-15)h
     assert result["overdue"] is False
 
@@ -171,7 +173,7 @@ def test_forecast_overdue_falls_back_to_all_samples():
     now = dt("2026-11-13 10:00")  # 已等 72 小时，比所有样本离开「到达日本」都久
     result = forecast.build_forecast(CURRENT, "A", [sample_of(10, 40), sample_of(20, 50)], now)
     assert result["overdue"] is True
-    assert result["samples"] == {"same_channel": 2, "other": 0}
+    assert (result["samples"]["total"], result["samples"]["same_channel"]) == (2, 2)
     assert all(item["median_seconds"] == 0 for item in result["remaining"])
 
 
@@ -421,7 +423,7 @@ def test_task_forecast_samples_dedup_and_exclusion(db, owner):
     result = db.task_forecast(current["id"], now=dt("2026-11-03 12:00"))
     assert result["origin"] == {"stage": "ordered", "at": "2026-11-01 12:00"}
     assert result["day"] == 3
-    assert result["samples"] == {"same_channel": 1, "other": 0}
+    assert (result["samples"]["total"], result["samples"]["same_channel"]) == (1, 1)
     stages = [item["stage"] for item in result["remaining"]]
     assert stages[0] == "origin_exchange" and stages[-1] == "delivered"
     assert "EB" not in repr(result)  # 不暴露任何单号
@@ -612,7 +614,7 @@ def test_backfill_results(client, db, owner, task, fake_fetch):
     db.update_task_state(task["id"], tracking_number=NUM, carrier_records=[{"info": "2026/11/03 10:00 引受", "detail": "CHINA"}])
     db.update_task(task["id"], {"channel": "渠道 A"})
     result = db.task_forecast(task["id"], now=dt("2026-11-03 12:00"))
-    assert result["samples"] == {"same_channel": 1, "other": 0} and result["confidence"] == "rough"
+    assert (result["samples"]["total"], result["samples"]["same_channel"]) == (1, 1) and result["confidence"] == "rough"
 
 
 def test_backfill_limits_and_permissions(client, db, owner, fake_fetch):
@@ -656,9 +658,19 @@ def _js_block(name):
 
 def test_js_stage_map_matches_python():
     block = _js_block("STAGE_META")
-    pairs = re.findall(r"(\w+): \{ label: '([^']+)' \}", block)
-    assert [key for key, _ in pairs] == list(forecast.STAGE_META)  # 顺序也一致
-    assert {key: {"label": label} for key, label in pairs} == forecast.STAGE_META
+    found = re.findall(r"(\w+): \{ label: '([^']+)', segment: '(\w+)' \}", block)
+    assert [key for key, _, _ in found] == list(forecast.STAGE_META)  # 顺序也一致
+    assert {key: {"label": label, "segment": segment} for key, label, segment in found} == forecast.STAGE_META
+
+
+def test_js_segment_basis_and_transit_maps_match_python():
+    pairs = re.findall(r"(\w+): \{ label: '([^']+)' \}", _js_block("SEGMENT_META"))
+    assert [key for key, _ in pairs] == list(forecast.SEGMENT_META)
+    assert {key: {"label": label} for key, label in pairs} == forecast.SEGMENT_META
+    pairs = re.findall(r"(\w+): \{ label: '([^']+)' \}", _js_block("BASIS_META"))
+    assert {key: {"label": label} for key, label in pairs} == forecast.BASIS_META
+    pairs = re.findall(r"(\w+): '([^']+)'", _js_block("TRANSIT_STAGE_TEMPLATES"))
+    assert dict(pairs) == forecast.TRANSIT_STAGE_TEMPLATES
 
 
 def test_js_confidence_map_matches_python():

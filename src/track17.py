@@ -6,17 +6,25 @@
 - getquota：剩余额度，管理员页面显示用。
 所有失败都抛 Track17Error，调用方负责兜住——17TRACK 出错绝不能影响日本邮政追踪与推送。
 """
+import urllib.parse
+
 import requests
 
 import forecast
 
 API_BASE = "https://api.17track.net/track/v2.2"
+# 17TRACK 公开查询页（网页上的「17TRACK」跳转胶囊）
+TRACKING_PAGE = "https://t.17track.net/zh-cn#nums={number}"
 # 每次请求最多这么多单号（register / gettrackinfo 的上限）
 MAX_NUMBERS = 40
 # 17TRACK 的「单号已登记」错误码；有的响应只在 message 里写 registered，两者都认
 ALREADY_REGISTERED_CODE = -18019901
 # 中国邮政在 providers 里的国家码
 CN_PROVIDER_COUNTRY = "CN"
+
+
+def tracking_page_url(number: str) -> str:
+    return TRACKING_PAGE.format(number=urllib.parse.quote(str(number), safe=""))
 
 
 class Track17Error(Exception):

@@ -205,6 +205,19 @@ textarea.field {
   gap: var(--sp-2);
 }
 
+/* 外链胶囊（a.pill + external-link 图标）：设计包的 .pill 是 inline-block、没有图标间距，这里只补图文对齐与间距 */
+.pill-ext {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  text-decoration: none;
+}
+
+/* 编辑表单里的「非常规件」开关在字段网格里独占一整行 */
+.task-fields > .switch-row {
+  grid-column: 1 / -1;
+}
+
 .task-create {
   padding: var(--sp-4);
 }

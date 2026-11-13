@@ -225,6 +225,8 @@ def test_cn_ems_stage_mapping():
         "departed_origin": dt("2026-11-10 13:32"),
         "handed_to_airline": dt("2026-11-10 14:46"),  # 已交承运商运输早于航空公司接收
         "flight_departed": dt("2026-11-10 22:45"),  # 第一条航空公司启运
+        "transit_arrived": dt("2026-11-11 11:37"),  # 第一条飞机进港（中转地）
+        "transit_departed": dt("2026-11-12 14:41"),  # 第二条航空公司启运
         "landed_destination": dt("2026-11-12 18:27"),
         "arrived_japan": dt("2026-11-13 07:17"),
     }
@@ -363,7 +365,7 @@ def test_forecast_api_returns_cn_records_and_set_channel(client, db, owner):
     body = client.get(f"/api/tasks/{task['id']}/forecast").get_json()
     assert body["forecast"]["suggested_channel"] == "渠道A"
     records = body["cn_records"]
-    assert records[0] == {"record_at": "2026-11-13 07:17", "status": "到达寄达地处理中心", "detail": ""}
+    assert records[0] == {"record_at": "2026-11-13 07:17", "status": "到达寄达地处理中心", "detail": "", "segment": "japan"}
     assert records[-1]["status"] == "中国邮政已收取邮件" and len(records) == len(CN_EVENTS)
     # 「设为该渠道」按钮走现有编辑接口，只带 channel
     assert client.put(f"/api/tasks/{task['id']}", json={"channel": "渠道A"}).status_code == 200
@@ -552,21 +554,3 @@ def test_secret_masked_and_mask_means_unchanged(client, db, tmp_path, monkeypatc
     assert "TRACK17_API_KEY=new-key-123" in path.read_text()
     body = client.post("/update_env", json={"TRACK17_API_KEY": ""}).get_json()
     assert body["env_vars"]["TRACK17_API_KEY"] == ""
-
-
-def test_quota_endpoint(client, db, owner, fake17, monkeypatch):
-    import app as app_module
-
-    env = {}
-    monkeypatch.setattr(app_module, "load_system_env", lambda path, keys: {key: env.get(key, "") for key in keys})
-    client.post("/login", data={"username": "ella", "password": "pw-ella"})
-    assert client.get("/api/admin/track17/quota").status_code in (302, 401, 403)
-    client.post("/logout")
-    client.post("/login", data={"username": "admin", "password": ADMIN_PASSWORD})
-    assert client.get("/api/admin/track17/quota").status_code == 404
-    env.update(ENV)
-    body = client.get("/api/admin/track17/quota").get_json()
-    assert body["quota"] == {"quota_total": 100, "quota_used": 3, "quota_remain": 97}
-    fake17.fail = True
-    response = client.get("/api/admin/track17/quota")
-    assert response.status_code == 502 and KEY not in response.get_data(as_text=True)

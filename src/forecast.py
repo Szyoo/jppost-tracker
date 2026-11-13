@@ -18,45 +18,122 @@ from datetime import datetime, timedelta, timezone
 # 签收自动归档（tracker.is_delivered）与阶段映射（delivered）共用这一份，tracker 从这里 re-export。
 DELIVERED_STATUSES = frozenset({"お届け先にお届け済み", "お届け済み", "窓口でお渡し"})
 
+# 段穷举，按时间先后排列。每个阶段归属一个段（STAGE_META 的 segment），前端按段分组显示：
+# warehouse 仓库段（发货前节点）/ domestic 国内段（始发国邮政）/ transit 中转段（经第三地中转的航班）/ japan 日本段。
+# 中转段的显示名取系统设置 TRANSIT_REGION_LABEL（如「韩国」→「韩国段」「到达韩国」），留空用这里的通用名。
+SEGMENT_META = {
+    "warehouse": {"label": "仓库段"},
+    "domestic": {"label": "国内段"},
+    "transit": {"label": "中转段"},
+    "japan": {"label": "日本段"},
+}
+SEGMENTS = tuple(SEGMENT_META)
+
 # 阶段穷举，按时间先后排列（dict 保序，顺序即先后）。前三个是发货前节点（pre_milestones），其余来自承运方履历。
-# left_collection / handed_to_airline / flight_departed / landed_destination 只有始发国段（cn_ems）才有。
+# left_collection / handed_to_airline / flight_departed / transit_* / landed_destination 只有始发国段（cn_ems）才有。
 STAGE_META = {
-    "ordered": {"label": "下单寄出"},
-    "packed": {"label": "打包完成"},
-    "handed_over": {"label": "出库交运"},
-    "accepted": {"label": "引受"},
-    "left_collection": {"label": "离开揽收网点"},
-    "origin_exchange": {"label": "到达始发互换局"},
-    "origin_customs": {"label": "始发国海关"},
-    "departed_origin": {"label": "离开始发国"},
-    "handed_to_airline": {"label": "交航"},
-    "flight_departed": {"label": "航班起飞"},
-    "landed_destination": {"label": "航班到达日本"},
-    "arrived_japan": {"label": "到达日本"},
-    "japan_customs": {"label": "日本通关"},
-    "departed_exchange": {"label": "离开日本互换局"},
-    "local_arrived": {"label": "到达派送局"},
-    "out_for_delivery": {"label": "派送中"},
-    "delivered": {"label": "签收"},
+    "ordered": {"label": "下单寄出", "segment": "warehouse"},
+    "packed": {"label": "打包完成", "segment": "warehouse"},
+    "handed_over": {"label": "出库交运", "segment": "warehouse"},
+    "accepted": {"label": "引受", "segment": "domestic"},
+    "left_collection": {"label": "离开揽收网点", "segment": "domestic"},
+    "origin_exchange": {"label": "到达始发互换局", "segment": "domestic"},
+    "origin_customs": {"label": "始发国海关", "segment": "domestic"},
+    "departed_origin": {"label": "离开始发国", "segment": "domestic"},
+    "handed_to_airline": {"label": "交航", "segment": "domestic"},
+    "flight_departed": {"label": "航班起飞", "segment": "domestic"},
+    "transit_arrived": {"label": "到达中转地", "segment": "transit"},
+    "transit_departed": {"label": "离开中转地", "segment": "transit"},
+    "landed_destination": {"label": "航班到达日本", "segment": "japan"},
+    "arrived_japan": {"label": "到达日本", "segment": "japan"},
+    "japan_customs": {"label": "日本通关", "segment": "japan"},
+    "departed_exchange": {"label": "离开日本互换局", "segment": "japan"},
+    "local_arrived": {"label": "到达派送局", "segment": "japan"},
+    "out_for_delivery": {"label": "派送中", "segment": "japan"},
+    "delivered": {"label": "签收", "segment": "japan"},
 }
 STAGES = tuple(STAGE_META)
 STAGE_ORDER = {stage: index for index, stage in enumerate(STAGES)}
 PRE_STAGES = ("ordered", "packed", "handed_over")
 # 「第 N 天」的起点候选，按优先级：有下单用下单，没有用出库，再没有用引受
 ORIGIN_STAGES = ("ordered", "handed_over", "accepted")
+# 中转段两个阶段的显示名模板（{region} = TRANSIT_REGION_LABEL），没设中转地名时用 STAGE_META 的通用名
+TRANSIT_STAGE_TEMPLATES = {"transit_arrived": "到达{region}", "transit_departed": "离开{region}"}
 
-# 可信度穷举：none 没有可参考样本 / borrowed 同渠道 0 单只借鉴其他渠道 / rough 同渠道 1–4 单 / solid 同渠道 ≥5 单
+
+def _check_stage_segments():
+    """段归属穷举：每个阶段都有已定义的段，且段沿阶段顺序只前进不回头（分组显示依赖这一点）；
+    发货前节点恰好是仓库段；中转段的名称模板只覆盖中转段阶段。"""
+    last = -1
+    for stage, meta in STAGE_META.items():
+        index = SEGMENTS.index(meta["segment"])
+        if index < last:
+            raise ValueError(f"阶段 {stage} 的段顺序倒退")
+        last = index
+    if {s for s, m in STAGE_META.items() if m["segment"] == "warehouse"} != set(PRE_STAGES):
+        raise ValueError("仓库段必须恰好是发货前节点")
+    if {s for s, m in STAGE_META.items() if m["segment"] == "transit"} != set(TRANSIT_STAGE_TEMPLATES):
+        raise ValueError("中转段阶段与名称模板不一致")
+
+
+_check_stage_segments()
+
+
+def stage_segment(stage: str) -> str:
+    return STAGE_META[stage]["segment"]
+
+
+def stage_label(stage: str, transit_region: str = "") -> str:
+    region = str(transit_region or "").strip()
+    if region and stage in TRANSIT_STAGE_TEMPLATES:
+        return TRANSIT_STAGE_TEMPLATES[stage].format(region=region)
+    return STAGE_META[stage]["label"]
+
+
+def segment_at(stages: dict, moment):
+    """某个时刻落在哪一段：时间不晚于它的已到阶段里最晚的那个所在的段（同时刻取顺序靠后的）；
+    比所有已到阶段都早时取最早那个阶段的段；没有任何阶段返回 None。用于把履历事件按阶段边界切分到段下。"""
+    if not stages or moment is None:
+        return None
+    before = [stage for stage, at in stages.items() if at <= moment]
+    if before:
+        return stage_segment(max(before, key=lambda stage: (stages[stage], STAGE_ORDER[stage])))
+    return stage_segment(min(stages, key=lambda stage: (stages[stage], STAGE_ORDER[stage])))
+
+
+def segment_label(segment: str, transit_region: str = "") -> str:
+    region = str(transit_region or "").strip()
+    if region and segment == "transit":
+        return f"{region}段"
+    return SEGMENT_META[segment]["label"]
+
+
+# 可信度穷举：none 没有可参考样本 / borrowed 同类 0 单只借鉴其他单 / rough 同类 1–4 单 / solid 同类 ≥5 单。
+# 「同类」看剩余阶段里第一个阶段所在段的比较依据（BASIS_META）：仓库段比渠道，邮政各段比收寄网点。
 CONFIDENCE_META = {
     "none": {"label": "还没有可参考的历史"},
-    "borrowed": {"label": "同渠道还没有记录，借鉴其他渠道"},
-    "rough": {"label": "同渠道样本较少，仅供粗估"},
-    "solid": {"label": "同渠道样本充足"},
+    "borrowed": {"label": "还没有同类记录，借鉴其他单"},
+    "rough": {"label": "同类样本较少，仅供粗估"},
+    "solid": {"label": "同类样本充足"},
 }
 SOLID_MIN_SAMPLES = 5
 
-# 同渠道样本权重 1.0，其他渠道 / 未标注 0.3
-SAME_CHANNEL_WEIGHT = 1.0
-OTHER_CHANNEL_WEIGHT = 0.3
+# 样本「同类」的比较依据穷举：channel 同渠道 / office 同收寄网点
+BASIS_META = {
+    "channel": {"label": "同渠道"},
+    "office": {"label": "同收寄网点"},
+}
+
+# 样本权重按剩余阶段所在的段区分：同类 1.0，其他 0.3。
+# - 仓库段（下单→出库）比渠道：这段耗时取决于渠道（发货方）自己的打包与交运节奏；
+# - 国内段、中转段、日本段比收寄网点：同一个揽收网点之后走的是同一条邮政线路（同一互换局、同一航线），
+#   耗时取决于邮政而与发货渠道无关，渠道不同但网点相同的样本同样有代表性。
+#   当前单或样本缺收寄网点（没有始发国段数据）时，这一对样本退回按渠道比较。
+SAME_WEIGHT = 1.0
+OTHER_WEIGHT = 0.3
+# 非常规件（用户在任务上标的，如大件电器走的特殊流程）作为样本时，在上面的权重上再乘这个系数。
+# 同单号多个任务合并成一个样本时任一任务标了就算；当前单自己是否非常规不影响别的样本的权重。
+ATYPICAL_WEIGHT = 0.3
 # 合格样本达到这么多单才用加权 20%–80% 分位当区间，否则用 min–max
 QUANTILE_MIN_SAMPLES = 3
 LOW_QUANTILE = 0.2
@@ -279,6 +356,39 @@ def track17_event_time(time_iso, description):
     return moment.astimezone(JST).strftime("%Y-%m-%d %H:%M")
 
 
+# --- 中转段（要看事件序列，不能逐条映射） ---
+
+_FLIGHT_DEPART = "航空公司启运"
+_FLIGHT_ARRIVE = "飞机进港"
+
+
+def transit_stages(records) -> dict:
+    """经第三地中转的两段航班：cn_ems 里第二条「航空公司启运」（第一条启运之后的下一条）= transit_departed，
+    第一条启运之后的第一条「飞机进港」= transit_arrived（不晚于第二条启运）。只有一条启运（一段航班）时两者都没有。
+    同单号挂在多个任务下会有重复事件，按时刻去重。返回 {stage: datetime}。"""
+    departs, arrives = set(), set()
+    for record in records or []:
+        if record["source"] != "cn_ems":
+            continue
+        status = str(record["status"] or "").strip()
+        moment = parse_stored_time(record["record_at"])
+        if moment is None:
+            continue
+        if status.startswith(_FLIGHT_DEPART):
+            departs.add(moment)
+        elif status.startswith(_FLIGHT_ARRIVE):
+            arrives.add(moment)
+    departs = sorted(departs)
+    if len(departs) < 2:
+        return {}
+    first, second = departs[0], departs[1]
+    result = {"transit_departed": second}
+    landed = sorted(moment for moment in arrives if first <= moment <= second)
+    if landed:
+        result["transit_arrived"] = landed[0]
+    return result
+
+
 # --- 收寄网点 ---
 
 # 「邮件离开【X】，正在发往…」/「邮件已在【X】完成分拣，准备发出」里的 X；互换局不算收寄网点
@@ -332,6 +442,8 @@ def stages_from_records(records, milestones=None, tracking_number="") -> dict:
     for record in records or []:
         put(record_stage(record["source"], record["status"], record.get("detail", "")),
             record_time(record, tracking_number))
+    for stage, moment in transit_stages(records).items():
+        put(stage, moment)
     for stage, at in (milestones or {}).items():
         if stage not in PRE_STAGES:
             raise ValueError(f"未定义的发货前节点：{stage}")
@@ -379,14 +491,28 @@ def _origin(stages: dict):
     return None
 
 
-def _confidence(same: int, other: int) -> str:
-    if same + other == 0:
+def _confidence(similar: int, total: int) -> str:
+    if total == 0:
         return "none"
-    if same == 0:
+    if similar == 0:
         return "borrowed"
-    if same < SOLID_MIN_SAMPLES:
+    if similar < SOLID_MIN_SAMPLES:
         return "rough"
     return "solid"
+
+
+def segment_basis(segment: str, current_office) -> str:
+    """一个段的「同类」比较依据：仓库段比渠道；邮政各段比收寄网点，当前单没有收寄网点时退回渠道。"""
+    if segment == "warehouse" or not current_office:
+        return "channel"
+    return "office"
+
+
+def _similar(sample: dict, basis: str) -> bool:
+    """样本在某个比较依据下是否「同类」。比网点但样本缺网点时，这一单退回按渠道比。"""
+    if basis == "office" and sample["office"]:
+        return sample["same_office"]
+    return sample["same_channel"]
 
 
 def _leave_seconds(sample_stages: dict, stage: str, t_stage):
@@ -399,11 +525,14 @@ def _leave_seconds(sample_stages: dict, stage: str, t_stage):
     return min(later) if later else None
 
 
-def build_forecast(current_stages: dict, current_channel: str, samples, now: datetime) -> dict:
+def build_forecast(current_stages: dict, current_channel: str, samples, now: datetime, *,
+                   current_office=None, transit_region: str = "") -> dict:
     """预测剩余阶段。
 
-    current_stages：当前单 {stage: datetime}；samples：[{"stages": {...}, "channel": str}]（已按单号去重、排除当前单号）；
-    now：当前时间（参数传入，便于测试）。只输出聚合统计，不带样本的单号与账号。
+    current_stages：当前单 {stage: datetime}；samples：[{"stages": {...}, "channel": str, "office": str|None, "atypical": bool}]
+    （已按单号去重、排除当前单号）；current_office：当前单的收寄网点；now：当前时间（参数传入，便于测试）；
+    transit_region：中转地显示名（系统设置 TRANSIT_REGION_LABEL），只原样带进输出给前端拼段名与阶段名。
+    只输出聚合统计，不带样本的单号与账号。
 
     - 起点：ordered → handed_over → accepted 中最先存在的那个；「第 N 天」按自然日算：起点当天是第 1 天，
       跨过一个午夜加 1（看包裹的人按日历数天，不按 24 小时取整）。
@@ -411,13 +540,19 @@ def build_forecast(current_stages: dict, current_channel: str, samples, now: dat
     - 可用样本：有 S 且 S 之后（顺序靠后、时间不早于 t_S）至少到过一个阶段的单。
       合格样本：离开 S 的耗时 > w（已经等了 w 还没走，就只跟同样「走得慢」的历史比）；
       没有合格样本时退回全部可用样本并标 overdue（已比历史上最慢的还久）。
-    - 每个剩余阶段 X：有 X 的合格样本 d = t_X - t_S，剩余 = max(d - w, 0)，同渠道权重 1.0、其他 0.3，
-      输出加权中位数、区间（≥3 单用 20%–80% 分位，否则 min–max）、出现率（<0.5 标「可能出现」，0 不列）。"""
+    - 每个剩余阶段 X：有 X 的合格样本 d = t_X - t_S，剩余 = max(d - w, 0)。权重按 X 所在的段：
+      仓库段同渠道 1.0、其他 0.3；国内 / 中转 / 日本段同收寄网点 1.0、其他 0.3（缺网点退回按渠道，见 segment_basis）；
+      非常规件样本再乘 ATYPICAL_WEIGHT。
+      输出加权中位数、区间（≥3 单用 20%–80% 分位，否则 min–max）、出现率（<0.5 标「可能出现」，0 不列）。
+    - 可信度：按剩余阶段里第一个阶段所在段的比较依据数「同类」合格样本（没有剩余阶段时看当前阶段之后的那个阶段）。"""
     channel = str(current_channel or "").strip()
+    office = str(current_office or "").strip() or None
     arrived = sorted(current_stages.items(), key=lambda item: (item[1], STAGE_ORDER[item[0]]))
     origin = _origin(current_stages)
     result = {
         "channel": channel,
+        "collection_office": office,
+        "transit_region": str(transit_region or "").strip(),
         "generated_at": format_time(now),
         "origin": {"stage": origin, "at": format_time(current_stages[origin])} if origin else None,
         "day": None,
@@ -427,7 +562,8 @@ def build_forecast(current_stages: dict, current_channel: str, samples, now: dat
         "arrived": [{"stage": stage, "at": format_time(moment)} for stage, moment in arrived],
         "remaining": [],
         "confidence": "none",
-        "samples": {"same_channel": 0, "other": 0},
+        "basis": segment_basis("japan", office),
+        "samples": {"total": 0, "same_channel": 0, "same_office": 0, "similar": 0, "atypical": 0, "similar_atypical": 0},
         "overdue": False,
     }
     if not current_stages:
@@ -455,37 +591,42 @@ def build_forecast(current_stages: dict, current_channel: str, samples, now: dat
         leave = _leave_seconds(stages, current, stages[current])
         if leave is None:
             continue
-        same = bool(channel) and str(sample.get("channel") or "").strip() == channel
-        usable.append({"stages": stages, "leave": leave, "same": same})
+        sample_office = str(sample.get("office") or "").strip() or None
+        usable.append({
+            "stages": stages,
+            "leave": leave,
+            "same_channel": bool(channel) and str(sample.get("channel") or "").strip() == channel,
+            "office": sample_office,
+            "same_office": bool(office) and sample_office == office,
+            "atypical": bool(sample.get("atypical")),
+        })
 
     qualified = [sample for sample in usable if sample["leave"] > waited]
     if usable and not qualified:
         qualified = usable
         result["overdue"] = True
 
-    same_count = sum(1 for sample in qualified if sample["same"])
-    other_count = len(qualified) - same_count
-    result["samples"] = {"same_channel": same_count, "other": other_count}
-    result["confidence"] = _confidence(same_count, other_count)
-    if not qualified:
-        return result
+    for sample in qualified:
+        sample["similar"] = {basis: _similar(sample, basis) for basis in BASIS_META}
 
-    def weight(sample):
-        return SAME_CHANNEL_WEIGHT if sample["same"] else OTHER_CHANNEL_WEIGHT
+    def weight(sample, basis):
+        base = SAME_WEIGHT if sample["similar"][basis] else OTHER_WEIGHT
+        return base * ATYPICAL_WEIGHT if sample["atypical"] else base
 
-    total_weight = sum(weight(sample) for sample in qualified)
     for stage in STAGES:
         if STAGE_ORDER[stage] <= STAGE_ORDER[current] or stage in current_stages:
             continue
-        values, weights, same_x = [], [], 0
+        basis = segment_basis(stage_segment(stage), office)
+        values, weights, similar_x, atypical_x = [], [], 0, 0
         for sample in qualified:
             stages = sample["stages"]
             t_s = stages[current]
             if stage not in stages or stages[stage] < t_s:
                 continue
             values.append(max(0.0, (stages[stage] - t_s).total_seconds() - waited))
-            weights.append(weight(sample))
-            same_x += 1 if sample["same"] else 0
+            weights.append(weight(sample, basis))
+            similar_x += 1 if sample["similar"][basis] else 0
+            atypical_x += 1 if sample["atypical"] else 0
         if not values:
             continue
         median = weighted_quantile(values, weights, 0.5)
@@ -494,9 +635,11 @@ def build_forecast(current_stages: dict, current_channel: str, samples, now: dat
             high = weighted_quantile(values, weights, HIGH_QUANTILE)
         else:
             low, high = min(values), max(values)
-        occurrence = sum(weights) / total_weight
+        occurrence = sum(weights) / sum(weight(sample, basis) for sample in qualified)
         result["remaining"].append({
             "stage": stage,
+            "segment": stage_segment(stage),
+            "basis": basis,
             "median_seconds": int(median),
             "low_seconds": int(low),
             "high_seconds": int(high),
@@ -505,6 +648,24 @@ def build_forecast(current_stages: dict, current_channel: str, samples, now: dat
             "eta_high": format_time(now + timedelta(seconds=high)),
             "occurrence": round(occurrence, 3),
             "maybe": occurrence < MAYBE_BELOW,
-            "samples": {"same_channel": same_x, "other": len(values) - same_x},
+            "samples": {"total": len(values), "similar": similar_x, "atypical": atypical_x},
         })
+
+    if result["remaining"]:
+        lead_stage = result["remaining"][0]["stage"]
+    else:
+        later = [stage for stage in STAGES if STAGE_ORDER[stage] > STAGE_ORDER[current]]
+        lead_stage = later[0] if later else current
+    basis = segment_basis(stage_segment(lead_stage), office)
+    similar = sum(1 for sample in qualified if sample["similar"][basis])
+    result["basis"] = basis
+    result["samples"] = {
+        "total": len(qualified),
+        "same_channel": sum(1 for sample in qualified if sample["same_channel"]),
+        "same_office": sum(1 for sample in qualified if sample["same_office"]),
+        "similar": similar,
+        "atypical": sum(1 for sample in qualified if sample["atypical"]),
+        "similar_atypical": sum(1 for sample in qualified if sample["similar"][basis] and sample["atypical"]),
+    }
+    result["confidence"] = _confidence(similar, len(qualified))
     return result

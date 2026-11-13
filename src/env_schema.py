@@ -1,6 +1,7 @@
 """系统设置（.env 白名单键）的唯一定义：分组、文案、类型、范围与生效时机。
 白名单、前端表单、保存提示、追踪脚本要重读的键全部由这里派生，避免多处各记一份。
 本模块不依赖 Flask，追踪脚本也直接引用。"""
+import os
 import urllib.parse
 
 # 生效时机（穷举）：这里新增一档，下面所有按时机取值的地方都必须同时补上，漏写会在导入时 KeyError。
@@ -145,6 +146,24 @@ GROUPS = [
         ],
     },
     {
+        "key": "forecast",
+        "title": "到达预测",
+        "desc": "预测区块与国内段履历的显示方式。",
+        "fields": [
+            {
+                "key": "TRANSIT_REGION_LABEL",
+                "label": "中转地显示名",
+                "desc": "两段航班的线路在第三地中转时，中转段显示为「X段」「到达X」「离开X」。未设置时按「韩国」；清空保存则显示为「中转段」「到达中转地」「离开中转地」。",
+                "type": "text",
+                "default": "韩国",
+                # 未设置（.env 与环境变量里都没有这个键）时取 default；显式留空表示用通用名，不回落到 default
+                "unset_default": True,
+                "placeholder": "留空显示为「中转段」",
+                "apply": "live",
+            },
+        ],
+    },
+    {
         "key": "local_bark",
         "title": "本地 Bark 服务",
         "badge": "仅控制台托管 Bark 时有效",
@@ -213,6 +232,8 @@ def _check_schema():
             raise ValueError(f"{key}: 未知的生效时机 {field['apply']}")
         if field["type"] not in FIELD_TYPES:
             raise ValueError(f"{key}: 未知的字段类型 {field['type']}")
+        if field.get("unset_default") and "default" not in field:
+            raise ValueError(f"{key}: unset_default 需要 default")
         if field["type"] == "secret" and "default" in field:
             raise ValueError(f"{key}: 密钥字段不能有默认值")
         if field["type"] != "int" and ("min" in field or "max" in field):
@@ -287,6 +308,26 @@ def validate_value(key: str, text: str) -> str:
         return text
     # text：不再做格式限制，字符安全已由调用方检查
     return text
+
+
+def transit_region_label(environ=None) -> str:
+    """中转地显示名（TRANSIT_REGION_LABEL，live：每次读进程环境变量，后台保存时会同步写进去）。
+    未设置返回默认「韩国」，显式留空返回空串（前端显示「中转段」等通用名）。"""
+    environ = os.environ if environ is None else environ
+    field = ENV_FIELDS["TRANSIT_REGION_LABEL"]
+    if field["key"] not in environ:
+        return field["default"]
+    return str(environ.get(field["key"]) or "").strip()
+
+
+def fill_unset_defaults(values: dict, present_keys) -> dict:
+    """带 unset_default 的字段：.env 与环境变量里都没有这个键时，下发给网页的值取 default
+    （表单上显示实际生效的值；用户清空保存后键存在、值为空，就不再回落）。"""
+    present = set(present_keys)
+    return {
+        key: (ENV_FIELDS[key]["default"] if ENV_FIELDS.get(key, {}).get("unset_default") and key not in present else value)
+        for key, value in values.items()
+    }
 
 
 def mask_secrets(values: dict) -> dict:

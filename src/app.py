@@ -6,6 +6,7 @@ if __name__ == "__main__":
 
     monkey.patch_all()
 
+import hashlib
 import os
 import sys
 import time
@@ -21,7 +22,7 @@ from functools import wraps
 
 from flask import Flask, abort, g, send_from_directory, render_template, request, jsonify, redirect, session, url_for
 from flask_socketio import SocketIO, emit, disconnect
-from dotenv import load_dotenv, set_key
+from dotenv import dotenv_values, load_dotenv, set_key
 import requests
 import track17
 from szyyw_auth import login_url, sso_enabled
@@ -56,6 +57,8 @@ from storage import (
     set_account_portal_sub,
     task_cn_records,
     task_forecast,
+    track17_number_view,
+    track17_summary,
     update_account,
     update_task,
     verify_account_password,
@@ -709,7 +712,9 @@ def build_account_state():
 def build_system_env():
     """下发给网页的系统设置：密钥字段只给「是否已配置」（env_schema.mask_secrets），明文不出服务端。"""
     system_env = load_system_env(DOTENV_PATH, SYSTEM_ENV_KEYS)
-    return env_schema.mask_secrets({key: system_env.get(key, "") for key in SYSTEM_ENV_KEYS})
+    present = set(dotenv_values(DOTENV_PATH)) | set(os.environ) if os.path.exists(DOTENV_PATH) else set(os.environ)
+    values = env_schema.fill_unset_defaults({key: system_env.get(key, "") for key in SYSTEM_ENV_KEYS}, present)
+    return env_schema.mask_secrets(values)
 
 def build_env_apply_note(keys) -> str:
     return env_schema.apply_note(keys)
@@ -1272,7 +1277,7 @@ def task_created_message(task: dict) -> str:
     return "追踪任务已添加。"
 
 
-TASK_INPUT_KEYS = ("tracking_number", "label", "check_interval", "enabled", "archived", "channel", "milestones")
+TASK_INPUT_KEYS = ("tracking_number", "label", "check_interval", "enabled", "archived", "channel", "milestones", "atypical")
 
 
 def build_task_payload(data: dict) -> dict:
@@ -1415,29 +1420,83 @@ def api_task_events(task_id: int):
 @app.route('/api/tasks/<int:task_id>/forecast', methods=['GET'])
 @login_required
 def api_task_forecast(task_id: int):
-    """到达预测（结构见 forecast.build_forecast）。本人或管理员可看；样本只以聚合统计出现。"""
+    """到达预测（结构见 forecast.build_forecast）+ 国内段履历 + 任务的 archived / atypical。本人或管理员可看；样本只以聚合统计出现。"""
     account = current_account()
     _, error = guard_task_access(task_id, account)
     if error:
         return error
-    return jsonify({"status": "success", "forecast": task_forecast(task_id), "cn_records": task_cn_records(task_id)})
+    task = get_task(task_id)
+    links, track17_view = task_links_and_track17(task)
+    return jsonify({
+        "status": "success",
+        "forecast": task_forecast(task_id),
+        "cn_records": task_cn_records(task_id),
+        # 任务自身的两个标记只给网页用（归档任务没有编辑表单，在预测区块里切换非常规件）；/api/v1 不带
+        "task": {"archived": bool(task["archived"]), "atypical": bool(task["atypical"])},
+        "links": links,
+        "track17": track17_view,
+    })
 
 
-@app.route('/api/admin/track17/quota', methods=['GET'])
-@admin_required
-def api_track17_quota():
-    """17TRACK 剩余额度（管理员系统设置页显示用）。没配密钥 404，请求失败 502；都不回显密钥。"""
+TRACK17_CONSOLE_URL = "https://api.17track.net"
+# getquota 结果在进程内缓存 5 分钟（17TRACK 接口有频率限制，额度变化也不需要实时）；只缓存成功结果，换了密钥就失效
+TRACK17_QUOTA_TTL = 300
+_track17_quota_cache: dict = {}
+
+
+def _cache_clock() -> float:
+    return time.time()
+
+
+def track17_settings():
+    """(密钥, 超时秒数)。密钥只在服务端用，不下发。"""
     system_env = load_system_env(DOTENV_PATH, ("TRACK17_API_KEY", "REQUEST_TIMEOUT"))
-    api_key = str(system_env.get("TRACK17_API_KEY") or "").strip()
-    if not api_key:
-        return jsonify({"status": "error", "message": "未配置 17TRACK API 密钥。"}), 404
     raw_timeout = str(system_env.get("REQUEST_TIMEOUT") or "").strip()
     timeout = int(raw_timeout) if raw_timeout.isdigit() and int(raw_timeout) > 0 else 15
+    return str(system_env.get("TRACK17_API_KEY") or "").strip(), timeout
+
+
+def cached_track17_quota(api_key: str, timeout: int):
+    """剩余额度（带 5 分钟缓存）；请求失败返回 None。"""
+    key_id = hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+    cached = _track17_quota_cache.get("entry")
+    now = _cache_clock()
+    if cached and cached["key_id"] == key_id and now - cached["at"] < TRACK17_QUOTA_TTL:
+        return cached["quota"]
     try:
         quota = track17.get_quota(api_key, timeout)
     except Exception as exc:
-        return jsonify({"status": "error", "message": f"查询额度失败：{exc}"}), 502
-    return jsonify({"status": "success", "quota": quota})
+        log_tracker(_fmt('[SYSTEM]', f"查询 17TRACK 额度失败：{exc}"))
+        return None
+    _track17_quota_cache["entry"] = {"key_id": key_id, "at": now, "quota": quota}
+    return quota
+
+
+@app.route('/api/admin/track17', methods=['GET'])
+@admin_required
+def api_admin_track17():
+    """管理员系统设置的 17TRACK 卡片：是否已配置、额度（缓存 5 分钟，失败时 quota_ok=false）、登记单号统计。不回显密钥。"""
+    api_key, timeout = track17_settings()
+    payload = {"status": "success", "configured": bool(api_key), "console_url": TRACK17_CONSOLE_URL,
+               "quota": None, "quota_ok": False, "numbers": track17_summary()}
+    if api_key:
+        quota = cached_track17_quota(api_key, timeout)
+        payload["quota"] = quota
+        payload["quota_ok"] = quota is not None
+    return jsonify(payload)
+
+
+def task_links_and_track17(task: dict):
+    """任务详情的外链与 17TRACK 登记状态：日本邮政链接总有；17TRACK 链接只给 CN 单号；
+    登记状态只在 CN 单号且配了密钥时给（storage.TRACK17_STATUS_META 穷举）。"""
+    number = task["tracking_number"]
+    is_cn = forecast.origin_country(number) == "CN"
+    links = {
+        "jp_post": task["tracking_url"],
+        "track17": track17.tracking_page_url(number) if is_cn else None,
+    }
+    api_key, _ = track17_settings()
+    return links, (track17_number_view(number) if is_cn and api_key else None)
 
 
 def fetch_carrier_records(tracking_number: str) -> list:
@@ -1622,6 +1681,9 @@ def task_form_payload() -> dict:
     }
     if milestones:
         payload["milestones"] = milestones
+    # 非常规件复选框只在编辑表单里有（带隐藏标记 atypical_field），未勾选时复选框本身不提交
+    if "atypical_field" in request.form:
+        payload["atypical"] = "atypical" in request.form
     return payload
 
 

@@ -81,6 +81,7 @@ task_events —— 发生过什么（一个任务 N 条）
 
 ```
 tracking_tasks.channel TEXT NOT NULL DEFAULT ''   -- ALTER TABLE ADD COLUMN，幂等；去首尾空白，最长 50
+tracking_tasks.atypical INTEGER NOT NULL DEFAULT 0 -- 非常规件（如大件电器），作为预测样本时降权；ALTER TABLE ADD COLUMN，幂等
 
 carrier_records —— 承运方履历（长期保留，不清理）
   id, task_id →tracking_tasks.id (ON DELETE CASCADE), tracking_number,
@@ -151,6 +152,32 @@ pre_milestones —— 发货前节点
 航空公司启运 → `flight_departed`；到达寄达地 → `landed_destination`；到达寄达地处理中心 → `arrived_japan`；其余（日本段的中文事件）不映射，
 日本段以 jp_post 为准。同一阶段两个来源取最早。收寄网点（`forecast.collection_office`）取最早一条
 「邮件离开【X】，正在发往」/「邮件已在【X】完成分拣」里的 X（互换局除外），用于显示与渠道推断（`suggested_channel`，不写库）。
+
+### 线路分段与按段加权
+
+阶段归属的段（`forecast.STAGE_META` 的 `segment`，穷举 `SEGMENT_META`，前后端各一份并有一致性测试）：
+仓库段 `warehouse`（ordered / packed / handed_over）→ 国内段 `domestic`（accepted … flight_departed）→
+中转段 `transit`（transit_arrived / transit_departed）→ 日本段 `japan`（landed_destination 及之后）。段沿阶段顺序只前进，导入时自检。
+
+- **中转段**要看事件序列，不能逐条映射（`forecast.transit_stages`）：第一条「航空公司启运」之后的第二条启运 = `transit_departed`，
+  两者之间的第一条「飞机进港」= `transit_arrived`；只有一条启运（一段航班）就没有这两个阶段。同单号多任务的重复事件按时刻去重。
+- **履历按段切分**：每条 cn_ems 事件落在「时间不晚于它的最晚已到阶段」所在的段（`forecast.segment_at`）。
+- **显示名**：中转段用系统设置 `TRANSIT_REGION_LABEL`（未设置 =「韩国」，显示「韩国段 / 到达韩国 / 离开韩国」；显式清空 = 通用名「中转段 / 到达中转地 / 离开中转地」）。
+  属 live 生效，Web 每次读进程环境变量；系统设置页在键从未出现过时显示默认值。
+- **按段加权**（`forecast.build_forecast`）：剩余阶段在仓库段时同渠道 1.0 / 其他 0.3；在国内 / 中转 / 日本段时同收寄网点 1.0 / 其他 0.3。
+  理由：仓库段的耗时取决于发货渠道自己的打包与交运；揽收之后同一网点走的是同一条邮政线路（同一互换局、同一航线），
+  耗时由邮政决定、与发货渠道无关，网点相同而渠道不同的样本同样有代表性。当前单没有收寄网点（没有始发国段数据）时全部按渠道比；
+  当前单有而某个样本没有时，这一对按渠道比。
+- **可信度**按剩余阶段里第一个阶段所在段的比较依据（`basis`）数「同类」合格样本（没有剩余阶段时看当前阶段之后的那个阶段）。
+- **非常规件**（`tracking_tasks.atypical`）：样本权重再乘 `forecast.ATYPICAL_WEIGHT`（0.3）；同单号多个任务合并时任一任务标了就算；
+  当前单自己是否非常规不影响别的样本。只在网页编辑（`PUT /api/tasks/<id>` 的 `atypical` 布尔、门户表单的复选框、归档任务在预测区块里切换），
+  `/api/v1` 不暴露。
+
+### 17TRACK 登记状态（网页显示）
+
+`storage.TRACK17_STATUS_META` 穷举（前端 `forecast.js` 一份一致的映射）：`unregistered` 未登记 / `pending` 已登记待数据 /
+`synced` 已同步 / `error` 出错（`last_error` 非空时优先）。任务详情只对 CN 单号显示（没配密钥时只显示跳转胶囊）；
+管理员卡片 `GET /api/admin/track17` 统计已登记单号的各状态个数，额度在 Web 进程内缓存 5 分钟（只缓存成功结果，换密钥即失效）。
 
 ### ⚠️ 两个时区坑
 

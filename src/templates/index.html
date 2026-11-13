@@ -227,6 +227,33 @@
               <span class="pill warn">需重启 Web</span> 要重启控制台进程才会被读到。
             </p>
           </div>
+          <!-- 17TRACK 卡片：额度（服务端缓存 5 分钟）+ 登记单号统计；数据来自 GET /api/admin/track17 -->
+          <section class="inner stat-card u-mb-4">
+            <div class="panel-head">
+              <h3 class="panel-title">17TRACK</h3>
+              <a class="pill pill-ext" :href="track17Card?.console_url || 'https://api.17track.net'" target="_blank" rel="noopener noreferrer"><span v-html="extLinkIcon"></span>控制台</a>
+            </div>
+            <p v-if="!track17Card" class="stat-sub">加载中…</p>
+            <p v-else-if="!track17Card.configured" class="stat-sub">未配置 — 在系统设置填写 <code>TRACK17_API_KEY</code></p>
+            <template v-else>
+              <p v-if="!track17Card.quota_ok" class="stat-sub">17TRACK 接口请求失败</p>
+              <template v-else>
+                <div class="stat-value">[[ track17Card.quota.quota_used ?? '?' ]]<span class="stat-sub"> / [[ track17Card.quota.quota_total ?? '?' ]]</span></div>
+                <div class="bar"><div :class="['bar-fill', { over: track17UsagePct > 85 }]" :style="{ width: Math.min(track17UsagePct, 100) + '%' }"></div></div>
+                <p class="stat-sub">剩 [[ track17Card.quota.quota_remain ?? '?' ]]<template v-if="track17Card.quota.today_used !== undefined"> · 今日已用 [[ track17Card.quota.today_used ]]</template></p>
+              </template>
+              <dl class="kv u-mt-3">
+                <dt>已登记单号</dt>
+                <dd>[[ track17Card.numbers.registered ]]（待数据 [[ track17Card.numbers.pending ]] · 已同步 [[ track17Card.numbers.synced ]] · 出错 [[ track17Card.numbers.error ]]）</dd>
+                <dt>最近同步</dt>
+                <dd>[[ track17Card.numbers.last_synced_at || '—' ]]</dd>
+                <template v-if="track17Card.numbers.last_error">
+                  <dt>最近错误</dt>
+                  <dd>[[ track17Card.numbers.last_error.tracking_number ]] · [[ track17Card.numbers.last_error.error ]]<span class="muted"> · [[ track17Card.numbers.last_error.at ]]</span></dd>
+                </template>
+              </dl>
+            </template>
+          </section>
           <form @submit.prevent="saveEnv">
             <div class="env-groups stagger">
               <section v-for="group in envGroups" :key="group.key" class="env-group inner">
@@ -254,7 +281,7 @@
                       <!-- 密钥不回显：已配置时值是占位符（原样提交表示不改），清空保存即删除 -->
                       <input type="password" class="field" :id="'env-' + field.key" :placeholder="field.placeholder || ''" autocomplete="new-password" v-model="envVars[field.key]" />
                       <p class="env-field-desc">
-                        [[ originalEnvVars[field.key] ? '已配置（不显示明文）' : '未配置' ]]<template v-if="field.key === 'TRACK17_API_KEY' && track17Quota"> · 剩余额度 [[ track17Quota.quota_remain ]]<template v-if="track17Quota.quota_total !== undefined"> / [[ track17Quota.quota_total ]]</template></template>
+                        [[ originalEnvVars[field.key] ? '已配置（不显示明文）' : '未配置' ]]
                       </p>
                     </template>
                     <input v-else type="text" class="field" :id="'env-' + field.key" :placeholder="field.placeholder || ''" :inputmode="field.type === 'int' ? 'numeric' : (field.type === 'url' ? 'url' : 'text')" autocomplete="off" v-model="envVars[field.key]" />
@@ -502,6 +529,10 @@
                     <span>渠道</span>
                     <input type="text" class="field" maxlength="50" list="channel-options-user" v-model="taskDrafts[task.id].channel" />
                   </label>
+                  <label class="switch-row">
+                    <input type="checkbox" class="switch" v-model="taskDrafts[task.id].atypical" />
+                    非常规件（如大件电器）：作为预测参考时降低权重
+                  </label>
                   <details class="disclosure flush">
                     <summary>发货前节点<span class="summary-meta">[[ milestoneCount(taskDrafts[task.id]) ]]/3</span></summary>
                     <div class="disclosure-body">
@@ -658,6 +689,10 @@
                   <label class="task-field">
                     <span>渠道</span>
                     <input type="text" class="field" maxlength="50" list="channel-options-me" v-model="taskDrafts[task.id].channel" />
+                  </label>
+                  <label class="switch-row">
+                    <input type="checkbox" class="switch" v-model="taskDrafts[task.id].atypical" />
+                    非常规件（如大件电器）：作为预测参考时降低权重
                   </label>
                   <details class="disclosure flush">
                     <summary>发货前节点<span class="summary-meta">[[ milestoneCount(taskDrafts[task.id]) ]]/3</span></summary>

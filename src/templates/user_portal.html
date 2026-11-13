@@ -74,6 +74,13 @@
         <p class="hint">可以只填日期；时间按日本时间。用于预测「从下单算第几天」和发货前的耗时。</p>
       </div>
     </details>
+    {%- if task %}
+    <input type="hidden" name="atypical_field" value="1" />
+    <label class="switch-row">
+      <input name="atypical" type="checkbox" class="switch" {% if task.atypical %}checked{% endif %} />
+      非常规件（如大件电器）：作为预测参考时降低权重
+    </label>
+    {%- endif %}
     {%- endmacro %}
     <datalist id="channel-options">
       {%- for channel in account.channels %}
