@@ -84,10 +84,18 @@ tracking_tasks.channel TEXT NOT NULL DEFAULT ''   -- ALTER TABLE ADD COLUMN，�
 
 carrier_records —— 承运方履历（长期保留，不清理）
   id, task_id →tracking_tasks.id (ON DELETE CASCADE), tracking_number,
-  source CHECK IN ('jp_post'),   -- 承运方来源，穷举，见 forecast.CARRIER_SOURCES
+  source CHECK IN ('jp_post', 'cn_ems'),   -- 承运方来源，穷举，见 forecast.CARRIER_SOURCES
   record_at,                     -- 'YYYY-MM-DD HH:MM'；履历只有日期时存 'YYYY-MM-DD'
-  status, detail, created_at
+                                 --   jp_post 存页面原值（始发国行是当地时间，读取时换算）；cn_ems 存换算好的日本时间
+  status, detail, created_at     -- cn_ems：status = 事件描述，detail = 地点（可空）
   UNIQUE(task_id, tracking_number, source, record_at, status, detail), INDEX(tracking_number)
+
+track17_numbers —— 17TRACK 登记状态（按单号，不按任务；不设外键）
+  tracking_number PRIMARY KEY,
+  registered_at,                 -- 登记成功（含 17TRACK 回「已登记」）的时间；NULL = 还没登记成功
+  last_synced_at,                -- 最近一次查到中国邮政事件的时间
+  last_attempt_at,               -- 最近一次请求（登记或查询）的时间，补抓时按它轮转限频
+  last_error, created_at
 
 pre_milestones —— 发货前节点
   id, task_id →tracking_tasks.id (ON DELETE CASCADE),
@@ -101,7 +109,7 @@ pre_milestones —— 发货前节点
   在 `update_task_state` 的同一事务里、受同一个「抓取时单号」校验保护（单号被改了整次作废）；推送成功、失败、无变化都照写——
   履历是事实，与推送无关。补录走 `record_carrier_records`，校验相同但不动任务状态。
 - **存原始状态，阶段在读取时算**（`forecast.record_stage` 按 `source` 分派到各承运方的映射）：以后改映射规则，对历史数据自动生效；
-  以后接入始发国承运方，只要在 `CARRIER_SOURCES` 加一项（CHECK 约束由它派生，已有库需要另做表迁移——别重建 `tracking_tasks`）。
+  接入新承运方只要在 `CARRIER_SOURCES` 加一项，CHECK 约束由它派生，已有库由 `_migrate_carrier_sources` 自动放宽（见下）。
 - 回填：启动时 `carrier_records` 为空而 `task_events` 里有 `status_change`，就把那些事件解析回填一次（`INSERT OR IGNORE`，重复执行无害）。
   info 没有日期前缀的记录放不进时间轴，不入库。
 - `pre_milestones` 的优先级：**manual 优先**。调用方（`/api/v1` 的 `milestones`）以 `caller` 写入，不覆盖 `manual` 行、也不能删除；
@@ -112,6 +120,47 @@ pre_milestones —— 发货前节点
 
 三者在 `ensure_storage` 里排在最后（`_ensure_forecast_schema`，只加列、只 `CREATE TABLE IF NOT EXISTS`），已有库启动时自动补。
 外键都指向 `tracking_tasks`：以后若要重建它，同 `task_events` 一样会踩下面的外键坑。
+
+### carrier_records 的 CHECK 迁移
+
+`source` 的 CHECK 约束无法 ALTER。`_migrate_carrier_sources` 发现建表语句里的来源集合不是当前的 `CARRIER_SOURCES` 时，
+**只重建 `carrier_records` 这一张表**：建 `carrier_records_new` → 按列复制（保留 id 与 created_at）→ `DROP` 旧表 → 改名；
+集合一致就跳过，重复执行无害。索引随旧表删除，紧接着由 `CREATE INDEX IF NOT EXISTS` 补回。
+
+不会踩下面那个外键坑的理由：那个坑是**改名被引用的父表**（`accounts`）时，子表的外键被自动重定向到改名后的表，
+随后 `DROP` 顺着级联删光子表。`carrier_records` 是子表——它引用 `tracking_tasks`，但没有任何表引用它：
+`DROP` 旧表只删它自己的行，改名时也没有别的外键需要重定向，新表自带的外键原样指向 `tracking_tasks`。
+`tracking_tasks` 本身不动。整个过程照例在 `ensure_storage` 的 `PRAGMA foreign_keys=OFF` 下进行。
+测试 `test_carrier_check_migration_keeps_data_and_is_idempotent` 造旧 CHECK 的库验证：数据不丢、幂等、外键仍在且级联有效。
+
+### 始发国段：cn_ems 与 track17_numbers
+
+只对单号后两位为 `CN` 的件、且配置了 `TRACK17_API_KEY` 时启用（没配时整个功能关闭）。
+
+- **登记只做一次**：17TRACK 按登记的单号扣额度。`track17_numbers` 按单号记状态，同单号多个任务只登记一次；
+  登记成功或 17TRACK 回「已登记」都记 `registered_at`，之后只查轨迹（不扣额度）。登记失败记 `last_error`，下轮再试。
+- **tracker**：每次 `process_task` 抓日本邮政前先同步一次（`tracker.sync_cn_leg`）：没登记 → 登记；已登记 → 查轨迹，
+  中国邮政（provider 国家 `CN`）的全部事件 `INSERT OR IGNORE` 进 `carrier_records`（`source='cn_ems'`），与 jp_post 一样带抓取时单号校验。
+  17TRACK 的任何错误只记日志与 `last_error`，不影响日本邮政追踪、推送与 `last_error`；始发国段不推送。签收自动归档后自然不再查。
+- **已归档单号补抓**：补录的件建出来就是归档的，不会被轮询。tracker 主循环每 30 分钟最多补一批（40 个，17TRACK 单次上限）：
+  已登记且登记不满 3 天、该单号的任务全部已归档、还没查到过事件或还没出现「到达寄达地」、距上次请求超过 30 分钟的单号，只查不登记。
+- **补录**：CN 单号补录时也登记并立刻试查一次；刚登记多半还没数据，结果里注明「国内段稍后补上」，之后由上面的补抓拿到。
+
+阶段映射（`forecast._cn_ems_stage`）：收取 → `accepted`；离开揽投部 / 完成分拣 → `left_collection`；出口海关 → `origin_customs`；
+国际互换局出口直封 / 离开国际互换局 → `departed_origin`；已交承运商运输 / 航空公司接收 → `handed_to_airline`；
+航空公司启运 → `flight_departed`；到达寄达地 → `landed_destination`；到达寄达地处理中心 → `arrived_japan`；其余（日本段的中文事件）不映射，
+日本段以 jp_post 为准。同一阶段两个来源取最早。收寄网点（`forecast.collection_office`）取最早一条
+「邮件离开【X】，正在发往」/「邮件已在【X】完成分拣」里的 X（互换局除外），用于显示与渠道推断（`suggested_channel`，不写库）。
+
+### ⚠️ 两个时区坑
+
+1. **17TRACK 的中国邮政事件**：境内事件与航班事件（航空公司接收 / 启运、飞机进港）的 `+08:00` 是对的，换算成日本时间入库；
+   但「到达寄达地」及之后的事件（描述含「寄达地」「境外」「【日本】」）其实是**日本当地时间却被标成 `+08:00`**
+   （对照日本邮政：「到达寄达地处理中心 22:53」=「国際交換局に到着 22:53」），取字面时刻当日本时间入库（`forecast.track17_event_time`）。
+2. **日本邮政页面上始发国那几行**（引受、始发国互换局、始发国海关、离开始发国）的时刻其实是**始发国当地时间**
+   （「引受 11:11」=「中国邮政已收取邮件 11:11:50 +08:00」）。库里保留原值，**读取 / 算阶段时**按单号国家码换算成日本时间
+   （`forecast.record_time`，`ORIGIN_UTC_OFFSETS` 目前只有 `CN` → UTC+8；没有映射的国家码按日本时间，国家码是外部数据无法穷举）。
+   只有日期没有时刻的记录不换算。
 
 ## 机器接口：api_callers 与 api_refs
 
