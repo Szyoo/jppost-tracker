@@ -76,6 +76,22 @@ const app = createApp({
 
         const envDirtyCount = computed(() => Object.keys(envChangedEntries.value).length);
 
+        // 17TRACK 剩余额度：密钥已配置时在系统设置页显示，查询失败就不显示
+        const track17Quota = ref(null);
+        const loadTrack17Quota = async () => {
+            track17Quota.value = null;
+            if (!originalEnvVars.value.TRACK17_API_KEY) return;
+            try {
+                const response = await fetch('/api/admin/track17/quota', { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
+                const result = await response.json();
+                if (response.ok && result.status === 'success' && typeof result.quota?.quota_remain === 'number') {
+                    track17Quota.value = result.quota;
+                }
+            } catch (error) {
+                track17Quota.value = null;
+            }
+        };
+
         const resetEnv = () => {
             envVars.value = { ...originalEnvVars.value };
             envApplyNote.value = '';
@@ -494,6 +510,7 @@ const app = createApp({
                 if (result.status === 'success' && result.env_vars) {
                     envVars.value = { ...result.env_vars };
                     originalEnvVars.value = { ...result.env_vars };
+                    if ('TRACK17_API_KEY' in changed) loadTrack17Quota();
                 }
                 if (result.status === 'success' && result.bark_help) {
                     barkHelp.value = { ...result.bark_help };
@@ -753,6 +770,16 @@ const app = createApp({
             });
         };
 
+        // 切到系统设置页时查一次额度（不在每次渲染时查：17TRACK 接口有频率限制）
+        watch(page, (next) => {
+            if (next === 'env' && track17Quota.value === null) loadTrack17Quota();
+        });
+
+        window.addEventListener('forecast-task-updated', (event) => {
+            const result = event.detail || {};
+            if (result.user_state) syncUserState(result.user_state, { keepUserForm: true });
+        });
+
         watch(selectedUserId, (nextUserId) => {
             userForm.value = buildUserForm(users.value.find((user) => user.id === nextUserId) || {});
             newTaskForm.value = buildNewTaskForm();
@@ -839,6 +866,8 @@ const app = createApp({
             viewer,
             barkHelp,
             envVars,
+            originalEnvVars,
+            track17Quota,
             envGroups,
             envFieldLocked,
             envBoolValue,
@@ -1005,7 +1034,10 @@ app.component('task-forecast', {
         const load = async () => {
             if (!body.value) return;
             const { renderForecast } = await forecastReady;
-            await renderForecast(body.value, props.taskId);
+            // 「设为该渠道」成功后交给根组件用 user_state 刷新列表（stamp 变了会再拉一次预测）
+            await renderForecast(body.value, props.taskId, {
+                onUpdated: (result) => window.dispatchEvent(new CustomEvent('forecast-task-updated', { detail: result })),
+            });
         };
         onMounted(load);
         watch(() => [props.taskId, props.stamp], load);

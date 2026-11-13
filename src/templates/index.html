@@ -250,6 +250,13 @@
                       <input type="checkbox" class="switch" :id="'env-' + field.key" :checked="envBoolValue(field)" :disabled="envFieldLocked(field)" @change="setEnvBool(field, $event.target.checked)" />
                       [[ envFieldLocked(field) ? '需先打开上一项' : (envBoolValue(field) ? '已开启' : '已关闭') ]]
                     </label>
+                    <template v-else-if="field.type === 'secret'">
+                      <!-- 密钥不回显：已配置时值是占位符（原样提交表示不改），清空保存即删除 -->
+                      <input type="password" class="field" :id="'env-' + field.key" :placeholder="field.placeholder || ''" autocomplete="new-password" v-model="envVars[field.key]" />
+                      <p class="env-field-desc">
+                        [[ originalEnvVars[field.key] ? '已配置（不显示明文）' : '未配置' ]]<template v-if="field.key === 'TRACK17_API_KEY' && track17Quota"> · 剩余额度 [[ track17Quota.quota_remain ]]<template v-if="track17Quota.quota_total !== undefined"> / [[ track17Quota.quota_total ]]</template></template>
+                      </p>
+                    </template>
                     <input v-else type="text" class="field" :id="'env-' + field.key" :placeholder="field.placeholder || ''" :inputmode="field.type === 'int' ? 'numeric' : (field.type === 'url' ? 'url' : 'text')" autocomplete="off" v-model="envVars[field.key]" />
 
                     <p class="env-field-desc">[[ field.desc ]]<template v-if="field.type === 'int'">（范围 [[ field.min ]]～[[ field.max ]]）</template></p>

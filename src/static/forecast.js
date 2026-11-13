@@ -8,9 +8,13 @@ export const STAGE_META = Object.freeze({
     packed: { label: '打包完成' },
     handed_over: { label: '出库交运' },
     accepted: { label: '引受' },
+    left_collection: { label: '离开揽收网点' },
     origin_exchange: { label: '到达始发互换局' },
     origin_customs: { label: '始发国海关' },
     departed_origin: { label: '离开始发国' },
+    handed_to_airline: { label: '交航' },
+    flight_departed: { label: '航班起飞' },
+    landed_destination: { label: '航班到达日本' },
     arrived_japan: { label: '到达日本' },
     japan_customs: { label: '日本通关' },
     departed_exchange: { label: '离开日本互换局' },
@@ -122,12 +126,25 @@ const readJson = async (response, fallback) => {
     return result;
 };
 
+// 返回 { forecast, cnRecords }：cnRecords 是中国邮政始发国段记录（日本时间，按时间倒序）
 export const fetchForecast = async (taskId) => {
     const response = await fetch(`/api/tasks/${taskId}/forecast`, {
         headers: { Accept: 'application/json' },
         credentials: 'same-origin',
     });
-    return (await readJson(response, '加载预测失败')).forecast;
+    const result = await readJson(response, '加载预测失败');
+    return { forecast: result.forecast, cnRecords: result.cn_records || [] };
+};
+
+// 「设为该渠道」：走现有的任务编辑接口，只带 channel（局部更新，不动其他字段）
+const setTaskChannel = async (taskId, channel) => {
+    const response = await fetch(`/api/tasks/${taskId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ channel }),
+    });
+    return readJson(response, '设置渠道失败');
 };
 
 const el = (tag, className, text) => {
@@ -137,11 +154,69 @@ const el = (tag, className, text) => {
     return node;
 };
 
-// 预测区块：进度一行 →（已比以往都慢）→ 剩余阶段列表 → 依据一行。全部用 textContent，不拼 HTML。
-// 映射查不到的阶段 / 可信度会抛错，由调用方显示成加载失败。
-export const buildForecastNode = (forecast) => {
+// 收寄网点与渠道推断：任务渠道为空时，网点只对应过一个渠道就建议它（按钮写入），对应多个只提示
+const buildOfficeNode = (forecast, { taskId, onUpdated }) => {
+    if (!forecast.collection_office) return null;
+    const box = el('div');
+    box.append(el('p', 'task-meta', `收寄网点：${forecast.collection_office}`));
+    if (forecast.suggested_channel) {
+        const channel = forecast.suggested_channel;
+        const line = el('p', 'hint', `可能是 ${channel}（同收寄网点的历史都是 ${channel}）`);
+        if (taskId) {
+            const button = el('button', 'btn-ghost btn-small', '设为该渠道');
+            button.type = 'button';
+            button.addEventListener('click', async () => {
+                button.disabled = true;
+                try {
+                    const result = await setTaskChannel(taskId, channel);
+                    onUpdated?.(result);
+                } catch (error) {
+                    const { toast } = await import('@szyyw/design/toast.js');
+                    toast(error.message, { tone: 'err', timeout: 5000 });
+                    button.disabled = false;
+                }
+            });
+            line.append(' ', button);
+        }
+        box.append(line);
+    } else if (forecast.office_multi_channel && !forecast.channel) {
+        box.append(el('p', 'hint', '该网点有多个渠道，无法推断。'));
+    }
+    return box;
+};
+
+// 国内段履历：中国邮政的始发国段记录（时间已换算成日本时间），按时间倒序，默认收起
+const buildCnLegNode = (cnRecords) => {
+    const box = el('details', 'disclosure flush');
+    box.append(el('summary', '', `国内段（来自中国邮政，${cnRecords.length} 条）`));
+    const body = el('div', 'disclosure-body');
+    const list = el('ol', 'timeline compact');
+    for (const record of cnRecords) {
+        const row = el('li', 'timeline-item');
+        row.append(el('span', 'dot idle'));
+        const main = el('div', 'timeline-main');
+        const head = el('div', 'timeline-head');
+        const at = splitTime(record.record_at);
+        head.append(el('span', 'timeline-title', record.status), el('time', 'timeline-time', `${at.md} ${at.weekday} ${at.hm}`.trim()));
+        main.append(head);
+        if (record.detail) main.append(el('p', 'timeline-desc', record.detail));
+        row.append(main);
+        list.append(row);
+    }
+    body.append(list, el('p', 'hint', '时间已换算成日本时间。'));
+    box.append(body);
+    return box;
+};
+
+// 预测区块：进度一行 → 收寄网点与渠道推断 →（已比以往都慢）→ 剩余阶段列表 → 依据一行 → 国内段履历。
+// 全部用 textContent，不拼 HTML。映射查不到的阶段 / 可信度会抛错，由调用方显示成加载失败。
+// options：cnRecords 国内段记录；taskId + onUpdated(result) 用于「设为该渠道」按钮。
+export const buildForecastNode = (forecast, { cnRecords = [], taskId = null, onUpdated = null } = {}) => {
     const root = el('div', 'forecast-body');
     root.append(el('p', 'task-meta', progressText(forecast)));
+    const office = buildOfficeNode(forecast, { taskId, onUpdated });
+    if (office) root.append(office);
+    if (cnRecords.length) root.append(buildCnLegNode(cnRecords));
     if (!forecast.current || forecast.delivered) return root;
 
     if (forecast.confidence === 'none') {
@@ -171,11 +246,12 @@ export const buildForecastNode = (forecast) => {
     return root;
 };
 
-export const renderForecast = async (container, taskId) => {
+// onUpdated(result)：「设为该渠道」成功后回调（管理后台用 result.user_state 刷新列表；门户页整页刷新）
+export const renderForecast = async (container, taskId, { onUpdated = null } = {}) => {
     container.replaceChildren(el('p', 'hint', '预测加载中…'));
     try {
-        const forecast = await fetchForecast(taskId);
-        container.replaceChildren(buildForecastNode(forecast));
+        const { forecast, cnRecords } = await fetchForecast(taskId);
+        container.replaceChildren(buildForecastNode(forecast, { cnRecords, taskId, onUpdated }));
     } catch (error) {
         container.replaceChildren(el('p', 'hint', error.message || '加载预测失败。'));
     }
@@ -195,7 +271,7 @@ const buildResultRow = (item) => {
         : item.status === 'added' ? `抓到 ${item.records} 条履历`
             : item.status === 'no_records' ? '日本邮政查不到（可能已过保留期），任务已保留，可以手填发货前节点'
                 : '已有任务，渠道为空时已补上，下单日期已更新';
-    main.append(el('span', 'row-sub', sub));
+    main.append(el('span', 'row-sub', item.cn_note ? `${sub} · ${item.cn_note}` : sub));
     const end = el('span', 'row-end');
     end.append(el('span', `pill ${meta.tone}`, meta.label));
     row.append(main, end);
@@ -275,7 +351,8 @@ export const openBackfillDialog = async ({ accountId = null, onDone = null } = {
 // --- 门户页（服务端渲染）自动挂载 ---
 
 document.querySelectorAll('[data-task-forecast]').forEach((node) => {
-    renderForecast(node, node.dataset.taskForecast);
+    // 门户页是服务端渲染的，设了渠道就整页刷新，让任务卡上的渠道也更新
+    renderForecast(node, node.dataset.taskForecast, { onUpdated: () => window.location.reload() });
 });
 
 document.querySelectorAll('[data-backfill-open]').forEach((button) => {
