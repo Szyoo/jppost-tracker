@@ -10,6 +10,7 @@
 - 签收后自动归档：物流记录出现签收状态（`お届け先にお届け済み` / `お届け済み` / `窓口でお渡し`）时，推送成功后自动归档、停止轮询；推送失败按退避重试，成功后再归档；账号没配 Bark Keys 时只记录状态不推送，签收即归档（可在系统设置关闭）
 - 管理后台：启动/停止追踪脚本与本地 Bark Server、实时查看日志（Socket.IO）、在线编辑系统配置（`.env` 白名单键）
 - Bark 地址内外分离：脚本走内网地址推送，手机使用公网 HTTPS 地址
+- 主屏 Web App：iOS / Android「添加到主屏幕」后以独立窗口打开（清单、图标、安全区留白）；新版本上线后，页面在切回前台或定时检查时自动重载，表单里有未保存内容时等编辑完再重载
 - 安全：登录限流、`/healthz` 无鉴权健康检查；可选对接上游反代注入身份头的统一登录（`SZYYW_SSO=1`，仅在反代已剥离并重写身份头时启用）
 
 ## 网页结构
@@ -101,6 +102,8 @@ bash install_bark.sh
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
 | GET | `/healthz` | 无 | 健康检查，返回 `{"status":"ok"}` |
+| GET | `/api/version` | 无 | 当前版本，返回 `{"version":"…"}`；页面 `<html data-version>` 与之不同时自动重载 |
+| GET | `/manifest.webmanifest`、`/icon-192.png`、`/icon-512.png`、`/apple-touch-icon.png`、`/favicon.svg`、`/favicon.ico` | 无 | 主屏 Web App 清单与图标 |
 | GET/POST | `/login`、`/register` | 无 | 登录、自助注册（启用统一登录时关闭） |
 | POST | `/logout` | 无 | 退出登录 |
 | GET | `/` | 登录 | 管理员显示后台，普通用户显示个人页 |
@@ -323,6 +326,7 @@ archive 响应 `{"result": "archived" | "already_archived", "tracking": {…}}`�
 | `SZYYW_SSO` / `SZYYW_SSO_AUTOCREATE` / `PORTAL_ORIGIN` | `0` / `0` / — | 统一登录开关与上游地址；开启后信任反代注入的 `X-User` / `X-Role` / `X-Portal-Sub` 头。账号只按 `X-Portal-Sub` 映射；自动开通遇到同名未映射本地账号时另起带数字后缀的用户名，不会并入旧账号 |
 | `SZYYW_SSO_ADOPT_BY_NAME` | `0` | `1` 时未映射的本地账号可被同名（`X-User`）门户用户认领。门户用户名可由用户自行修改，开启有被冒领风险，仅在一次性迁移旧账号时临时打开；平时请在「用户」页里填写门户 ID 或用 `manage.py map-account` 映射 |
 | `DESIGN_BASE` | CDN | 覆盖前端设计包的加载地址（本地离线开发用） |
+| `APP_VERSION` | 源码哈希 | 页面与 `/api/version` 报告的版本号（例如部署时传 git 短哈希）；不设时取 `src/` 下文件内容的哈希，代码不变则重启后不变 |
 
 后台「设置 › 系统设置」按使用场景分组，只能编辑下表这些键（其余变量只能改 `.env` 后重启）。每个字段旁标着生效时机，保存后页面也会按实际改动的字段说明哪些已生效、哪些还要等：
 

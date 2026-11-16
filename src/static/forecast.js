@@ -1,6 +1,8 @@
 // 到达预测：段 / 阶段 / 可信度 / 比较依据 / 补录结果的文案映射 + 预测区块渲染 + 补录对话框。
 // 管理后台（app.js，Vue）动态 import 本文件复用渲染与对话框；门户页直接以 module 引入，自动挂到 data-task-forecast / data-backfill-open 上。
 
+import { focusInput } from '@szyyw/design/webapp.js';
+
 // 与 forecast.SEGMENT_META 一一对应，顺序即先后。中转段的显示名由 forecast.transit_region（系统设置）决定
 export const SEGMENT_META = Object.freeze({
     warehouse: { label: '仓库段' },
@@ -520,7 +522,8 @@ export const openBackfillDialog = async ({ accountId = null, onDone = null } = {
             }
         });
         document.body.append(overlay);
-        textarea.focus();
+        // 触屏上不主动聚焦（否则一打开就弹键盘盖住说明），精确指针照常聚焦
+        focusInput(textarea);
     });
 };
 

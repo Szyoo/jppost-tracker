@@ -202,6 +202,32 @@ def get_design_base() -> str:
     # 环境变量 DESIGN_BASE 可覆盖（本地离线开发指向本机设计包的静态服务，见 README）
     return (os.getenv("DESIGN_BASE", "").strip() or f"{DESIGN_CDN_ORIGIN}/{DESIGN_VERSION}").rstrip("/")
 
+# --- 应用版本（主屏 Web App 自动更新）---
+# 页面写进 <html data-version>，/api/version 返回同一个值；页面里的 autoUpdate() 发现两者不同就自动重载。
+# 环境变量 APP_VERSION 优先（部署时可传 git 短哈希）；没有就对 src/ 下的源码与静态文件取内容哈希：
+# 代码不变则重启后仍相同（不会无谓刷新），任何一处改动都会变。镜像里没有 .git，所以不读 git。
+SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+
+def compute_source_version(root: str = SRC_DIR) -> str:
+    digest = hashlib.sha256()
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d != "__pycache__" and not d.startswith("."))
+        for name in sorted(filenames):
+            if name.startswith(".") or name.endswith((".pyc", ".pyo")):
+                continue
+            path = os.path.join(dirpath, name)
+            digest.update(os.path.relpath(path, root).replace(os.sep, "/").encode("utf-8"))
+            digest.update(b"\0")
+            try:
+                with open(path, "rb") as fh:
+                    digest.update(fh.read())
+            except OSError:
+                continue
+            digest.update(b"\0")
+    return digest.hexdigest()[:12]
+
+APP_VERSION = os.getenv("APP_VERSION", "").strip() or compute_source_version()
+
 def sso_autocreate_enabled() -> bool:
     # 默认关：未映射的 portal 用户看到"尚未开通"，由管理员手动映射
     return _env_enabled("SZYYW_SSO_AUTOCREATE", "0")
@@ -530,9 +556,17 @@ def socket_admin_required(handler):
         return handler(*args, **kwargs)
     return wrapped
 
+# 免登录的端点：登录/注册本身、健康检查、静态文件，以及主屏 Web App 的清单、图标与版本号
+# （iOS 取清单和图标时不带 cookie，被拦去登录页就装不上图标）
+PUBLIC_ENDPOINTS = {
+    'login', 'register', 'logout', 'healthz', 'static',
+    'favicon_svg', 'favicon_ico', 'apple_touch_icon', 'icon_192', 'icon_512',
+    'webmanifest', 'app_version',
+}
+
 @app.before_request
 def require_auth():
-    if request.endpoint in {'login', 'register', 'logout', 'healthz', 'static', 'favicon_svg', 'favicon_ico', 'apple_touch_icon'}:
+    if request.endpoint in PUBLIC_ENDPOINTS:
         return None
     if request.path.startswith('/socket.io'):
         return None
@@ -553,6 +587,10 @@ def add_security_headers(response):
     response.headers.setdefault("Referrer-Policy", "same-origin")
     if request.path in {'/', '/login', '/register', '/logout', '/update_env', '/remote_bark_status'}:
         response.headers["Cache-Control"] = "no-store"
+    elif request.endpoint in {'static', 'webmanifest'} or response.mimetype == 'text/html':
+        # 不带内容哈希的静态文件与其余页面：每次都回源校验（ETag / Last-Modified 命中时仍是 304），
+        # 新版本上线后主屏 App 重载即拿到新代码。含用户数据的页面已是更严格的 no-store
+        response.headers["Cache-Control"] = "no-cache"
     return response
 
 # 机器接口：令牌校验、统一 JSON 错误、no-store，都在 api_v1 里注册
@@ -567,6 +605,7 @@ def inject_sso_flags():
         "sso_on": sso_enabled(),
         "portal_origin": get_portal_origin(),
         "DESIGN_BASE": get_design_base(),
+        "APP_VERSION": APP_VERSION,
         "EVENT_KIND_META": EVENT_KIND_META,
     }
 
@@ -588,6 +627,27 @@ def favicon_ico():
 @app.route('/apple-touch-icon.png', methods=['GET'])
 def apple_touch_icon():
     return _serve_icon('apple-touch-icon.png', 'image/png')
+
+# 主屏 Web App：清单与图标放在根路径（网关默认放行这几个路径），文件来自统一的品牌图标生成
+@app.route('/icon-192.png', methods=['GET'])
+def icon_192():
+    return _serve_icon('icon-192.png', 'image/png')
+
+@app.route('/icon-512.png', methods=['GET'])
+def icon_512():
+    return _serve_icon('icon-512.png', 'image/png')
+
+@app.route('/manifest.webmanifest', methods=['GET'])
+def webmanifest():
+    # 清单不带哈希，改了要尽快生效：Cache-Control 由 add_security_headers 统一设为 no-cache
+    return send_from_directory(ICON_DIR, 'manifest.webmanifest', mimetype='application/manifest+json')
+
+@app.route('/api/version', methods=['GET'])
+def app_version():
+    # 只返回版本号，不需登录；页面的 autoUpdate() 拿它和 <html data-version> 比
+    resp = jsonify({"version": APP_VERSION})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 @app.route('/healthz', methods=['GET'])
 def healthz():

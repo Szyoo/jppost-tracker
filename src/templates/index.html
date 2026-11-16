@@ -1,12 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="nebula"{% if sso_on %} data-sso="1" data-portal="{{ portal_origin }}"{% endif %}>
+<html lang="zh-CN" data-theme="nebula" data-version="{{ APP_VERSION }}"{% if sso_on %} data-sso="1" data-portal="{{ portal_origin }}"{% endif %}>
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    {% include '_webapp_head.html' %}
     <title>快递追踪控制台</title>
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="icon" href="/favicon.ico" sizes="any" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     {% include '_appearance_head.html' %}
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.min.js"></script>

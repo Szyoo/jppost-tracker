@@ -1,4 +1,4 @@
-const { createApp, ref, onMounted, nextTick, computed, watch } = Vue;
+const { createApp, ref, onMounted, onUnmounted, nextTick, computed, watch } = Vue;
 
 const MAX_LOG_LINES = 500;
 
@@ -47,6 +47,17 @@ const buildTaskDraft = (task = {}) => ({
     atypical: Boolean(task.atypical),
     milestones: buildMilestones(task.milestones || {}),
 });
+
+// 未保存内容登记：boot.js 的 autoUpdate 通过 window.jppostHasDraft 询问，有草稿时新版本上线也不自动重载。
+// 各表单登记一个返回布尔值的检查函数；trackForm 以「整体替换 .value」为基线（加载 / 保存成功后重建表单即视为干净）
+const draftChecks = new Set();
+window.jppostHasDraft = () => [...draftChecks].some((check) => check());
+const snapshot = (value) => JSON.stringify(value);
+const trackForm = (formRef) => {
+    let base = snapshot(formRef.value);
+    watch(formRef, (value) => { base = snapshot(value); }, { flush: 'sync' });
+    return () => snapshot(formRef.value) !== base;
+};
 
 const app = createApp({
     setup() {
@@ -281,6 +292,14 @@ const app = createApp({
             taskDrafts.value = drafts;
         };
         rebuildTaskDrafts();
+
+        // 系统设置、状态规则行编辑、个人设置、账号编辑、新建账号、任务卡片编辑：任一有改动即算有草稿
+        draftChecks.add(() => envDirtyCount.value > 0);
+        draftChecks.add(() => Object.keys(statusRuleDrafts.value).length > 0);
+        draftChecks.add(trackForm(meForm));
+        draftChecks.add(trackForm(userForm));
+        draftChecks.add(trackForm(newUserForm));
+        draftChecks.add(trackForm(taskDrafts));
 
         const createUserExpanded = ref(false);
         const sendingTestPush = ref(false);
@@ -1064,6 +1083,10 @@ app.component('task-add-form', {
     },
     setup(props) {
         const form = ref(buildNewTaskForm());
+        const emptyForm = snapshot(buildNewTaskForm());
+        const hasDraft = () => snapshot(form.value) !== emptyForm;
+        draftChecks.add(hasDraft);
+        onUnmounted(() => draftChecks.delete(hasDraft));
         const busy = ref(false);
         const ready = computed(() => Boolean(form.value.tracking_number.trim()) && !busy.value);
         const add = async () => {
