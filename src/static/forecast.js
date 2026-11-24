@@ -152,7 +152,7 @@ export const progressText = (forecast) => {
     if (forecast.origin) parts.push(`${lookup(ORIGIN_TEXT, forecast.origin.stage, '起点')}第 ${forecast.day} 天`);
     const stage = forecast.current.stage;
     const names = { transit: forecast.transit_region, origin: forecast.origin_name };
-    parts.push(`当前：${segmentLabel(stageMeta(stage).segment, forecast.transit_region)} · ${stageLabel(stage, names)}（已等 ${formatDuration(forecast.current.waited_seconds)}）`);
+    parts.push(`当前：${segmentLabel(stageMeta(stage).segment, forecast.transit_region)} · ${plainName(stageLabel(stage, names))}（已等 ${formatDuration(forecast.current.waited_seconds)}）`);
     return parts.join(' · ');
 };
 
@@ -297,47 +297,98 @@ const buildTrack17Status = (view) => {
 
 const segmentHeading = (segment, region) => el('h4', 'section-name', segment ? segmentLabel(segment, region) : '其他');
 
-// 合并履历：后端 route_nodes 合好的节点（日本时间，倒序，带 segment），按段分组，默认收起。
-// 每个节点标来源小标：两边都报了的显示「中邮·日邮 一致」。
-// 头部：日本邮政与 17TRACK 外链胶囊 + 17TRACK 登记状态（只有 CN 单号；没配密钥时只有胶囊）
-const buildHistoryNode = (history, region, { links = {}, track17View = null } = {}) => {
-    const box = el('details', 'disclosure flush');
-    box.append(el('summary', '', `合并履历（${history.length} 个节点）`));
-    const body = el('div', 'disclosure-body');
+// 节点名去掉括号里的补充说明（「离开中国（出境）」→「离开中国」），全角半角都去
+export const plainName = (text) => String(text || '').replace(/[（(][^（()）]*[）)]/g, '').trim();
+
+// 履历来源：日本邮政与 17TRACK 外链胶囊 + 17TRACK 登记状态（只有 CN 单号；没配密钥时只有胶囊）
+const buildSourcesNode = (links, track17View) => {
+    const box = el('div');
     const head = el('div', 'panel-head');
     head.append(el('h4', 'section-name', '履历来源'));
     const pills = el('span');
     if (links.jp_post) pills.append(extLink(links.jp_post, '日本邮政'));
     if (links.track17) pills.append(' ', extLink(links.track17, '17TRACK'));
     head.append(pills);
-    body.append(head);
-    if (track17View) body.append(buildTrack17Status(track17View));
-    if (!history.length) body.append(el('p', 'hint', '还没有履历。'));
-    for (const group of groupBySegment(history, (node) => node.segment || null)) {
-        const list = el('ol', 'timeline compact');
-        for (const node of group.items) {
-            const row = el('li', 'timeline-item');
-            row.append(el('span', 'dot idle'));
-            const main = el('div', 'timeline-main');
-            const top = el('div', 'timeline-head');
-            const at = splitTime(node.at);
-            top.append(el('span', 'timeline-title', node.name));
-            if (node.sources.length > 1) {
-                top.append(el('span', 'pill ok', `${node.sources.map((source) => nodeSourceMeta(source).label).join('·')} 一致`));
-            } else {
-                top.append(el('span', 'pill', nodeSourceMeta(node.sources[0]).label));
-            }
-            top.append(el('time', 'timeline-time', `${at.md} ${at.weekday} ${at.hm}`.trim()));
-            main.append(top);
-            const desc = [node.original ? `原文：${node.original}` : '', node.detail || ''].filter(Boolean).join(' · ');
-            if (desc) main.append(el('p', 'timeline-desc', desc));
-            row.append(main);
-            list.append(row);
-        }
-        body.append(segmentHeading(group.segment, region), list);
+    box.append(head);
+    if (track17View) box.append(buildTrack17Status(track17View));
+    return box;
+};
+
+// 一个已发生的节点（后端 route_nodes 合好的，日本时间）：标题去括号，来源小标，两边都报了的显示「中邮·日邮 一致」
+const buildNodeRow = (node, { current = false } = {}) => {
+    const row = el('li', current ? 'timeline-item current' : 'timeline-item');
+    row.append(el('span', current ? 'dot info pulse' : 'dot ok'));
+    const main = el('div', 'timeline-main');
+    const top = el('div', 'timeline-head');
+    const at = splitTime(node.at);
+    top.append(el('span', 'timeline-title', plainName(node.name)));
+    if (node.sources.length > 1) {
+        top.append(el('span', 'pill ok', `${node.sources.map((source) => nodeSourceMeta(source).label).join('·')} 一致`));
+    } else {
+        top.append(el('span', 'pill', nodeSourceMeta(node.sources[0]).label));
     }
-    if (history.length) body.append(el('p', 'hint', '时间均为日本时间；每段以主来源为准（国内段、中转段看中国邮政，日本段看日本邮政）。'));
-    box.append(body);
+    top.append(el('time', 'timeline-time', `${at.md} ${at.weekday} ${at.hm}`.trim()));
+    main.append(top);
+    const desc = [node.detail || '', node.original ? `原文：${node.original}` : ''].filter(Boolean).join(' · ');
+    if (desc) main.append(el('p', 'timeline-desc', desc));
+    row.append(main);
+    return row;
+};
+
+// 一个还没到的阶段：标题去括号，时间写参考预计，区间跨天时说明一行
+const buildRemainingRow = (item, names) => {
+    const row = el('li', 'timeline-item muted');
+    row.append(el('span', 'dot idle'));
+    const main = el('div', 'timeline-main');
+    const head = el('div', 'timeline-head');
+    head.append(el('span', 'timeline-title', plainName(stageLabel(item.stage, names))));
+    if (item.maybe) head.append(el('span', 'pill warn', '可能出现'));
+    head.append(el('time', 'timeline-time', `预计 ${formatEta(item)}`));
+    main.append(head);
+    // 区间跨天时才写一行（参考了几单在区块底部的依据一行里统一说明）
+    const range = formatRange(item);
+    if (range !== splitTime(item.eta).md) main.append(el('p', 'timeline-desc', `最早到最晚 ${range}`));
+    row.append(main);
+    return row;
+};
+
+// 按段分组的列表：每段前加段名
+const appendGrouped = (parent, items, segmentOf, buildRow, region) => {
+    for (const group of groupBySegment(items, segmentOf)) {
+        const list = el('ol', 'timeline compact');
+        for (const item of group.items) list.append(buildRow(item));
+        parent.append(segmentHeading(group.segment, region), list);
+    }
+};
+
+// 全程节点一条线（时间正序）：已完成的折叠 → 当前节点加框高亮 → 后面的阶段写参考预计时间
+const buildRouteNode = (forecast, history, names) => {
+    const region = forecast.transit_region;
+    const box = el('div');
+    if (!history.length) {
+        box.append(el('p', 'hint', '还没有履历。'));
+    } else {
+        const nodes = history.slice().reverse();
+        const current = nodes[nodes.length - 1];
+        const done = nodes.slice(0, -1);
+        if (done.length) {
+            const fold = el('details', 'disclosure flush');
+            fold.append(el('summary', '', `已完成 ${done.length} 个节点`));
+            const body = el('div', 'disclosure-body');
+            appendGrouped(body, done, (node) => node.segment || null, (node) => buildNodeRow(node), region);
+            fold.append(body);
+            box.append(fold);
+        }
+        const frame = el('div', forecast.delivered ? 'callout ok' : 'callout info');
+        const list = el('ol', 'timeline compact');
+        list.append(buildNodeRow(current, { current: true }));
+        frame.append(list);
+        box.append(frame);
+    }
+    if (forecast.current && !forecast.delivered && forecast.confidence !== 'none') {
+        appendGrouped(box, forecast.remaining, (item) => stageMeta(item.stage).segment, (item) => buildRemainingRow(item, names), region);
+    }
+    if (history.length) box.append(el('p', 'hint', '时间均为日本时间；每段以主来源为准（国内段、中转段看中国邮政，日本段看日本邮政）。'));
     return box;
 };
 
@@ -364,50 +415,29 @@ const buildAtypicalNode = (taskId, atypical, onUpdated) => {
     return label;
 };
 
-// 预测区块：进度一行 → 收寄网点与渠道推断 →（非常规件开关）→ 合并履历 →（已比以往都慢）→ 剩余阶段列表 → 依据一行。
+// 预测区块：进度一行 →（已比以往都慢）→ 全程节点（已完成折叠 / 当前加框 / 后续写预计）→ 依据一行 → 收寄网点与渠道推断 →（非常规件开关）→ 履历来源。
 // 全部用 textContent，不拼 HTML。映射查不到的阶段 / 可信度会抛错，由调用方显示成加载失败。
 // options：history 合并履历；task { archived, atypical }；links / track17 外链与登记状态；
 // taskId + onUpdated(result) 用于「设为该渠道」与非常规件开关。
 export const buildForecastNode = (forecast, {
     history = [], task = {}, links = {}, track17 = null, taskId = null, onUpdated = null,
 } = {}) => {
-    const region = forecast.transit_region;
-    const names = { transit: region, origin: forecast.origin_name };
+    const names = { transit: forecast.transit_region, origin: forecast.origin_name };
     const root = el('div', 'forecast-body');
     root.append(el('p', 'task-meta', progressText(forecast)));
+    if (forecast.overdue && !forecast.delivered) {
+        root.append(el('div', 'callout warn', '已比以往都慢：在这个阶段停留的时间超过了所有历史记录，后面的时间按最快情况估计。'));
+    }
+    root.append(buildRouteNode(forecast, history, names));
+    if (forecast.current && !forecast.delivered) {
+        root.append(el('p', 'hint', forecast.confidence === 'none'
+            ? '还没有可参考的历史，补录几单过去的单号后就能预测后面的步骤。'
+            : basisText(forecast)));
+    }
     const office = buildOfficeNode(forecast, { taskId, onUpdated });
     if (office) root.append(office);
     if (taskId && task.archived) root.append(buildAtypicalNode(taskId, task.atypical, onUpdated));
-    root.append(buildHistoryNode(history, region, { links, track17View: track17 }));
-    if (!forecast.current || forecast.delivered) return root;
-
-    if (forecast.confidence === 'none') {
-        root.append(el('p', 'hint', '还没有可参考的历史，补录几单过去的单号后就能预测。'));
-        return root;
-    }
-    if (forecast.overdue) {
-        root.append(el('div', 'callout warn', '已比以往都慢：在这个阶段停留的时间超过了所有历史记录，下面按最快情况估计。'));
-    }
-    // 剩余阶段按段分组，每组前加段名
-    for (const group of groupBySegment(forecast.remaining, (item) => stageMeta(item.stage).segment)) {
-        const list = el('ol', 'timeline compact');
-        for (const item of group.items) {
-            const row = el('li', item.maybe ? 'timeline-item muted' : 'timeline-item');
-            row.append(el('span', 'dot idle'));
-            const main = el('div', 'timeline-main');
-            const head = el('div', 'timeline-head');
-            head.append(el('span', 'timeline-title', stageLabel(item.stage, names)));
-            if (item.maybe) head.append(el('span', 'pill warn', '可能出现'));
-            head.append(el('time', 'timeline-time', formatEta(item)));
-            const basis = basisMeta(item.basis).label;
-            const atypical = item.samples.atypical ? `，${item.samples.atypical} 单非常规已降权` : '';
-            main.append(head, el('p', 'timeline-desc', `区间 ${formatRange(item)} · 参考 ${item.samples.total} 单（${basis} ${item.samples.similar} 单${atypical}）`));
-            row.append(main);
-            list.append(row);
-        }
-        root.append(segmentHeading(group.segment, region), list);
-    }
-    root.append(el('p', 'hint', basisText(forecast)));
+    root.append(buildSourcesNode(links, track17));
     return root;
 };
 
