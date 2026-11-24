@@ -152,7 +152,7 @@ export const progressText = (forecast) => {
     if (forecast.origin) parts.push(`${lookup(ORIGIN_TEXT, forecast.origin.stage, '起点')}第 ${forecast.day} 天`);
     const stage = forecast.current.stage;
     const names = { transit: forecast.transit_region, origin: forecast.origin_name };
-    parts.push(`当前：${segmentLabel(stageMeta(stage).segment, forecast.transit_region)} · ${plainName(stageLabel(stage, names))}（已等 ${formatDuration(forecast.current.waited_seconds)}）`);
+    parts.push(`当前：${segmentLabel(stageMeta(stage).segment, forecast.transit_region)} · ${stageLabel(stage, names)} · 已等 ${formatDuration(forecast.current.waited_seconds)}`);
     return parts.join(' · ');
 };
 
@@ -171,7 +171,7 @@ export const basisText = (forecast) => {
         if (forecast.collection_office && sameOffice) parts.push(`同网点 ${sameOffice} 单`);
     }
     if (total > similar) parts.push(`其他 ${total - similar} 单参考${atypicalNote(atypical - similarAtypical)}`);
-    parts.push(`${confidenceMeta(forecast.confidence).label}（按${basisMeta(forecast.basis).label}计）`);
+    parts.push(confidenceMeta(forecast.confidence).label);
     return parts.join(' · ');
 };
 
@@ -297,9 +297,6 @@ const buildTrack17Status = (view) => {
 
 const segmentHeading = (segment, region) => el('h4', 'section-name', segment ? segmentLabel(segment, region) : '其他');
 
-// 节点名去掉括号里的补充说明（「离开中国（出境）」→「离开中国」），全角半角都去
-export const plainName = (text) => String(text || '').replace(/[（(][^（()）]*[）)]/g, '').trim();
-
 // 履历来源：日本邮政与 17TRACK 外链胶囊 + 17TRACK 登记状态（只有 CN 单号；没配密钥时只有胶囊）
 const buildSourcesNode = (links, track17View) => {
     const box = el('div');
@@ -314,14 +311,14 @@ const buildSourcesNode = (links, track17View) => {
     return box;
 };
 
-// 一个已发生的节点（后端 route_nodes 合好的，日本时间）：标题去括号，来源小标，两边都报了的显示「中邮·日邮 一致」
+// 一个已发生的节点（后端 route_nodes 合好的，日本时间）：来源小标，两边都报了的显示「中邮·日邮 一致」
 const buildNodeRow = (node, { current = false } = {}) => {
     const row = el('li', current ? 'timeline-item current' : 'timeline-item');
     row.append(el('span', current ? 'dot info pulse' : 'dot ok'));
     const main = el('div', 'timeline-main');
     const top = el('div', 'timeline-head');
     const at = splitTime(node.at);
-    top.append(el('span', 'timeline-title', plainName(node.name)));
+    top.append(el('span', 'timeline-title', node.name));
     if (node.sources.length > 1) {
         top.append(el('span', 'pill ok', `${node.sources.map((source) => nodeSourceMeta(source).label).join('·')} 一致`));
     } else {
@@ -335,13 +332,13 @@ const buildNodeRow = (node, { current = false } = {}) => {
     return row;
 };
 
-// 一个还没到的阶段：标题去括号，时间写参考预计，区间跨天时说明一行
+// 一个还没到的阶段：时间写参考预计，区间跨天时说明一行
 const buildRemainingRow = (item, names) => {
     const row = el('li', 'timeline-item muted');
     row.append(el('span', 'dot idle'));
     const main = el('div', 'timeline-main');
     const head = el('div', 'timeline-head');
-    head.append(el('span', 'timeline-title', plainName(stageLabel(item.stage, names))));
+    head.append(el('span', 'timeline-title', stageLabel(item.stage, names)));
     if (item.maybe) head.append(el('span', 'pill warn', '可能出现'));
     head.append(el('time', 'timeline-time', `预计 ${formatEta(item)}`));
     main.append(head);
