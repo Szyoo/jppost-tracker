@@ -907,7 +907,8 @@ def index():
     if not is_authenticated():
         # SSO 匿名访客：只给页面壳 + 公开介绍；其余（含 SSO 未开、没有任何门卫头）照旧跳登录
         if is_anonymous_visitor():
-            return render_template('anon_landing.html')
+            # 登录后回到原地址（含 /?tn= 单号深链）
+            return render_template('anon_landing.html', next_target=current_request_target())
         return unauthorized_response()
     viewer_state = build_viewer_state()
     account = viewer_state["account"]

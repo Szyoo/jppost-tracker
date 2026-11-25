@@ -157,6 +157,15 @@ def test_deep_link_tn_marks_cards_on_both_pages(client, db, ella):
     assert "searchParams.get('tn')" in script and "replaceState" in script
 
 
+def test_anon_landing_login_keeps_deep_link(client, db, monkeypatch):
+    """匿名落地页的「登录」带上原地址，登录回来仍定位到单号。"""
+    monkeypatch.setattr(app_module, "is_authenticated", lambda: False)
+    monkeypatch.setattr(app_module, "is_anonymous_visitor", lambda: True)
+    html = client.get("/?tn=AA111111111JP").data.decode()
+    assert 'name="next" value="/?tn=AA111111111JP"' in html
+    assert 'name="next"' not in client.get("/").data.decode()
+
+
 def test_unauthenticated_still_redirects(client, db):
     resp = client.get("/")
     assert resp.status_code == 302 and resp.headers["Location"].startswith("/login")
