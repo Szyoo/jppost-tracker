@@ -105,7 +105,7 @@
 
         <!-- 已归档：展开时才渲染卡片（补录的历史单号可能很多，收着时不拉预测） -->
         <div class="section panel glass rise">
-          <details class="disclosure flush" @toggle="archivedOpen = $event.target.open">
+          <details class="disclosure flush" data-archived-panel @toggle="archivedOpen = $event.target.open">
             <summary>已归档<span class="summary-meta">[[ archivedTasks.length ]]</span></summary>
             <div class="disclosure-body">
               <template v-if="archivedOpen">
@@ -680,5 +680,6 @@
     </script>
     <script type="module" src="/static/boot.js"></script>
     <script src="/static/app.js"></script>
+    <script type="module" src="/static/focus-task.js"></script>
   </body>
 </html>

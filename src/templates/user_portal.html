@@ -55,7 +55,7 @@
     {#- 任务卡片：在途与已归档共用。头部（备注为主标题、单号、渠道与状态胶囊）→ 摘要行（forecast.js 拉到预测后填，与推送正文同一写法）
         → 到达预测（在途默认展开，归档的展开时才拉）→ 推送与查询记录 → 编辑（就地展开）→ 操作 #}
     {%- macro task_card(task) %}
-    <article class="task-item inner" id="task-{{ task.id }}">
+    <article class="task-item inner" id="task-{{ task.id }}" data-tn="{{ task.tracking_number }}">
       <div class="task-item-head">
         <div class="task-title">
           <strong>{{ task.label or task.tracking_number }}</strong>
@@ -253,7 +253,7 @@
       </div>
 
       <div class="section panel glass rise">
-        <details class="disclosure flush">
+        <details class="disclosure flush" data-archived-panel>
           <summary>已归档<span class="summary-meta">{{ account.archived_tasks | length }}</span></summary>
           <div class="disclosure-body">
             {%- if account.archived_tasks %}
@@ -374,6 +374,7 @@
     <script type="module" src="/static/boot.js"></script>
     <script type="module" src="/static/timeline.js"></script>
     <script type="module" src="/static/forecast.js"></script>
+    <script type="module" src="/static/focus-task.js"></script>
     {%- if message %}
     <!-- 表单提交后的操作反馈（重定向带回的 message / status）：用包的 toast()，与控制台一致 -->
     <script type="module">

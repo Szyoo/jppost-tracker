@@ -1172,7 +1172,7 @@ app.component('task-card', {
         };
     },
     template: `
-        <article class="task-item inner" :id="'task-' + task.id">
+        <article class="task-item inner" :id="'task-' + task.id" :data-tn="task.tracking_number">
             <div class="task-item-head">
                 <div class="task-title">
                     <strong>[[ task.label || task.tracking_number ]]</strong>

@@ -138,6 +138,25 @@ def test_portal_toggle_form_keeps_channel_and_milestones(client, db, ella):
     assert ">启用</button>" in client.get("/").data.decode()
 
 
+def test_deep_link_tn_marks_cards_on_both_pages(client, db, ella):
+    """/?tn=<单号> 深链：两种页面的卡片都带 data-tn，归档区可被脚本展开，都加载 focus-task.js。"""
+    active = db.create_task(ella["id"], {"tracking_number": "AA111111111JP"})
+    old = db.create_task(ella["id"], {"tracking_number": "CC333333333JP"})
+    db.archive_task(old["id"])
+    login(client, "ella", "pw-ella")
+    html = client.get("/?tn=aa111111111jp").data.decode()
+    assert 'data-tn="AA111111111JP"' in html and 'data-tn="CC333333333JP"' in html
+    assert "data-archived-panel" in html and "/static/focus-task.js" in html
+    client.post("/logout")
+
+    login(client, "admin", ADMIN_PASSWORD)
+    html = client.get("/?tn=AA111111111JP").data.decode()
+    assert "data-archived-panel" in html and "/static/focus-task.js" in html
+    assert ':data-tn="task.tracking_number"' in read_static("app.js")
+    script = read_static("focus-task.js")
+    assert "searchParams.get('tn')" in script and "replaceState" in script
+
+
 def test_unauthenticated_still_redirects(client, db):
     resp = client.get("/")
     assert resp.status_code == 302 and resp.headers["Location"].startswith("/login")

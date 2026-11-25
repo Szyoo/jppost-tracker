@@ -140,6 +140,13 @@ textarea.field {
   gap: var(--sp-2);
 }
 
+/* 深链 /?tn= 定位到的卡片：短暂描边（focus-task.js 加上、4 秒后去掉） */
+.task-item.is-focus {
+  outline: 2px solid var(--selected-border);
+  outline-offset: 2px;
+  transition: outline-color 0.3s;
+}
+
 /* 头部：左边备注 + 单号，右边渠道与状态胶囊；窄屏胶囊换到下一行 */
 .task-item-head {
   display: flex;
